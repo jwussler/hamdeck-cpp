@@ -22,6 +22,19 @@ Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anythin
 | **Verification** | 50/50 driven routes read back from the rig, 46/46 smoke, 25/25 parity, keypad and VFO-lock walked |
 | **Radio** | never attached yet — everything below was built and proven against a simulator |
 
+### Backups — because there is no remote yet
+`tools/backup.sh` bundles the whole repo, **verifies the bundle**, copies it to a second
+machine and **compares checksums** — `scp` exiting 0 says the transfer ran, not that the bytes
+arrived intact. It keeps the last 10 locally. Host and path come from
+`HAMDECK_BACKUP_HOST` / `HAMDECK_BACKUP_PATH`; the values are in `SITE.md`.
+
+Proven on 08/30/2026, not assumed: the bundle was pulled **back** from the second machine,
+restored, built, and passed all 8 tests.
+
+⚠️ **The bundle contains the full history, including the site detail still present in older
+commits.** It is safe on private storage and **must not be published** — which is also why the
+script has no GitHub path in it.
+
 ### 🛑 BLOCKER — do not push this repo yet
 The working tree is clean of site detail. **The git history is not.** Earlier commits of this
 file, and several commit messages, contain the site's WAN address, a VPN peer endpoint,
