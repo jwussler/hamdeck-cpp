@@ -175,3 +175,9 @@ class RadioPoller {
 // FTDX-101 MD table. Returns "" for a code we do not know, never a guess - a
 // wrong mode on the panel is worse than a blank one.
 std::string ModeName(int code);
+
+// The inverse. ⚠️ Lives here rather than in api.cpp because the TUNER needs it
+// too: it sets CW to tune and puts the operator's mode back afterwards. Two
+// copies of a protocol table is two things to get wrong, and the failure is a
+// rig left in the wrong mode.
+int ModeCode(const std::string& name);

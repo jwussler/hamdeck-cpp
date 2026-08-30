@@ -242,7 +242,24 @@ int main(int argc, char** argv) {
 
   // The external tuner. Not configured by default - it is a network device at an
   // address only the operator knows, and this repo ships no addresses.
-  TgxlTuner tgxl(config.tgxl_host, config.tgxl_port);
+  // ⚠️ THE TUNER DRIVES THE RADIO, NOT JUST THE TUNER BOX. It saves the power
+  // and mode, sets 15 W CW, KEYS THE TRANSMITTER, tunes, then unkeys and puts
+  // both back. Without the carrier the tuner has nothing to measure and the
+  // button does nothing - which is exactly what the first port shipped.
+  //
+  // The setters QUEUE their CAT commands; they never touch the serial port, so
+  // they are safe to call from the tuner's own thread. The getters read the
+  // poller's cache, which is at most one 200 ms cycle old.
+  TgxlRig tgxl_rig{
+      .get_power = [&poller] { return poller.Snapshot().power; },
+      .get_mode = [&poller] { return poller.Snapshot().mode; },
+      .set_power = [&poller](int w) { poller.Enqueue(std::format("PC{:03d};", w)); },
+      .set_mode = [&poller](const std::string& m) {
+        poller.Enqueue(std::format("MD0{};", ModeCode(m)));
+      },
+      .set_ptt = [&poller](bool on) { poller.Enqueue(on ? "TX1;" : "TX0;"); },
+  };
+  TgxlTuner tgxl(config.tgxl_host, config.tgxl_port, std::move(tgxl_rig));
   if (tgxl.configured()) std::cout << "TGXL: " << tgxl.Describe() << '\n' << std::flush;
 
   HostState host_state;

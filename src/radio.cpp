@@ -270,3 +270,14 @@ void RadioPoller::PollFull(RigSnapshot& s) {
     }
   }
 }
+
+// FTDX-101 MD codes, the inverse of ModeName().
+int ModeCode(const std::string& name) {
+  if (name == "LSB") return 1;
+  if (name == "USB") return 2;
+  if (name == "CW")  return 3;
+  if (name == "FM")  return 4;
+  if (name == "AM")  return 5;
+  if (name == "DATA-U") return 9;   // the C# /api/mode/data maps here
+  return 0;
+}

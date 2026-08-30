@@ -793,6 +793,57 @@ and it fails at runtime only.
 
 ---
 
+## 8e. The TGXL tuned nothing, because it never keyed the radio
+
+⚠️ **The first port talked to the tuner and never touched the radio.** Its own header called
+itself "safe to call from a request thread: it touches the network, not the serial port" —
+which was true and was the bug. The tuner has nothing to measure without a carrier, so the
+button appeared to do nothing. Found by walking `Services/Tuners.cs` in the reference host,
+where the sequence is the radio's, not the tuner's:
+
+```
+1 save power and mode   2 set 15 W, CW   3 connect   4 KEY   5 autotune
+6 poll tuning=          7 UNKEY, restore power and mode
+```
+
+⚠️ **Steps 3 and 4 are swapped relative to the reference, deliberately.** The C# host keys
+*then* connects, so a tuner that is switched off gets **15 W into the antenna for the whole 3 s
+connect timeout**, tuning nothing. The tuner only needs the carrier from step 5, so connecting
+first costs nothing and an unreachable tuner now produces **no RF at all** — measured: `tx`
+never goes true.
+
+### Three more divergences the walk found in the same file
+- **Completion was "tuning is 0", not "tuning went 1 then 0".** The old condition was
+  `seen_tuning || elapsed > 2 s`, which reports a **completed tune at 2.001 s against a tuner
+  that never started** — the exact failure its own comment claimed to prevent. It now needs
+  `tuning=1` *and* 2 s, disarms on the connect burst's early 1→0, and gives up at 5 s if
+  tuning never starts.
+- **A second press is a STOP.** The reference button is a toggle; this returned
+  "already-tuning", leaving an operator watching an unexpected carrier with nothing to press.
+- **`Tune()` blocked the request for up to 45 s.** The reference returns immediately and
+  reports progress through `tgxl_tuning`. Blocking froze the panel for the whole carrier.
+
+⚠️ **`/api/status` and `/api/health` had `amp_tuning` and `tgxl_tuning` HARDCODED to `false`.**
+A tune in progress was invisible to every client — they could not show the carrier or offer the
+press that stops it. Reported live now.
+
+### Verified on the simulator, with a fake tuner — `tools/fake_tgxl.py`
+It reproduces the **connect burst** (0, 1, 0 within milliseconds) that the completion logic has
+to survive, and `--never-start` covers the tuner that answers but never tunes.
+
+| case | result |
+|---|---|
+| normal tune | `tx=true, power=15, mode=CW, tgxl_tuning=true` for the tune, then unkeyed and **restored to 5 W USB** |
+| second press | `action:"stopped"`, unkeyed and restored within 2 s |
+| tuner never starts | gives up at 5 s, unkeyed and restored — not a 45 s carrier |
+| tuner unreachable | **`tx` never goes true**, power and mode restored |
+
+⚠️ **`AmpTuner` is still a stub in this host** while the reference has the full sequence: 20 W
+CW, a **10 second** carrier, then 100 W and the original mode back. `/api/tune/amp` answers
+"not configured". Local-only, and not yet ported.
+
+---
+
 ## 9. Adding radios nobody here owns
 
 The simulator makes this tractable: look up the CAT set, write a profile, run the walker

@@ -131,11 +131,16 @@ std::string StatusJson(const ApiDeps& deps) {
   const bool stale = (age < 0) || (age > RadioPoller::kStaleAfterMs);
   return std::format(
       R"({{"connected":{},"freq":{},"mode":"{}","vfo":"{}","power":{},"tx":{},)"
-      R"("tx_timeout_in":{},"split":{},"amp_tuning":false,"tgxl_tuning":false,)"
+      R"("tx_timeout_in":{},"split":{},"amp_tuning":{},"tgxl_tuning":{},)"
       R"("freq_buffer":"{}","vfo_locked":{},"diversity":{},"cache_age_ms":{},"stale":{}}})",
       JsonBool(s.connected), s.freq, s.mode, s.vfo, s.power, JsonBool(s.tx),
       deps.poller->TransmitSecondsRemaining(),
-      JsonBool(s.split), FreqBuffer(deps), JsonBool(host_vfo_locked), JsonBool(host_diversity),
+      // ⚠️ REPORTED LIVE, not hardcoded false. These were literals, so a tune in
+      // progress was invisible to every client: the panel could not show the
+      // carrier it had started, and could not offer the second press that stops
+      // it. The reference host reports both from the tuners themselves.
+      JsonBool(s.split), JsonBool(false), JsonBool(deps.tgxl && deps.tgxl->IsActive()),
+      FreqBuffer(deps), JsonBool(host_vfo_locked), JsonBool(host_diversity),
       age < 0 ? 0 : age, JsonBool(stale));
 }
 
@@ -181,8 +186,9 @@ std::string HealthJson(const ApiDeps& deps, int bound_port) {
   const bool connected = deps.poller && deps.poller->Snapshot().connected;
   return std::format(
       R"({{"status":"ok","service":"{}","version":"{}","port":{},)"
-      R"("rig_connected":{},"amp_tuning":false,"tgxl_tuning":false,"freq_buffer":"{}"}})",
-      kServiceName, kVersion, bound_port, JsonBool(connected), FreqBuffer(deps));
+      R"("rig_connected":{},"amp_tuning":{},"tgxl_tuning":{},"freq_buffer":"{}"}})",
+      kServiceName, kVersion, bound_port, JsonBool(connected), JsonBool(false),
+      JsonBool(deps.tgxl && deps.tgxl->IsActive()), FreqBuffer(deps));
 }
 
 // Minimal field grab. Good enough for the two-field login body and nothing more;
@@ -206,16 +212,7 @@ std::string OkJson(const std::string& key, const std::string& val_json) {
 
 std::string Quoted(const std::string& s) { return "\"" + s + "\""; }
 
-// FTDX-101 MD codes, the inverse of ModeName().
-int ModeCode(const std::string& name) {
-  if (name == "LSB") return 1;
-  if (name == "USB") return 2;
-  if (name == "CW")  return 3;
-  if (name == "FM")  return 4;
-  if (name == "AM")  return 5;
-  if (name == "DATA-U") return 9;   // the C# /api/mode/data maps here
-  return 0;
-}
+// ModeCode() now lives in radio.h/.cpp - the tuner needs it too.
 
 // Band plan, copied from the reference host's BandHelper - not inferred. The
 // "below 10 MHz is LSB" rule alone would put 60m and 30m on the wrong mode.

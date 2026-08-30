@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstring>
 #include <format>
+#include <thread>
 
 namespace {
 
@@ -60,6 +61,16 @@ std::string TgxlTuner::Describe() const {
                       : "tgxl (not configured)";
 }
 
+TgxlTuner::~TgxlTuner() {
+  // ⚠️ A tuner thread that outlives this object is a thread that may key the
+  // radio after the host has decided to stop. Ask it to stop, then JOIN - the
+  // unkey lives on the way out of Worker(), so it must be allowed to run.
+  Stop();
+  if (worker_.joinable()) worker_.join();
+}
+
+void TgxlTuner::Stop() { stop_.store(true); }
+
 TgxlTuner::Result TgxlTuner::Tune() {
   Result r;
   if (!configured()) {
@@ -68,87 +79,166 @@ TgxlTuner::Result TgxlTuner::Tune() {
     return r;
   }
 
-  // ⚠️ Claimed atomically. Two overlapping tunes would key the transmitter twice
-  // and fight each other; the second caller is told, not queued.
-  {
-    std::lock_guard<std::mutex> lock(mu_);
-    if (active_.load()) {
-      r.ok = true;
-      r.tuning = true;
-      r.action = "already-tuning";
-      r.message = "a tune is already running";
-      return r;
-    }
-    active_.store(true);
-  }
-  struct Release {
-    std::atomic<bool>* f;
-    ~Release() { f->store(false); }
-  } release{&active_};
+  std::lock_guard<std::mutex> lock(mu_);
 
-  std::string err;
-  const int fd = ConnectWithTimeout(host_, port_, kConnectTimeoutMs, err);
-  if (fd < 0) {
-    r.action = "unavailable";
-    r.message = err;
-    return r;
-  }
-  struct Closer {
-    int fd;
-    ~Closer() { ::close(fd); }
-  } closer{fd};
-
-  if (!SendLine(fd, "C1|autotune\n")) {
-    r.action = "unavailable";
-    r.message = "could not send autotune";
+  // ⚠️ A SECOND PRESS IS A STOP. The reference host makes this button a toggle,
+  // and an operator watching an unexpected carrier needs one press to end it.
+  // Returning "already tuning" would leave them with nothing to press.
+  if (active_.load()) {
+    stop_.store(true);
+    r.ok = true;
+    r.tuning = false;
+    r.action = "stopped";
+    r.message = "stopping the tune";
     return r;
   }
 
-  const auto start = std::chrono::steady_clock::now();
-  auto elapsed_ms = [&start] {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::steady_clock::now() - start).count();
-  };
+  // The previous run's thread has finished but may not be joined yet.
+  if (worker_.joinable()) worker_.join();
 
-  bool seen_tuning = false;
-  std::string buf;
-  while (elapsed_ms() < kOverallLimitMs) {
-    SendLine(fd, "C1|status\n");
-    pollfd p{fd, POLLIN, 0};
-    const int pr = ::poll(&p, 1, kReadTimeoutMs);
-    if (pr > 0) {
-      char tmp[512];
-      const ssize_t n = ::read(fd, tmp, sizeof(tmp));
-      if (n > 0) buf.append(tmp, n);
-    }
-
-    // Consume whole lines, newest state wins.
-    size_t pos;
-    while ((pos = buf.find('\n')) != std::string::npos) {
-      const std::string line = buf.substr(0, pos);
-      buf.erase(0, pos + 1);
-      const auto at = line.find("tuning=");
-      if (at == std::string::npos) continue;
-      const bool tuning = line[at + 7] == '1';
-      if (tuning) {
-        seen_tuning = true;
-      } else if (seen_tuning || elapsed_ms() > kIgnoreEarlyMs) {
-        // ⚠️ Only trust tuning=0 once tuning=1 has been seen, or the early
-        // window has passed. The tuner reports 0 briefly before it starts, and
-        // believing that reports a tune that never happened.
-        r.ok = true;
-        r.tuning = false;
-        r.action = "stopped";
-        r.message = std::format("tuned in {} ms", elapsed_ms());
-        return r;
-      }
-    }
-  }
+  // Claimed BEFORE the thread starts, so a second request arriving immediately
+  // sees active_ and takes the stop path rather than starting a second tune -
+  // which would mean two workers keying one transmitter.
+  active_.store(true);
+  stop_.store(false);
+  worker_ = std::thread([this] { Worker(); });
 
   r.ok = true;
   r.tuning = true;
-  r.action = "timeout";
-  r.message = std::format("tuner did not report finished within {} s",
-                          kOverallLimitMs / 1000);
+  r.action = "started";
+  r.message = std::format("keying {} W CW and tuning", kTunePowerWatts);
   return r;
+}
+
+void TgxlTuner::Worker() {
+  // ⚠️ EVERY EXIT PATH UNKEYS AND RESTORES. Timeout, refused connection,
+  // operator stop, an exception from a callback - all of them come through
+  // here. A tuner that leaves the rig keyed at 15 W in CW is worse than one
+  // that never tuned, and this is the code that decides which it is.
+  int saved_power = 0;
+  std::string saved_mode;
+  bool changed_state = false;
+  bool keyed = false;
+
+  auto restore = [&] {
+    if (keyed && rig_.set_ptt) {
+      rig_.set_ptt(false);
+      std::this_thread::sleep_for(std::chrono::milliseconds(kPttDropMs));
+      keyed = false;
+    }
+    if (changed_state) {
+      if (rig_.set_power && saved_power > 0) {
+        rig_.set_power(saved_power);
+        std::this_thread::sleep_for(std::chrono::milliseconds(kSettleMs));
+      }
+      if (rig_.set_mode && !saved_mode.empty()) {
+        rig_.set_mode(saved_mode);
+        std::this_thread::sleep_for(std::chrono::milliseconds(kSettleMs));
+      }
+      changed_state = false;
+    }
+  };
+  struct Finally {
+    std::function<void()> f;
+    ~Finally() { f(); }
+  } finally{[&] { restore(); active_.store(false); }};
+
+  try {
+    // 1 - save what we are about to change, before changing anything.
+    if (rig_.get_power) saved_power = rig_.get_power();
+    if (rig_.get_mode) saved_mode = rig_.get_mode();
+
+    // 2 - 15 W CW.
+    if (rig_.set_power) {
+      rig_.set_power(kTunePowerWatts);
+      changed_state = true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(kSettleMs));
+    }
+    if (rig_.set_mode) {
+      rig_.set_mode("CW");
+      changed_state = true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(kSettleMs));
+    }
+    if (stop_.load()) return;
+
+    // 3 - CONNECT BEFORE KEYING. ⚠️ A deliberate divergence from the reference
+    // host, which keys first and then connects: with the tuner switched off or
+    // unplugged that puts 15 W into the antenna for the full 3 s connect
+    // timeout, tuning nothing. Connecting first costs nothing - the tuner only
+    // needs the carrier once autotune is sent, which is still the case below -
+    // and it means an unreachable tuner produces NO RF at all.
+    std::string err;
+    const int fd = ConnectWithTimeout(host_, port_, kConnectTimeoutMs, err);
+    if (fd < 0) return;              // nothing keyed; restore() puts power/mode back
+    struct Closer {
+      int fd;
+      ~Closer() { ::close(fd); }
+    } closer{fd};
+
+    // 4 - key up, and settle before asking the tuner to measure anything.
+    if (rig_.set_ptt) {
+      rig_.set_ptt(true);
+      keyed = true;
+      std::this_thread::sleep_for(std::chrono::milliseconds(kPttSettleMs));
+    }
+    if (stop_.load()) return;
+
+    // 5 - autotune.
+    if (!SendLine(fd, "C1|autotune\n")) return;
+
+    const auto start = std::chrono::steady_clock::now();
+    auto elapsed_ms = [&start] {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now() - start).count();
+    };
+
+    // 6 - watch tuning go 1 then 0. See the header for why both halves matter.
+    bool seen_tuning = false;
+    std::string buf;
+    while (!stop_.load() && elapsed_ms() < kOverallLimitMs) {
+      SendLine(fd, "C1|status\n");
+      pollfd p{fd, POLLIN, 0};
+      const int pr = ::poll(&p, 1, kReadTimeoutMs);
+      if (pr > 0) {
+        char tmp[512];
+        const ssize_t n = ::read(fd, tmp, sizeof(tmp));
+        if (n == 0) break;           // tuner closed the connection
+        if (n > 0) buf.append(tmp, n);
+      }
+
+      size_t pos;
+      bool done = false;
+      while ((pos = buf.find('\n')) != std::string::npos) {
+        const std::string line = buf.substr(0, pos);
+        buf.erase(0, pos + 1);
+        // The firmware banner ("V1.2.17") carries no state.
+        if (line.empty() || line[0] == 'V') continue;
+        const auto at = line.find("tuning=");
+        if (at == std::string::npos) continue;
+
+        if (line[at + 7] == '1') {
+          seen_tuning = true;
+          continue;
+        }
+        // tuning=0 from here down.
+        if (seen_tuning && elapsed_ms() >= kIgnoreEarlyMs) {
+          done = true;              // the real 1 -> 0
+          break;
+        }
+        if (seen_tuning) {
+          // Inside the ignore window: this is the connect burst, not a tune.
+          // DISARM and keep waiting for the real one.
+          seen_tuning = false;
+          continue;
+        }
+        if (elapsed_ms() > kNoStartGiveUpMs) {
+          done = true;              // never started; stop keying regardless
+          break;
+        }
+      }
+      if (done) break;
+    }
+  } catch (const std::exception&) {
+    // Falls through to restore(). An exception must not leave the rig keyed.
+  }
 }
