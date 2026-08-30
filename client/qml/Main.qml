@@ -69,14 +69,14 @@ ApplicationWindow {
     }
     onActiveChanged: if (!active) backend.focusLost()
 
-    // The PTT hotkey. Auto-repeat is passed through so the backend can suppress
-    // it — a held key repeats at the OS rate and would flap the transmitter.
-    Item {
-        anchors.fill: parent
-        focus: true
-        Keys.onPressed:  (e) => backend.keyPressed(e.key, e.isAutoRepeat)
-        Keys.onReleased: (e) => backend.keyReleased(e.key, e.isAutoRepeat)
-    }
+    // ⚠️ THE PTT HOTKEY IS NOT HANDLED HERE ANY MORE, AND THAT IS THE FIX.
+    // This used to be an Item with `focus: true` and Keys handlers. A QML Keys
+    // handler fires only on the item that holds focus, and this panel is full
+    // of things that take it — the connect screen's password field on startup,
+    // then every dropdown, slider and the scroll area. The hotkey was dead in
+    // the running application while its unit test passed. It is filtered at the
+    // application in C++ now (Backend::eventFilter), which sees the key
+    // whatever has focus, and consumes only the configured PTT key.
 
     // ⚠️ Shown until a SESSION EXISTS, not until a host is configured. A
     // remembered host proves nothing about whether the credentials still work

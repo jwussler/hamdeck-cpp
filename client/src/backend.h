@@ -12,6 +12,7 @@
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
+#include <QEvent>
 #include <QKeyEvent>
 #include <QVariantList>
 #include <QStringList>
@@ -109,6 +110,14 @@ class Backend : public QObject {
                              const QString& password);
   Q_INVOKABLE void send(const QString& path);      // fire a rig route
   Q_INVOKABLE void toggleArm();
+  // ⚠️ KEYS ARE FILTERED AT THE APPLICATION, NOT HANDLED BY AN ITEM IN THE QML.
+  // A `Keys.onPressed` handler only ever fires on the item that holds focus,
+  // and the panel is full of things that take it: the connect screen's text
+  // fields, a dropdown, a slider, the scroll area. The hotkey was dead in the
+  // running application while its unit test passed, because the events never
+  // arrived. An application-level filter sees the key whatever has focus.
+  bool eventFilter(QObject* watched, QEvent* event) override;
+
   Q_INVOKABLE void keyPressed(int key, bool autoRepeat);
   Q_INVOKABLE void keyReleased(int key, bool autoRepeat);
   Q_INVOKABLE void focusLost();

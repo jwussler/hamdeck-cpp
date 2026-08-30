@@ -62,6 +62,12 @@ def main() -> int:
     ap.add_argument("--admin", action="store_true", help="grant admin (with --add)")
     ap.add_argument("--transmit", action="store_true", help="grant transmit (with --add)")
     ap.add_argument("--config", default=os.environ.get("HAMDECK_CONFIG", DEFAULT_CONFIG))
+    # ⚠️ Reads the password from STDIN, not from an argument. A password in argv
+    # is in the shell history and visible in `ps` to anyone else on the box; a
+    # pipe is neither. This exists so the change can be driven over a one-shot
+    # ssh, where there is no terminal to prompt on.
+    ap.add_argument("--stdin-password", action="store_true",
+                    help="read the password from stdin instead of prompting")
     args = ap.parse_args()
 
     try:
@@ -86,11 +92,14 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    pw = getpass.getpass(f"New password for {args.username}: ")
+    if args.stdin_password:
+        pw = sys.stdin.readline().rstrip("\n")
+    else:
+        pw = getpass.getpass(f"New password for {args.username}: ")
     if len(pw) < 8:
         print("refusing a password under 8 characters", file=sys.stderr)
         return 1
-    if pw != getpass.getpass("Again: "):
+    if not args.stdin_password and pw != getpass.getpass("Again: "):
         print("they do not match", file=sys.stderr)
         return 1
 

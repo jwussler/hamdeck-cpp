@@ -285,6 +285,11 @@ int main(int argc, char** argv) {
         backend.setUiScaleOverride(f);
     }
 
+    // ⚠️ Application-wide, so the PTT key works whatever holds focus - a text
+    // field, a dropdown, the scroll area. A QML Keys handler only fires on the
+    // focused item, which is why the hotkey did nothing in the running app.
+    app.installEventFilter(&backend);
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("backend", &backend);
     engine.addImportPath(":/qml");

@@ -252,6 +252,29 @@ void Backend::toggleArm() {
                 settings_.tx_device_name);
 }
 
+// ⚠️ THE HOTKEY WAS DEAD IN THE RUNNING APP WHILE ITS UNIT TEST PASSED.
+// tests_hotkey.cpp proves the state machine - hold, toggle, auto-repeat
+// suppression, unkey on focus loss - and every case passes. None of it ran,
+// because QML's `Keys.onPressed` fires only on the item that holds focus, and
+// the connect screen's password field takes focus on startup and the panel's
+// dropdowns, sliders and scroll area take it afterwards. Two green lights and
+// nothing keying the transmitter.
+//
+// Filtering at the application catches the key whatever has focus. It consumes
+// ONLY the configured PTT key - everything else is passed through untouched, so
+// typing a frequency or a password is unaffected.
+bool Backend::eventFilter(QObject* watched, QEvent* event) {
+  const QEvent::Type t = event->type();
+  if (t != QEvent::KeyPress && t != QEvent::KeyRelease) {
+    return QObject::eventFilter(watched, event);
+  }
+  auto* ke = static_cast<QKeyEvent*>(event);
+  const bool consumed = (t == QEvent::KeyPress) ? hotkey_.HandleKeyPress(ke)
+                                                : hotkey_.HandleKeyRelease(ke);
+  // Returning true stops delivery. Only ever true for the PTT key itself.
+  return consumed ? true : QObject::eventFilter(watched, event);
+}
+
 void Backend::keyPressed(int key, bool autoRepeat) {
   QKeyEvent e(QEvent::KeyPress, key, Qt::NoModifier, QString(), autoRepeat);
   hotkey_.HandleKeyPress(&e);
