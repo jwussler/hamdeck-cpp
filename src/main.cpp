@@ -86,6 +86,7 @@ int main(int argc, char** argv) {
   // The backend is named in the banner and in /api/health's describe path, so a
   // simulator reading is never mistaken for the radio.
   std::unique_ptr<CatTransport> cat;
+  bool simulated = false;
   if (const char* dev = std::getenv("HAMDECK_CAT_DEVICE")) {
     auto serial = std::make_unique<SerialCat>();
     const bool ok =
@@ -105,6 +106,7 @@ int main(int argc, char** argv) {
     cat = std::move(serial);
   } else {
     cat = std::make_unique<SimulatedRig>();
+    simulated = true;
   }
   RadioPoller poller(std::move(cat));
   poller.Start();
@@ -124,6 +126,7 @@ int main(int argc, char** argv) {
   deps.poller = &poller;
   deps.auth = &auth;
   deps.rx_audio = &rx_audio;
+  deps.simulated = simulated;
   deps.allow_anonymous_status = false;   // matches the live station
 
   HttpServer control;

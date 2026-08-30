@@ -56,4 +56,8 @@ class SimulatedRig : public CatTransport {
   bool rit_    = false;
   bool xit_    = false;
   int  rf_gain_ = 128;
+  int  cw_speed_ = 20;
+  int  width_   = 10;
+  int  rit_offset_ = 0;
+  bool rxant_ = false;
 };

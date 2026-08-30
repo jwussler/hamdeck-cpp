@@ -58,7 +58,7 @@ thin CAT wrappers, so this is not 141 hand-written handlers.
 
 1. **Simulated rig** ✅
 2. **Status cache + 200 ms poller** ✅
-3. **Declarative route table** ✅ core operating set; the rest is mechanical
+3. **Declarative route table** ✅ the rig-control surface is in — see below
 4. **Auth/session** ✅
 5. **WebSocket** — `/ws` ✅ done; `/ws/tx` still to do (it needs somewhere to put the audio,
    so it lands with the ALSA work).
@@ -338,6 +338,65 @@ Order for the window, so the risky part comes last:
    identity in seconds, keying nothing.
 2. `/api/status` against the real rig; compare with the reference host's last known values.
 3. Only then the audio work.
+
+## The rig-control route surface — generated, then walked
+
+Most of the remaining routes were three near-identical handlers over a different CAT verb, so
+they are **generated from a spec table** rather than hand-written. Sixty pasted handlers is
+sixty chances to paste the wrong key; a spec table makes a mismatch visible on one line.
+
+⚠️ `on`/`off` answer with `1`/`0` and `toggle` answers with `true`/`false`. That is not a
+tidy-up opportunity — it is what the reference host emits and what the existing client parses.
+
+### ⚠️ Five CAT verbs I guessed were WRONG — read the driver, do not infer
+
+Guessing a plausible verb from the pattern of its neighbours produced five that do not exist.
+The reference `RadioController.cs` has the real ones:
+
+| what | I guessed | actually |
+|---|---|---|
+| notch | `BP0<0\|1>;` | **`BC01;` / `BC00;`** — two digits |
+| filter width | `SH0<nn>;` | **`SH00<nn>;`** |
+| RX antenna | `AR<0\|1>;` | **`EX030103<0\|1>;`** — a *menu* item, not a CAT flag |
+| RIT nudge | `RU;` / `RD;` | **`RU<nnnn>;` / `RD<nnnn>;`** — a bare `RU;` is not a command |
+| monitor | `ML0<0\|1>;` | **`ML0000;` / `ML0001;`**, and switching on also restores a level |
+
+Every one would have compiled, shipped, and failed only with the radio attached — the most
+expensive place to find it. **The upstream source is the authority on the protocol.**
+
+`/api/vfo-copy/{a2b,b2a}` are deliberately **not** implemented and 404: there is no CAT verb
+for them. The reference host does a read-modify-write sequence — select source VFO, read
+frequency, select target, write, restore selection — which needs a compound operation on the
+poller thread, not a queued one-liner. A route that silently retuned the wrong VFO would be
+worse than a 404.
+
+## The full-route walker (`tools/walk_all_routes.py`) — and how it fails closed
+
+The read-only parity check cannot cover routes that key the transmitter. Those are walked
+against the **simulator**, and the tool refuses to run anywhere else:
+
+    GET /api/backend  ->  {"simulated": true}
+
+`/api/backend` exists for exactly this. The reference host does not serve it, so it 404s there
+and the walker refuses. Anything that is not an explicit `simulated:true` — a 404, a
+connection error, a missing field — is a refusal. **There is deliberately no `--force`:** an
+override makes the check advisory, and an advisory check on something that keys a transmitter
+is not a check. Proven against the live host: it refused.
+
+⚠️ **The walker checks the RIG, not the route's own reply.** A route's response is produced by
+the handler under test, so it proves nothing. Every drive case reads the state back out of
+`/api/status` or `/api/status/full`.
+
+Result: **12/12 read-only, 39/39 driven and verified by reading back, 38/38 smoke.**
+
+### The walk found a real defect, not just test flake
+Fourteen cases failed, all of them fields on `/api/status/full` — which was polled only every
+fifth cycle. Toggling the noise blanker left the panel showing the old value for up to a
+second, so an operator would press it again and genuinely turn it back off.
+
+Fixed by marking the slow set dirty whenever a command is queued, so the next cycle re-reads
+it. **It re-reads the rig; it does not assume the command worked** — an optimistic local
+update would be a lie whenever the radio rejected the command.
 
 ## ⚠️ A test that cannot fail is not a test
 

@@ -32,8 +32,19 @@ void RadioPoller::Stop() {
 }
 
 void RadioPoller::Enqueue(const std::string& cat_command) {
-  std::lock_guard<std::mutex> lock(queue_mu_);
-  queue_.push_back(cat_command);
+  {
+    std::lock_guard<std::mutex> lock(queue_mu_);
+    queue_.push_back(cat_command);
+  }
+  // ⚠️ Any command may have moved a slow-polled field, so force a full re-read on
+  // the next cycle instead of waiting up to a second for the scheduled one.
+  // Without this, toggling the noise blanker leaves /api/status/full reporting
+  // the old value for up to a second and the panel appears not to have responded
+  // - so the operator presses it again, and now it really is off.
+  //
+  // This re-READS the rig; it does not assume the command worked. An optimistic
+  // local update would be a lie whenever the rig rejected the command.
+  full_dirty_.store(true);
 }
 
 void RadioPoller::DrainQueue() {
@@ -108,7 +119,7 @@ void RadioPoller::PollOnce() {
 
   // Carry the slow-moving fields forward on cycles where they are not re-read,
   // so /api/status/full does not flicker between real values and defaults.
-  if (cycle_ % kFullEveryNCycles == 0) {
+  if (cycle_ % kFullEveryNCycles == 0 || full_dirty_.exchange(false)) {
     PollFull(s);
   } else {
     std::lock_guard<std::mutex> lock(mu_);
@@ -116,7 +127,7 @@ void RadioPoller::PollOnce() {
     s.notch = snap_.notch; s.preamp = snap_.preamp; s.att = snap_.att;
     s.agc = snap_.agc; s.vox = snap_.vox; s.comp = snap_.comp; s.mon = snap_.mon;
     s.rit = snap_.rit; s.rit_offset = snap_.rit_offset; s.xit = snap_.xit;
-    s.rf_gain = snap_.rf_gain;
+    s.rf_gain = snap_.rf_gain; s.cw_speed = snap_.cw_speed; s.width_idx = snap_.width_idx;
   }
   ++cycle_;
 
@@ -172,15 +183,18 @@ void RadioPoller::PollFull(RigSnapshot& s) {
   if (Digits(cat_->Exchange("AN0;"), 3, 1, v)) s.ant = v;
   if (Flag(cat_->Exchange("NB0;"), 3, b))  s.nb = b;
   if (Flag(cat_->Exchange("NR0;"), 3, b))  s.nr = b;
-  if (Flag(cat_->Exchange("BP0;"), 3, b))  s.notch = b;
+  if (Flag(cat_->Exchange("BC0;"), 3, b))  s.notch = b;
   if (Digits(cat_->Exchange("PA0;"), 3, 1, v)) s.preamp = v;
   if (Flag(cat_->Exchange("RA0;"), 3, b))  s.att = b;
   if (Flag(cat_->Exchange("VX;"),  2, b))  s.vox = b;
   if (Flag(cat_->Exchange("PR0;"), 3, b))  s.comp = b;
-  if (Flag(cat_->Exchange("ML0;"), 3, b))  s.mon = b;
+  if (Digits(cat_->Exchange("ML0;"), 3, 3, v)) s.mon = v > 0;   // ML0PPP, 000=off
   if (Flag(cat_->Exchange("RT;"),  2, b))  s.rit = b;
   if (Flag(cat_->Exchange("XT;"),  2, b))  s.xit = b;
   if (Digits(cat_->Exchange("RG0;"), 3, 3, v)) s.rf_gain = v;
+  if (Digits(cat_->Exchange("KS;"),  2, 3, v)) s.cw_speed = v;
+  if (Flag(cat_->Exchange("EX030103;"), 8, b)) s.rxant = b;   // ANT3 SELECT menu item
+  if (Digits(cat_->Exchange("SH0;"), 4, 2, v)) s.width_idx = v;   // SH00<nn>
   if (auto r = cat_->Exchange("GT0;"); r && r->size() >= 5) {
     switch (r->at(3)) {
       case '0': s.agc = "OFF";  break;

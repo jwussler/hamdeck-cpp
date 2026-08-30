@@ -52,6 +52,8 @@ struct RigSnapshot {
   int         rit_offset = 0;
   bool        xit       = false;
   int         rf_gain   = 0;
+  int         cw_speed  = 0;
+  int         width_idx = 0;
 
   // /api/meters. These DO move fast, so they ride the fast loop.
   int         s_meter   = 0;
@@ -126,6 +128,7 @@ class RadioPoller {
   std::atomic<bool> running_{false};
   std::thread thread_;
 
+  std::atomic<bool> full_dirty_{true};
   std::mutex queue_mu_;
   std::deque<std::string> queue_;
 

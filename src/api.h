@@ -19,6 +19,9 @@ struct ApiDeps {
   RadioPoller* poller = nullptr;
   AuthService* auth = nullptr;
   RxAudioStream* rx_audio = nullptr;
+  // True when the CAT backend is the simulator. Surfaced on /api/backend so a
+  // test tool can PROVE it is not pointed at the station.
+  bool simulated = false;
   // Off on the live station (verified 08/30/2026: /api/status returns 401 on the
   // LAN port). When set, the read-only routes are served without a session.
   bool allow_anonymous_status = false;

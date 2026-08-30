@@ -33,16 +33,20 @@ std::optional<std::string> SimulatedRig::Exchange(const std::string& cmd) {
   if (cmd == "AN0;") return "AN0" + Pad(ant_, 1) + ";";
   if (cmd == "NB0;") return std::string("NB0") + (nb_ ? "1" : "0") + ";";
   if (cmd == "NR0;") return std::string("NR0") + (nr_ ? "1" : "0") + ";";
-  if (cmd == "BP0;") return std::string("BP0") + (notch_ ? "1" : "0") + ";";
+  if (cmd == "BC0;") return std::string("BC0") + (notch_ ? "1" : "0") + ";";
   if (cmd == "PA0;") return "PA0" + Pad(preamp_, 1) + ";";
   if (cmd == "RA0;") return std::string("RA0") + (att_ ? "1" : "0") + ";";
   if (cmd == "GT0;") return "GT0" + Pad(agc_, 1) + ";";
   if (cmd == "VX;")  return std::string("VX") + (vox_ ? "1" : "0") + ";";
   if (cmd == "PR0;") return std::string("PR0") + (comp_ ? "1" : "0") + ";";
-  if (cmd == "ML0;") return std::string("ML0") + (mon_ ? "1" : "0") + ";";
+  if (cmd == "ML0;") return std::string("ML0") + (mon_ ? "001" : "000") + ";";
   if (cmd == "RT;")  return std::string("RT") + (rit_ ? "1" : "0") + ";";
   if (cmd == "XT;")  return std::string("XT") + (xit_ ? "1" : "0") + ";";
   if (cmd == "RG0;") return "RG0" + Pad(rf_gain_, 3) + ";";
+  if (cmd == "KS;")  return "KS" + Pad(cw_speed_, 3) + ";";
+  if (cmd == "SH0;")      return "SH00" + Pad(width_, 2) + ";";
+  if (cmd == "EX030103;") return std::string("EX030103") + (rxant_ ? "1" : "0") + ";";
+  if (cmd == "RT;")       return std::string("RT") + (rit_ ? "1" : "0") + ";";
 
   // Meters. Constant, and deliberately so: a simulator that invented a wandering
   // S-meter would make a dead meter path look alive.
@@ -81,6 +85,43 @@ bool SimulatedRig::Send(const std::string& cmd) {
   if (cmd == "VS0;") { vfo_b_ = false; return true; }
   if (cmd == "LK1;") { lock_  = true;  return true; }
   if (cmd == "LK0;") { lock_  = false; return true; }
+
+  // Flags: <verb><0|1>;  The verb carries its own sub-index where the rig uses
+  // one (NB0, NR0, ...), so the table in api.cpp writes the exact CAT string.
+  auto flag = [&](const char* pfx, bool& target) {
+    const std::string on  = std::string(pfx) + "1;";
+    const std::string off = std::string(pfx) + "0;";
+    if (cmd == on)  { target = true;  return 1; }
+    if (cmd == off) { target = false; return 1; }
+    return 0;
+  };
+  if (flag("NB0", nb_))    return true;
+  if (flag("NR0", nr_))    return true;
+
+  if (flag("RA0", att_))   return true;
+  if (flag("VX",  vox_))   return true;
+  if (flag("PR0", comp_))  return true;
+
+  if (flag("RT",  rit_))   return true;
+  if (flag("XT",  xit_))   return true;
+
+  if (cmd == "BC01;") { notch_ = true;  return true; }
+  if (cmd == "BC00;") { notch_ = false; return true; }
+  if (cmd == "ML0001;") { mon_ = true;  return true; }
+  if (cmd == "ML0000;") { mon_ = false; return true; }
+  if (cmd == "EX0301031;") { rxant_ = true;  return true; }
+  if (cmd == "EX0301030;") { rxant_ = false; return true; }
+  if (cmd.rfind("RU", 0) == 0 && cmd.size() == 7) { rit_offset_ =  std::stoi(cmd.substr(2, 4)); return true; }
+  if (cmd.rfind("RD", 0) == 0 && cmd.size() == 7) { rit_offset_ = -std::stoi(cmd.substr(2, 4)); return true; }
+  if (cmd.rfind("SH00", 0) == 0 && cmd.size() == 7) { width_ = std::stoi(cmd.substr(4, 2)); return true; }
+  if (cmd == "SV;") { std::swap(freq_a_, freq_b_); return true; }
+  if (cmd.rfind("PA0", 0) == 0 && cmd.size() == 5) { preamp_ = cmd[3] - '0'; return true; }
+  if (cmd.rfind("GT0", 0) == 0 && cmd.size() == 5) { agc_    = cmd[3] - '0'; return true; }
+  if (cmd.rfind("AN0", 0) == 0 && cmd.size() == 5) { ant_    = cmd[3] - '0'; return true; }
+  if (cmd.rfind("KS",  0) == 0 && cmd.size() == 6) { cw_speed_ = std::stoi(cmd.substr(2, 3)); return true; }
+
+  if (cmd.rfind("RG0", 0) == 0 && cmd.size() == 6) { rf_gain_  = std::stoi(cmd.substr(3, 3)); return true; }
+  if (cmd == "RC;")  { rit_offset_ = 0; return true; }
 
   // An unrecognised set-command must be REFUSED, not silently swallowed. A
   // simulator that accepts anything makes malformed CAT look like working CAT,
