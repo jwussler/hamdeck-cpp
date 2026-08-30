@@ -594,6 +594,47 @@ earlier edit — and the string replace reported nothing. Prefix routing was sim
 `/api/mode/cw` still worked because it is *also* an exact route, which nearly hid it. Edits
 now assert their anchor exists before writing.
 
+## ⚠️ THE SWEEP FOUND AN OPEN-CARRIER BUG — in both implementations
+
+**There was no unkey on shutdown.** The transmit watchdog lives in the host process. Stop the
+host, restart it, or let it crash while the rig is keyed, and the watchdog dies with it —
+nothing is left to drop PTT. The station sits on an **open carrier with nothing watching at
+all**, which is strictly worse than the stuck-PTT case the watchdog was written for.
+
+The reference host has the same gap: its `ProcessExit` handler only sets a stop event.
+**Worth telling Joe** — it applies to the .NET host running the station today.
+
+Shutdown now, in an order that leaves the RADIO safe rather than the process tidy:
+
+1. stop both listeners, so nothing can key the rig while we are unkeying
+2. stop the poller, so exactly one thread owns the serial port
+3. **drop PTT and confirm the rig stopped**, by reading `TX;` back — not by assuming the
+   command landed
+4. stop the audio threads
+
+Measured: **2.3 s idle, 3.3 s keyed**, comfortably inside the unit's `TimeoutStopSec=10`. That
+margin matters: if shutdown overran the timeout systemd would `SIGKILL`, and the unkey would
+never happen.
+
+⚠️ The signal handler sets an atomic and notifies — nothing else. An earlier version set a
+flag nothing read, which made the process unkillable. **The rule: act, or do not install a
+handler.**
+
+⚠️ And I called this a hang before measuring it. The idle case printed "shutting down" and I
+checked for the process 2 s later, saw it, and reported a deadlock. It was simply still
+shutting down. *Measure the duration; do not infer a hang from one early look.*
+
+## Still not implemented, and now known rather than assumed
+
+- **19 `/api/admin/*` routes** — user add/remove/password, transmit permission, sessions,
+  kick, lockdown, presets, flexknob buttons, mic release, rport gain, tx devices. Adding a
+  user currently means editing the config file by hand. Wanted before this is a product; not
+  blocking a first client.
+- **`/audio`** (an HTTP audio endpoint alongside `/ws`) and **`/wsflexknob`** (the FlexKnob
+  controller) — no FlexKnob hardware here.
+- The **CAT proxy** (`cat_proxy_enabled`, rigctld-style TCP passthrough).
+- The static web UI the reference host serves from `wwwroot`.
+
 ## ⚠️ A test that cannot fail is not a test
 
 The obvious staleness check — `SIGSTOP` the process, re-query — is worthless. It freezes the

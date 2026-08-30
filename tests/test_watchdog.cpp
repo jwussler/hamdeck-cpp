@@ -65,9 +65,24 @@ int main() {
   assert(poller.WatchdogTrips() == 1);
   std::printf("watchdog: 0 disables (still keyed after 1.6s, trips still 1)\n");
 
-  poller.Enqueue("TX0;");
+  // ── Unkey on shutdown ─────────────────────────────────────────────────────
+  // ⚠️ The watchdog lives in THIS PROCESS. If the process exits while the rig is
+  // keyed, the watchdog dies with it and nothing is left to drop PTT - the
+  // station sits on an open carrier with nothing watching at all. So shutdown
+  // must unkey, and must confirm the rig actually stopped rather than assume the
+  // command landed.
+  poller.SetPttTimeoutSeconds(0);          // watchdog off, so it cannot do the work
+  poller.Enqueue("TX1;");
   SettleMs(400);
-  poller.Stop();
+  assert(poller.Snapshot().tx);
+  assert(raw->Exchange("TX;").value() == "TX1;");
+
+  poller.Stop();                            // as on the shutdown path
+  const bool confirmed = poller.UnkeyAndConfirm();
+  assert(confirmed);
+  assert(raw->Exchange("TX;").value() == "TX0;");
+  std::printf("shutdown: keyed rig unkeyed and CONFIRMED after the poller stopped\n");
+
   std::printf("PASS\n");
   return 0;
 }

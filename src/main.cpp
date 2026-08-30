@@ -8,7 +8,10 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 #include "api.h"
@@ -23,6 +26,17 @@
 #include "version.h"
 
 namespace {
+
+std::atomic<bool> g_stop{false};
+std::mutex g_stop_mu;
+std::condition_variable g_stop_cv;
+
+// Signal handlers may call almost nothing. Setting an atomic and notifying is
+// the safe minimum; the real work happens on the main thread.
+void OnStopSignal(int) {
+  g_stop.store(true);
+  g_stop_cv.notify_all();
+}
 
 // TWO LISTENERS, AND THE SPLIT IS LOAD-BEARING. Measured against the running C#
 // host on the reference host on 08/30/2026:
@@ -72,11 +86,15 @@ int main(int argc, char** argv) {
     }
   }
 
-  // A handler that swallows SIGTERM without stopping the server makes the
-  // process unkillable by normal means and breaks every systemctl restart. It
-  // happened here once already. Default disposition is correct; only SIGPIPE
-  // needs ignoring, so a dropped client cannot kill the host.
+  // ⚠️ SIGPIPE ignored so a dropped client cannot kill the host.
+  //
+  // SIGTERM and SIGINT are HANDLED, but the handler must actually act and then
+  // let the process die. An earlier version set a flag nothing read, so the
+  // process caught the signal and kept serving - unkillable by normal means, and
+  // it broke every systemctl restart. The rule: act, or do not install a handler.
   std::signal(SIGPIPE, SIG_IGN);
+  std::signal(SIGTERM, OnStopSignal);
+  std::signal(SIGINT, OnStopSignal);
 
   // ── Config ────────────────────────────────────────────────────────────────
   // A missing file is fine: the defaults are usable and name no station. A
@@ -202,9 +220,37 @@ int main(int argc, char** argv) {
 
   if (selftest) return SelfTest(poller, rx_audio, control, control_spec);
 
-  // Park the main thread. SIGTERM ends the process and civetweb's threads with
-  // it - deliberately no signal handler, see the note above.
-  for (;;) std::this_thread::sleep_for(std::chrono::seconds(3600));
+  // Wait for a stop signal, then shut down in an order that leaves the RADIO
+  // safe rather than the process tidy.
+  {
+    std::unique_lock<std::mutex> lock(g_stop_mu);
+    g_stop_cv.wait(lock, [] { return g_stop.load(); });
+  }
+  std::cout << "\nshutting down\n" << std::flush;
+
+  // 1. Stop accepting requests, so nothing can key the rig while we are unkeying.
+  control.Stop();
+  dashboard.Stop();
+
+  // 2. Stop the poller so exactly one thread owns the serial port.
+  const bool was_keyed = poller.Snapshot().tx;
+  poller.Stop();
+
+  // 3. ⚠️ DROP PTT. This is the whole reason the handler exists. The watchdog
+  //    lives in this process; if we exit while keyed, nothing is left to unkey
+  //    the rig and the station sits on an open carrier.
+  if (was_keyed) {
+    const bool confirmed = poller.UnkeyAndConfirm();
+    std::cout << (confirmed ? "unkeyed on shutdown (rig confirmed)"
+                            : "WARNING: could not confirm unkey on shutdown")
+              << '\n' << std::flush;
+  } else {
+    std::cout << "not transmitting at shutdown\n" << std::flush;
+  }
+
+  rx_audio.Stop();
+  tx_audio.Stop();
+  return 0;
 }
 
 namespace {

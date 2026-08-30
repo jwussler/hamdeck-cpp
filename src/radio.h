@@ -112,6 +112,17 @@ class RadioPoller {
   // the whole point of the watchdog living next to the radio.
   int TransmitSecondsRemaining() const;
 
+  // ⚠️ DROP PTT AND WAIT FOR THE RIG TO CONFIRM. Called on shutdown.
+  //
+  // The transmit watchdog lives in THIS PROCESS. If the process exits while the
+  // rig is keyed, the watchdog dies with it and nothing on earth drops PTT - the
+  // station sits there with an open carrier until somebody walks up to it. That
+  // is worse than the stuck-PTT case the watchdog was written for, because there
+  // is no longer anything watching at all.
+  //
+  // Returns true if the rig confirmed it stopped transmitting.
+  bool UnkeyAndConfirm(int timeout_ms = 1500);
+
   // Default from the C# Config: ptt_timeout_seconds = 180.
   static constexpr int kDefaultPttTimeoutSeconds = 180;
 

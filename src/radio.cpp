@@ -158,6 +158,23 @@ void RadioPoller::PollOnce() {
   snap_ = s;
 }
 
+bool RadioPoller::UnkeyAndConfirm(int timeout_ms) {
+  // Sent straight down the port rather than queued: the queue is drained by the
+  // poll loop, and on a shutdown path the poll loop may be about to stop. This
+  // runs after Stop(), so no other thread is touching the port.
+  cat_->Send("TX0;");
+
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto r = cat_->Exchange("TX;");
+    if (r && r->size() >= 3 && r->at(2) == '0') return true;
+    cat_->Send("TX0;");   // keep asking; a single dropped byte must not end it
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  return false;
+}
+
 int RadioPoller::TransmitSecondsRemaining() const {
   const int limit = ptt_timeout_s_.load();
   if (limit <= 0) return 0;
