@@ -10,7 +10,7 @@
 ; honest position - BRAND.md's voice section: name what does not work.
 
 #define AppName    "HamDeck"
-#define AppVersion "0.1.5"
+#define AppVersion "0.1.6"
 #define AppExe     "hamdeck-qml.exe"
 
 [Setup]
