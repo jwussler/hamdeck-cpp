@@ -21,7 +21,7 @@
 namespace {
 
 // TWO LISTENERS, AND THE SPLIT IS LOAD-BEARING. Measured against the running C#
-// host on the VM on 08/30/2026:
+// host on the reference host on 08/30/2026:
 //
 //   :5001 control   - 127.0.0.1 ONLY, no session required. A LAN caller is
 //                     refused: "The control API only serves this machine."
@@ -47,7 +47,7 @@ int main() {
   // needs ignoring, so a dropped client cannot kill the host.
   std::signal(SIGPIPE, SIG_IGN);
 
-  // Simulated rig: the real CAT bridge is passed through to the VM and the
+  // Simulated rig: the real CAT bridge is passed through to the reference host and the
   // station is on the air. The backend is named in the banner so a simulator
   // reading is never mistaken for the radio.
   RadioPoller poller(std::make_unique<SimulatedRig>());

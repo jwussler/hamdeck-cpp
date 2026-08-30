@@ -32,7 +32,7 @@ class SimulatedRig : public CatTransport {
 
   // Powered-on defaults chosen to look nothing like the live station, so a
   // simulator reading is never mistaken for a real one in a screenshot or log.
-  long long freq_a_ = 14074000;  // 20m FT8 - obviously not the 7190000 on the VM
+  long long freq_a_ = 14074000;  // 20m FT8 - deliberately not what the station runs
   long long freq_b_ = 14074000;
   int  mode_code_   = 2;         // 2 = USB in the FTDX-101 MD table
   int  power_       = 5;         // a real station is not running 5 W

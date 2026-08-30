@@ -6,7 +6,8 @@ Everything a C++ port needs that is **not** obvious from the C# source, written 
 The existing project is `jwussler/HamDeck`, branch `linux-port`. Two halves:
 
 - **host** — talks to the radio over CAT serial, owns the audio devices, serves a REST + WebSocket
-  API. Runs on the VM (`ssh <reference-host>`, [lan-host]) as `the host service`.
+  API. Runs on a dedicated VM as a systemd service. (Site specifics: see `SITE.md`, which is
+  gitignored — this repo is public.)
 - **client** — WPF panel on Windows. Talks only to the host's API; it never opens a serial port.
 
 **A C++ port should target the HOST first.** It is the half where the language argument has any
@@ -200,13 +201,16 @@ shipped a release that could not launch at all while every test passed.
 
 ## 9. Environment
 
-- host: `ssh <reference-host>` (the VM, [lan-host]). Service `the host service`. Repo `~/HamDeck`.
-- ⚠️ **the VM's branch has diverged from origin.** It carries ~408 lines of working ALSA audio,
-  the status-cache fix, the watchdog and the adaptive latency work that are **not on GitHub**;
-  origin has a parallel implementation plus `CODE_OF_CONDUCT.md`/`SECURITY.md`. **Do not resolve
-  this by force-pushing either side.** Bundles in `~/backups/hamdeck/` on shack.
-- the VM has **no GitHub credentials for HTTPS**; it pushes via a deploy key
-  (`~/.ssh/github_hamdeck`). shack's token lacks `workflow` scope, so anything touching
-  `.github/workflows/**` must be pushed from the VM.
+- **Host, addresses, VM ids and service names live in `SITE.md`**, which is gitignored. This
+  repo is public: a hostname in a public repo points every install at that station, and the
+  same goes for anything else that identifies the site.
+- ⚠️ **The reference host's branch has diverged from origin.** It carries ~408 lines of
+  working ALSA audio, the status-cache fix, the watchdog and the adaptive latency work that
+  are **not on GitHub**; origin has a parallel implementation plus
+  `CODE_OF_CONDUCT.md`/`SECURITY.md`. **Do not resolve this by force-pushing either side.**
+  Bundles exist locally — path in `SITE.md`.
+- the host VM has **no GitHub credentials for HTTPS**; it pushes via a deploy key. The
+  workstation token lacks `workflow` scope, so anything touching `.github/workflows/**` must
+  be pushed from the host VM.
 - rig: Yaesu FTDX-101MP, CAT on `/dev/ttyUSB0` at 38400. Probe safely with `ID;` → `ID0682;`.
   **Never probe with a control route** — doing that once changed the operating mode mid-session.

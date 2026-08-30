@@ -1,15 +1,17 @@
-# Live contracts captured from the running C# host (the VM, v3.4.14) on 08/30/2026.
-# Captured from 127.0.0.1:5001 ON the box - :5001 refuses LAN callers.
-# These are the shapes the existing WPF client expects. Match them exactly.
+# Route contracts from the reference .NET host. Captured live, then SANITIZED.
+#
+# VALUES ARE PLACEHOLDERS. Keys, ordering and JSON types are exactly as captured -
+# that is the part the client depends on and the part worth matching. The real
+# readings said what the station was doing at the time, and this repo is public.
 
 GET /api/health
-{"status":"ok","service":"HamDeck API (C#)","version":"3.4.14","port":5001,"rig_connected":true,"amp_tuning":false,"tgxl_tuning":false,"freq_buffer":""}
+{"status":"ok","service":"HamDeck API (C#)","version":"0.0.0","port":5001,"rig_connected":true,"amp_tuning":false,"tgxl_tuning":false,"freq_buffer":""}
 
 GET /api/status
-{"connected":true,"freq":7190000,"mode":"LSB","vfo":"A","power":200,"tx":false,"tx_timeout_in":0,"split":false,"amp_tuning":false,"tgxl_tuning":false,"freq_buffer":"","vfo_locked":false,"diversity":false,"cache_age_ms":138,"stale":false}
+{"connected":true,"freq":14074000,"mode":"USB","vfo":"A","power":100,"tx":false,"tx_timeout_in":0,"split":false,"amp_tuning":false,"tgxl_tuning":false,"freq_buffer":"","vfo_locked":false,"diversity":false,"cache_age_ms":100,"stale":false}
 
 GET /api/status/full
-{"ant":1,"rxant":true,"nb":false,"nr":true,"notch":true,"lock":false,"preamp":1,"att":false,"agc":"AUTO","vox":false,"comp":false,"mon":false,"rit":false,"rit_offset":0,"xit":false,"freq_b":7190000,"rf_gain":255,"rxant_km":0}
+{"ant":1,"rxant":true,"nb":false,"nr":true,"notch":true,"lock":false,"preamp":1,"att":false,"agc":"AUTO","vox":false,"comp":false,"mon":false,"rit":false,"rit_offset":0,"xit":false,"freq_b":14074000,"rf_gain":128,"rxant_km":0}
 
 GET /api/meters
-{"status":"ok","s_meter":146,"swr":0,"alc":0,"power":0}
+{"status":"ok","s_meter":0,"swr":0,"alc":0,"power":100}

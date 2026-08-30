@@ -4,7 +4,7 @@
 //
 // Two backends will implement this: a real serial port (/dev/ttyUSB0 @ 38400) and
 // a simulator. The simulator is not a toy - it is what lets ~all 141 routes be
-// built and regression-tested while the radio stays attached to the VM and the
+// built and regression-tested while the radio stays attached to the reference host and the
 // station stays on the air. Assume it will outlive the port and be the thing CI
 // runs against, because CI will never have a radio.
 //
