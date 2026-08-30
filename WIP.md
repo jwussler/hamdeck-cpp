@@ -398,6 +398,47 @@ Fixed by marking the slow set dirty whenever a command is queued, so the next cy
 it. **It re-reads the rig; it does not assume the command worked** — an optimistic local
 update would be a lie whenever the radio rejected the command.
 
+## Config — and it ships no station
+
+`src/config.h`, keys matching the reference host so one file describes either implementation.
+Example at `deploy/config.example.json`.
+
+⚠️ **No default names a host or an address.** `radio_port` empty means use the simulator;
+`tgxl_host`/`kmtronic_host` empty means that feature is off. This is a test, not a convention
+(`tests/test_config.cpp` asserts the defaults are empty).
+
+> **Worth telling Joe:** the reference host's `Models/Config.cs` carries station LAN addresses
+> as compiled-in defaults (`tgxl_host`, `kmtronic_host`) and a default `web_username`. That
+> source is public.
+
+### A bad config is FATAL, not ignored
+A missing file is fine — defaults are usable. A file that **exists and is malformed** exits 1.
+Starting on defaults would run the station on settings the operator did not choose and
+believes they changed, **including the transmit watchdog**.
+
+Refusals, each tested: malformed JSON, non-object top level, wrong value types, a `web_users`
+entry with no `password_hash` (an account that cannot authenticate is a mistake, not a
+disabled account), and `api_port == dashboard_port`. A **negative** `ptt_timeout_seconds` is
+refused because it is a typo; **zero** is accepted because it means deliberately disabled.
+
+### ⚠️ A test passed for the wrong reason, and it found a real defect
+The port-collision case passed — while reporting the *watchdog* error, because the test reused
+one `Config` across cases and a rejected value from an earlier case was still in it. That was
+possible only because `Load()` wrote into its output as it parsed. So **a rejected config left
+the caller holding a half-applied one**: some keys from the file, the rest defaults. Now it
+parses into a local and assigns only on success, and the test asserts a rejected load changes
+nothing and fails for the *named* reason.
+
+## Capability honesty
+
+CARRYOVER.md section 1: the reference Linux build's `/api/record/start` answers
+`{"status":"ok","recording":true}` while `Start()` sets `IsRecording = false`. A 200 means the
+route exists, not that anything is recording.
+
+So `/api/record/status` and `/api/tx-audio/status` report `available:false` **with a reason**,
+rather than a cheerful 200 that only proves the route was registered. The client greys the
+feature out instead of showing a button that silently does nothing.
+
 ## ⚠️ A test that cannot fail is not a test
 
 The obvious staleness check — `SIGSTOP` the process, re-query — is worthless. It freezes the

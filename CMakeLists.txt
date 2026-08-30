@@ -27,8 +27,18 @@ FetchContent_MakeAvailable(civetweb)
 
 find_package(OpenSSL REQUIRED)
 
-add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp)
-target_link_libraries(hamdeck-host PRIVATE civetweb-c-library OpenSSL::Crypto)
+# nlohmann/json, pinned. MIT, header-only. Added when config landed: hand-rolled
+# string scraping is fine for a two-field login body and is a liability for a
+# config file, where a silently mis-parsed value is a setting that quietly is not
+# what the operator wrote.
+FetchContent_Declare(nlohmann_json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG        v3.11.3
+  GIT_SHALLOW    TRUE)
+FetchContent_MakeAvailable(nlohmann_json)
+
+add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp)
+target_link_libraries(hamdeck-host PRIVATE civetweb-c-library OpenSSL::Crypto nlohmann_json::nlohmann_json)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
 
 # CI must RUN things, not just build them (CARRYOVER.md section 8): the .NET
@@ -53,3 +63,7 @@ add_test(NAME audio_queue COMMAND test_audio_queue)
 add_executable(test_serial tests/test_serial.cpp src/serial_cat.cpp)
 target_link_libraries(test_serial PRIVATE util)
 add_test(NAME serial COMMAND test_serial)
+
+add_executable(test_config tests/test_config.cpp src/config.cpp)
+target_link_libraries(test_config PRIVATE nlohmann_json::nlohmann_json)
+add_test(NAME config COMMAND test_config)

@@ -1,0 +1,27 @@
+{
+  "_comment": "Copy to ~/.hamdeck/hamdeck.json or /etc/hamdeck-cpp/config.json.",
+  "_comment_hosts": "NOTHING here names a station. radio_port empty = use the simulated rig. tgxl_host/kmtronic_host empty = that feature is off. Fill them in on the machine, never in the repo.",
+
+  "radio_port": "",
+  "radio_baud": 38400,
+
+  "record_sample_rate": 22050,
+  "alsa_capture_device": "default",
+  "alsa_playback_device": "default",
+
+  "api_port": 5001,
+  "dashboard_port": 5002,
+  "allow_anonymous_status": false,
+
+  "_comment_watchdog": "0 disables the transmit watchdog. Negative is refused - it is a typo, and treating it as disabled would remove the only thing stopping a stuck PTT.",
+  "ptt_timeout_seconds": 180,
+
+  "web_session_timeout": 480,
+  "_comment_users": "password_hash is pbkdf2:<hex salt>:<hex hash>, PBKDF2-HMAC-SHA256, 350000 iterations. Never put a plaintext password here.",
+  "web_users": [
+    { "username": "changeme", "password_hash": "", "is_admin": true, "can_transmit": true }
+  ],
+
+  "tgxl_host": "",
+  "kmtronic_host": ""
+}

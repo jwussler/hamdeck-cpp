@@ -188,6 +188,29 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // the operator to point it at the right host is not a safeguard; a machine-
   // checkable answer is. The reference host does not serve this route, so it
   // 404s there and any such tool must refuse on 404 rather than assume.
+  // ── Capability reporting ───────────────────────────────────────────────────
+  // ⚠️ CARRYOVER.md section 1: on the reference Linux build /api/record/start
+  // answers {"status":"ok","recording":true} while Start() sets IsRecording =
+  // false. A 200 there means the route exists, not that anything is recording.
+  //
+  // The rule taken from that: if a capability is absent, its STATUS route says
+  // so. Never a cheerful 200 that only proves the route was registered.
+  server.Get("/api/record/status", [](const HttpRequest&, HttpResponse& res) {
+    WriteJson(res, 200,
+              R"({"status":"ok","available":false,"file_recording":false,)"
+              R"("reason":"recording is not implemented in the C++ host yet"})");
+  });
+
+  server.Get("/api/tx-audio/status", [&deps](const HttpRequest&, HttpResponse& res) {
+    // available is false until there is a real playback path to the rig. Saying
+    // true because the route exists is the exact bug above.
+    (void)deps;
+    WriteJson(res, 200,
+              R"({"status":"ok","available":false,"active":false,)"
+              R"("client_connected":false,)"
+              R"("reason":"TX audio needs the ALSA playback path"})");
+  });
+
   server.Get("/api/backend", [&deps](const HttpRequest&, HttpResponse& res) {
     WriteJson(res, 200,
               std::format(R"({{"status":"ok","cat":"{}","simulated":{}}})",

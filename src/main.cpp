@@ -16,6 +16,7 @@
 #include "http.h"
 #include "auth.h"
 #include "cat_sim.h"
+#include "config.h"
 #include "serial_cat.h"
 #include "radio.h"
 #include "version.h"
@@ -76,6 +77,24 @@ int main(int argc, char** argv) {
   // needs ignoring, so a dropped client cannot kill the host.
   std::signal(SIGPIPE, SIG_IGN);
 
+  // ── Config ────────────────────────────────────────────────────────────────
+  // A missing file is fine: the defaults are usable and name no station. A
+  // file that EXISTS but is malformed is fatal - starting on defaults would run
+  // the station on settings the operator did not choose and believes they
+  // changed, including the transmit watchdog.
+  Config config;
+  for (const auto& path : Config::DefaultPaths()) {
+    std::string err;
+    if (Config::Load(path, config, err)) {
+      std::cout << "config: " << path << '\n' << std::flush;
+      break;
+    }
+    if (err != "not found") {
+      std::cerr << "FATAL: config " << path << ": " << err << '\n';
+      return 1;
+    }
+  }
+
   // ⚠️ THE DEFAULT IS THE SIMULATOR, DELIBERATELY.
   // Talking to the radio has to be asked for. A host that hunts for a serial port
   // on startup would grab the CAT link the moment it ran anywhere near the
@@ -87,12 +106,15 @@ int main(int argc, char** argv) {
   // simulator reading is never mistaken for the radio.
   std::unique_ptr<CatTransport> cat;
   bool simulated = false;
-  if (const char* dev = std::getenv("HAMDECK_CAT_DEVICE")) {
+  const char* env_dev = std::getenv("HAMDECK_CAT_DEVICE");
+  const std::string dev_str = env_dev ? env_dev : config.radio_port;
+  if (!dev_str.empty()) {
+    const char* dev = dev_str.c_str();
     auto serial = std::make_unique<SerialCat>();
     const bool ok =
         (std::string(dev) == "auto")
             ? serial->OpenFirstResponding({"/dev/ttyUSB0", "/dev/ttyUSB1"})
-            : serial->Open(dev);
+            : serial->Open(dev, config.radio_baud);
     if (!ok) {
       // Fail loudly and exit. Falling back to the simulator here would be the
       // worst possible behaviour: the host would come up looking healthy and
@@ -109,9 +131,15 @@ int main(int argc, char** argv) {
     simulated = true;
   }
   RadioPoller poller(std::move(cat));
+  poller.SetPttTimeoutSeconds(config.ptt_timeout_seconds);
   poller.Start();
 
-  AuthService auth(480);
+  AuthService auth(config.web_session_timeout);
+  for (const auto& u : config.web_users) {
+    auth.AddUser(u.username, u.password_hash, u.is_admin, u.can_transmit);
+  }
+  // Env override, for a throwaway run without writing a config file. It does not
+  // replace the configured users, it adds to them.
   if (const char* hash = std::getenv("HAMDECK_ADMIN_HASH")) {
     auth.AddUser("admin", hash, /*is_admin=*/true);
   }
@@ -119,7 +147,7 @@ int main(int argc, char** argv) {
   // Synthetic RX audio: the codec is passed through to the reference host, so
   // there is no real capture device here. 22050 Hz mono/16-bit matches the wire
   // format the client expects (CARRYOVER.md section 2).
-  RxAudioStream rx_audio(std::make_unique<ToneSource>(22050, 700.0));
+  RxAudioStream rx_audio(std::make_unique<ToneSource>(config.record_sample_rate, 700.0));
   rx_audio.Start();
 
   ApiDeps deps;
@@ -127,7 +155,7 @@ int main(int argc, char** argv) {
   deps.auth = &auth;
   deps.rx_audio = &rx_audio;
   deps.simulated = simulated;
-  deps.allow_anonymous_status = false;   // matches the live station
+  deps.allow_anonymous_status = config.allow_anonymous_status;
 
   HttpServer control;
   HttpServer dashboard;
@@ -137,6 +165,8 @@ int main(int argc, char** argv) {
   std::cout << kServiceName << ' ' << kVersion << '\n'
             << "CAT backend: " << poller.Backend() << '\n'
             << "rx audio: " << rx_audio.Backend() << '\n'
+            << "watchdog: " << (config.ptt_timeout_seconds > 0
+                   ? std::to_string(config.ptt_timeout_seconds) + "s" : "DISABLED") << '\n'
             << "auth: " << (auth.IsConfigured() ? "configured"
                                                 : "NO USERS - dashboard will 401")
             << '\n' << std::flush;
