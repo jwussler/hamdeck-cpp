@@ -28,6 +28,23 @@ Windows client stops working.
 - Suggested libraries, all OSI-approved so code signing stays possible: miniaudio (audio),
   cpp-httplib (REST), IXWebSocket, nlohmann/json, Dear ImGui if a lighter UI is wanted.
 
+## Where this is going
+
+⚠️ **A Raspberry Pi at the rig is the intended destination** — a small always-on box doing CAT
+and audio, no VM, no hypervisor. That is the reason C++ was chosen at all, so it shapes decisions
+now rather than later:
+
+- **Build for ARM64 from day one.** Cross-compilation is free to set up at the start and painful
+  to retrofit once x86 assumptions have spread. Add the ARM target to CI with the first binary,
+  not the fiftieth.
+- **No x86-only intrinsics, no assumptions about unaligned access**, and check any dependency
+  actually has an ARM build before adopting it.
+- ⚠️ **The CPU cost on a Pi is TLS and the tunnel, not the audio.** Audio is a memcpy at
+  96 kB/s; the crypto is the load. Size the board for that. A Pi Zero 2 W or better is the
+  realistic floor.
+- The USB codec (TI PCM2903C) and the CP2105 CAT bridge both need `linux-modules-extra` on a
+  stripped kernel — see CARRYOVER.md. Do not assume the Pi image ships `snd-usb-audio`.
+
 ## Non-negotiables
 
 - ⚠️ **Never probe a live rig with a control route.** Reading is fine; `/api/mode/usb`
