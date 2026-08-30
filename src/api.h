@@ -1,9 +1,10 @@
 #pragma once
 
-#include <httplib.h>
+#include "http.h"
 
 #include <string>
 
+#include "audio.h"
 #include "auth.h"
 #include "radio.h"
 
@@ -17,10 +18,11 @@ enum class Listener {
 struct ApiDeps {
   RadioPoller* poller = nullptr;
   AuthService* auth = nullptr;
+  RxAudioStream* rx_audio = nullptr;
   // Off on the live station (verified 08/30/2026: /api/status returns 401 on the
   // LAN port). When set, the read-only routes are served without a session.
   bool allow_anonymous_status = false;
 };
 
-void InstallRoutes(httplib::Server& server, Listener listener, int bound_port,
+void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                    const ApiDeps& deps);

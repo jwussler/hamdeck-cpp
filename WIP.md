@@ -60,8 +60,8 @@ thin CAT wrappers, so this is not 141 hand-written handlers.
 2. **Status cache + 200 ms poller** ✅
 3. **Declarative route table** ✅ core operating set; the rest is mechanical
 4. **Auth/session** ✅
-5. **WebSocket** `/ws` and `/ws/tx` — httplib has none, so framing is hand-rolled. Testable
-   with synthetic audio.
+5. **WebSocket** — `/ws` ✅ done; `/ws/tx` still to do (it needs somewhere to put the audio,
+   so it lands with the ALSA work).
 6. **systemd unit + CI that runs the binary.**
 
 ### Needs the radio.
@@ -175,6 +175,57 @@ moved — a counter is a claim, `TX0;` is the outcome.
 ### The power cap is intentional
 A local caller is capped lower than a remote one. It reads backwards; it is deliberate,
 confirmed 08/30/2026. **Do not "fix" it.**
+
+## The HTTP library had to change — cpp-httplib → civetweb
+
+**cpp-httplib has no WebSocket support at all** — it defines the 426 status constant and
+nothing else, and cannot hand off the socket. `/ws` therefore could never be served by it,
+and moving `/ws` to a port of its own is not an option: the client connects to
+`ws://host:<dashboard port>/ws`, so a separate port breaks every existing client.
+
+civetweb (MIT, pinned v1.16) serves HTTP and WebSocket on one port. **The swap was done now,
+at 5 routes, rather than later at 141.**
+
+`src/http.h` is a thin wrapper so the route table does not know what is underneath. That swap
+touched every route once; it should not happen twice.
+
+After the swap the whole security boundary was re-verified rather than assumed: anonymous
+`/api/health` and `/api/auth/status` still 200, `/api/status` and `/api/mode/lsb` still 401,
+an unknown path still 401 (gate still ahead of routing), the control port still refused from
+the LAN, all three token transports still work, and the 401 body is still byte-identical to
+the C# host.
+
+## RX audio — `/ws` done
+
+Contract matched to the C# `AudioStreamer`:
+
+- **config frame first**, as TEXT, before any binary frame:
+  `{"type":"config","sample_rate":22050,"channels":1,"bits_per_sample":16}`. Without it the
+  client cannot know how to interpret the bytes that follow.
+- binary PCM, 22050 Hz / 16-bit / mono.
+- **the auth gate runs on the WebSocket upgrade**, not just on REST. RX audio is somebody's
+  operating activity; an unauthenticated upgrade is refused before a single frame is sent.
+  Verified: no session → no handshake response at all.
+- **one writer thread.** Every frame for every client goes out from a single thread, so
+  frames can never interleave on a socket, and writes are locked per connection.
+- **bounded queue, drop the OLDEST**, trimmed to 10 before each push — the same policy as
+  the C# streamer.
+
+Measured over the network with a dependency-free RFC6455 probe: **43.2 KiB/s, implied 22101
+Hz** — against the 43.1 KiB/s CARRYOVER.md section 3 records from the live station.
+
+### ⚠️ "Bounded" is easy to get backwards
+Dropping the *newest* also bounds the queue and also passes a size check, while leaving the
+listener permanently behind, playing an ever-later recording of the band. So the policy is
+pulled out of the producer loop into `BoundedChunkQueue` and tested by identity, not size:
+push 15 identifiable chunks, assert the survivors are chunks **5..14**. A size-only assertion
+would pass either way.
+
+### ⚠️ The first probe run "failed" and the server was innocent
+The first `/ws` probe reported a BINARY first frame instead of the config frame. The bug was
+in the probe: the handshake `recv` can pull the first WebSocket frame in with the headers,
+and it was discarding the leftover. **Before believing a server is wrong, check the
+instrument** — a broken measurement and a broken server look identical from the outside.
 
 ## ⚠️ A test that cannot fail is not a test
 

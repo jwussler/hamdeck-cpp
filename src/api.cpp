@@ -36,9 +36,9 @@ std::string JsonBool(bool b) { return b ? "true" : "false"; }
 // Order matters and matches the C# GetSessionToken: cookie, then Bearer, then
 // ?token=. The query parameter exists because a browser cannot set headers on a
 // WebSocket handshake.
-std::string ExtractToken(const httplib::Request& req) {
-  if (req.has_header("Cookie")) {
-    const std::string cookies = req.get_header_value("Cookie");
+std::string ExtractToken(const HttpRequest& req) {
+  {
+    const std::string cookies = req.Header("cookie");
     const std::string needle = "hamdeck_session=";
     if (const auto p = cookies.find(needle); p != std::string::npos) {
       const auto start = p + needle.size();
@@ -47,17 +47,17 @@ std::string ExtractToken(const httplib::Request& req) {
                                                             : end - start);
     }
   }
-  if (req.has_header("Authorization")) {
-    const std::string h = req.get_header_value("Authorization");
+  {
+    const std::string h = req.Header("authorization");
     if (h.rfind("Bearer ", 0) == 0) return h.substr(7);
   }
-  if (req.has_param("token")) return req.get_param_value("token");
-  return "";
+  return req.QueryParam("token");
 }
 
-void WriteJson(httplib::Response& res, int status, const std::string& body) {
+void WriteJson(HttpResponse& res, int status, const std::string& body) {
   res.status = status;
-  res.set_content(body, "application/json");
+  res.body = body;
+  res.content_type = "application/json";
 }
 
 std::string StatusJson(const ApiDeps& deps) {
@@ -127,7 +127,7 @@ constexpr int kMaxWatts      = 200;
 
 }  // namespace
 
-void InstallRoutes(httplib::Server& server, Listener listener, int bound_port,
+void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                    const ApiDeps& deps) {
   const bool trusted = (listener == Listener::kControl);
   const char* role = trusted ? "control" : "dash";
@@ -137,36 +137,28 @@ void InstallRoutes(httplib::Server& server, Listener listener, int bound_port,
   // unless somebody deliberately lists it as anonymous. The opposite default -
   // open unless remembered - is the shape that leaks, because it fails open
   // every time somebody forgets.
-  server.set_pre_routing_handler(
-      [&deps, trusted, role](const httplib::Request& req, httplib::Response& res) {
+  server.SetPreRouting(
+      [&deps, trusted, role](const HttpRequest& req, HttpResponse& res) -> bool {
         std::cout << role << ' ' << req.method << ' ' << req.path << '\n' << std::flush;
 
-        if (trusted) return httplib::Server::HandlerResponse::Unhandled;
-        if (kAlwaysAnonymous.count(req.path)) {
-          return httplib::Server::HandlerResponse::Unhandled;
-        }
-        if (deps.allow_anonymous_status && kReadOnly.count(req.path)) {
-          return httplib::Server::HandlerResponse::Unhandled;
-        }
-        if (req.path == "/api/auth/login") {
-          return httplib::Server::HandlerResponse::Unhandled;
-        }
-        if (deps.auth && deps.auth->ValidateSession(ExtractToken(req))) {
-          return httplib::Server::HandlerResponse::Unhandled;
-        }
+        if (trusted) return true;
+        if (kAlwaysAnonymous.count(req.path)) return true;
+        if (deps.allow_anonymous_status && kReadOnly.count(req.path)) return true;
+        if (req.path == "/api/auth/login") return true;
+        if (deps.auth && deps.auth->ValidateSession(ExtractToken(req))) return true;
         WriteJson(res, 401, R"({"status":"error","message":"Authentication required"})");
-        return httplib::Server::HandlerResponse::Handled;
+        return false;
       });
 
-  server.Get("/api/health", [&deps, bound_port](const httplib::Request&, httplib::Response& res) {
+  server.Get("/api/health", [&deps, bound_port](const HttpRequest&, HttpResponse& res) {
     WriteJson(res, 200, HealthJson(deps, bound_port));
   });
 
-  server.Get("/api/status", [&deps](const httplib::Request&, httplib::Response& res) {
+  server.Get("/api/status", [&deps](const HttpRequest&, HttpResponse& res) {
     WriteJson(res, 200, StatusJson(deps));
   });
 
-  server.Get("/api/auth/status", [&deps, trusted](const httplib::Request& req, httplib::Response& res) {
+  server.Get("/api/auth/status", [&deps, trusted](const HttpRequest& req, HttpResponse& res) {
     const std::string token = ExtractToken(req);
     const bool ok = deps.auth && deps.auth->ValidateSession(token);
     const auto user = ok ? deps.auth->Username(token) : std::nullopt;
@@ -180,7 +172,7 @@ void InstallRoutes(httplib::Server& server, Listener listener, int bound_port,
                   user ? "\"" + *user + "\"" : "null"));
   });
 
-  server.Post("/api/auth/login", [&deps](const httplib::Request& req, httplib::Response& res) {
+  server.Post("/api/auth/login", [&deps](const HttpRequest& req, HttpResponse& res) {
     if (!deps.auth) {
       WriteJson(res, 400, R"({"status":"error","message":"Invalid request"})");
       return;
@@ -207,9 +199,10 @@ void InstallRoutes(httplib::Server& server, Listener listener, int bound_port,
     // HttpOnly keeps it away from page scripts; SameSite=Strict closes the
     // top-level-navigation CSRF vector on state-changing GETs, of which this API
     // has many (/api/ptt/on is a GET).
-    res.set_header("Set-Cookie",
-                   std::format("hamdeck_session={}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
-                               *token, deps.auth->session_timeout_minutes() * 60));
+    res.extra_headers.push_back(
+        {"Set-Cookie",
+         std::format("hamdeck_session={}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}",
+                     *token, deps.auth->session_timeout_minutes() * 60)});
     WriteJson(res, 200, R"({"status":"ok","message":"Login successful"})");
   });
 
@@ -294,15 +287,30 @@ void InstallRoutes(httplib::Server& server, Listener listener, int bound_port,
   };
 
   for (const auto& route : table) {
-    server.Get(route.path, [h = route.handler, trusted](const httplib::Request&,
-                                                        httplib::Response& res) {
+    server.Get(route.path, [h = route.handler, trusted](const HttpRequest&, HttpResponse& res) {
       WriteJson(res, 200, h(trusted));
     });
   }
 
-  server.Post("/api/auth/logout", [&deps](const httplib::Request& req, httplib::Response& res) {
+  // ── RX audio ───────────────────────────────────────────────────────────────
+  // The auth gate already ran on the upgrade: an unauthenticated caller never
+  // reaches here, so the stream cannot be listened to without a session.
+  if (deps.rx_audio) {
+    RxAudioStream* rx = deps.rx_audio;
+    server.WebSocketRoute(
+        "/ws",
+        [rx](const HttpRequest&, std::shared_ptr<WsConnection> c) {
+          // The config frame goes FIRST, before any binary frame, or the client
+          // has no way to know how to interpret the bytes it is about to get.
+          c->SendText(rx->ConfigJson());
+          rx->AddClient(std::move(c));
+        },
+        [rx](std::shared_ptr<WsConnection> c) { rx->RemoveClient(c); });
+  }
+
+  server.Post("/api/auth/logout", [&deps](const HttpRequest& req, HttpResponse& res) {
     if (deps.auth) deps.auth->Logout(ExtractToken(req));
-    res.set_header("Set-Cookie", "hamdeck_session=; Path=/; HttpOnly; Max-Age=0");
+    res.extra_headers.push_back({"Set-Cookie", "hamdeck_session=; Path=/; HttpOnly; Max-Age=0"});
     WriteJson(res, 200, R"({"status":"ok","message":"Logged out"})");
   });
 }

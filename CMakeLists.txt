@@ -5,20 +5,30 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# cpp-httplib, pinned. Header-only, no TLS (cloudflared terminates it upstream).
-# NOTE: httplib has no WebSocket support, and the host needs /ws and /ws/tx.
-# That framing will be hand-rolled or come from another library later - see WIP.md.
+# civetweb, pinned. MIT. Chosen over cpp-httplib because it serves HTTP and
+# WebSocket ON THE SAME PORT, which is not a preference - the client connects to
+# ws://host:<dashboard port>/ws, so /ws cannot move to a port of its own without
+# breaking every existing client. cpp-httplib has no WebSocket support whatsoever
+# (it defines the 426 status constant and nothing else) and cannot hand off the
+# socket, so it could never serve /ws.
+#
+# The migration was done while the route surface was 5 routes rather than 141.
 include(FetchContent)
-FetchContent_Declare(httplib
-  GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-  GIT_TAG        v0.18.3
+set(CIVETWEB_ENABLE_WEBSOCKETS ON  CACHE BOOL "" FORCE)
+set(CIVETWEB_BUILD_TESTING     OFF CACHE BOOL "" FORCE)
+set(CIVETWEB_ENABLE_SERVER_EXECUTABLE OFF CACHE BOOL "" FORCE)
+set(CIVETWEB_ENABLE_CXX        OFF CACHE BOOL "" FORCE)
+set(CIVETWEB_INSTALL_EXECUTABLE OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(civetweb
+  GIT_REPOSITORY https://github.com/civetweb/civetweb.git
+  GIT_TAG        v1.16
   GIT_SHALLOW    TRUE)
-FetchContent_MakeAvailable(httplib)
+FetchContent_MakeAvailable(civetweb)
 
 find_package(OpenSSL REQUIRED)
 
-add_executable(hamdeck-host src/main.cpp src/api.cpp src/cat_sim.cpp src/radio.cpp src/auth.cpp)
-target_link_libraries(hamdeck-host PRIVATE httplib::httplib OpenSSL::Crypto)
+add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/radio.cpp src/auth.cpp)
+target_link_libraries(hamdeck-host PRIVATE civetweb-c-library OpenSSL::Crypto)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
 
 # CI must RUN things, not just build them (CARRYOVER.md section 8): the .NET
@@ -33,3 +43,7 @@ add_test(NAME auth COMMAND test_auth)
 
 add_executable(test_watchdog tests/test_watchdog.cpp src/cat_sim.cpp src/radio.cpp)
 add_test(NAME watchdog COMMAND test_watchdog)
+
+add_executable(test_audio_queue tests/test_audio_queue.cpp src/audio.cpp src/http.cpp)
+target_link_libraries(test_audio_queue PRIVATE civetweb-c-library)
+add_test(NAME audio_queue COMMAND test_audio_queue)

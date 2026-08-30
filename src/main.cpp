@@ -3,16 +3,17 @@
 // Route surface is in api.cpp; this file owns process startup and the listener
 // split. See WIP.md for the road map and CARRYOVER.md for the traps.
 
-#include <httplib.h>
-
 #include <cstdlib>
 #include <csignal>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <chrono>
 #include <thread>
 
 #include "api.h"
+#include "audio.h"
+#include "http.h"
 #include "auth.h"
 #include "cat_sim.h"
 #include "radio.h"
@@ -58,37 +59,48 @@ int main() {
     auth.AddUser("admin", hash, /*is_admin=*/true);
   }
 
+  // Synthetic RX audio: the codec is passed through to the reference host, so
+  // there is no real capture device here. 22050 Hz mono/16-bit matches the wire
+  // format the client expects (CARRYOVER.md section 2).
+  RxAudioStream rx_audio(std::make_unique<ToneSource>(22050, 700.0));
+  rx_audio.Start();
+
   ApiDeps deps;
   deps.poller = &poller;
   deps.auth = &auth;
+  deps.rx_audio = &rx_audio;
   deps.allow_anonymous_status = false;   // matches the live station
 
-  httplib::Server control;
-  httplib::Server dashboard;
+  HttpServer control;
+  HttpServer dashboard;
   InstallRoutes(control, Listener::kControl, kControlPort, deps);
   InstallRoutes(dashboard, Listener::kDashboard, kDashPort, deps);
 
   std::cout << kServiceName << ' ' << kVersion << '\n'
             << "CAT backend: " << poller.Backend() << '\n'
+            << "rx audio: " << rx_audio.Backend() << '\n'
             << "auth: " << (auth.IsConfigured() ? "configured"
                                                 : "NO USERS - dashboard will 401")
             << '\n' << std::flush;
 
-  std::thread control_thread([&] {
-    std::cout << "control   " << kControlAddr << ':' << kControlPort
-              << " (local only, no session)\n" << std::flush;
-    if (!control.listen(kControlAddr, kControlPort)) {
-      std::cerr << "failed to bind " << kControlAddr << ':' << kControlPort << '\n';
-      std::exit(1);
-    }
-  });
+  // civetweb listens on its own threads, so both Listen() calls return at once.
+  const std::string control_spec =
+      std::string(kControlAddr) + ":" + std::to_string(kControlPort);
+  const std::string dash_spec = std::string(kDashAddr) + ":" + std::to_string(kDashPort);
 
-  std::cout << "dashboard " << kDashAddr << ':' << kDashPort
-            << " (session required)\n" << std::flush;
-  if (!dashboard.listen(kDashAddr, kDashPort)) {
-    std::cerr << "failed to bind " << kDashAddr << ':' << kDashPort << '\n';
+  if (!control.Listen(control_spec)) {
+    std::cerr << "failed to bind " << control_spec << '\n';
     return 1;
   }
-  control_thread.join();
-  return 0;
+  std::cout << "control   " << control_spec << " (local only, no session)\n" << std::flush;
+
+  if (!dashboard.Listen(dash_spec)) {
+    std::cerr << "failed to bind " << dash_spec << '\n';
+    return 1;
+  }
+  std::cout << "dashboard " << dash_spec << " (session required)\n" << std::flush;
+
+  // Park the main thread. SIGTERM ends the process and civetweb's threads with
+  // it - deliberately no signal handler, see the note above.
+  for (;;) std::this_thread::sleep_for(std::chrono::seconds(3600));
 }
