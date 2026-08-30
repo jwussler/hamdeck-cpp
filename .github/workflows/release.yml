@@ -45,6 +45,20 @@ jobs:
         run: |
           sudo apt-get install -y -qq ./client/build/*.deb
           QT_QPA_PLATFORM=offscreen timeout 60 /usr/bin/hamdeck-qml --selftest
+      # ⚠️ A RELEASE GATE, ADDED BECAUSE 0.1.2 SHIPPED A WINDOW NOBODY COULD
+      # MOVE. Every check before it ran under the offscreen QPA - no window
+      # manager, no decoration - so a title bar placed above the top of the
+      # screen could not be seen. This runs a real WM and reads back where the
+      # decorated frame landed. If it fails, no installer is produced.
+      - name: Where does the window actually land
+        run: |
+          sudo apt-get install -y -qq xvfb openbox x11-utils xdotool
+          export HAMDECK_CLIENT=/usr/bin/hamdeck-qml
+          for s in 1024x600 1366x768 1920x1080 2560x1440; do
+            ./tools/placement_check.sh $s fresh || exit 1
+          done
+          ./tools/placement_check.sh 1920x1080 saved-at-origin || exit 1
+          ./tools/placement_check.sh 1920x1080 saved-offscreen || exit 1
       - uses: actions/upload-artifact@v4
         with: { name: hamdeck-linux-deb, path: client/build/*.deb }
 

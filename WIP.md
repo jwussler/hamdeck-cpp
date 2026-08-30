@@ -240,6 +240,7 @@ cleanly. Tested with a **10 s watchdog** as a backstop and power at **QRP**, not
 | `tools/coverage.py` | probes every reference route to measure what is implemented | same `/api/backend` guard |
 | `--selftest` (host and client) | walks the startup path and exits | CI runs it under an external **timeout**: a hang is a failure |
 | `--screenshot` (client) | renders the live window to a PNG | the only way to inspect a UI on a headless box |
+| `tools/placement_check.sh` | opens the window under a **real WM** (openbox/Xvfb) and reads the decorated frame back with `xwininfo -frame` | it is a **release gate** in CI: no installer is built if the frame lands off-screen |
 | `--check-resolutions` (client) | walks the panel across seven screen sizes and measures every key | **refuses to run without a session** — the connect screen fits every resolution ever made and would pass while measuring nothing |
 
 **A scope lock the operator must remember is not a lock.** Most of this API is state-changing
