@@ -18,6 +18,8 @@ void Settings::Load() {
   rx_device_name = s.value("rx_device_name", "").toString();
   tx_device_name = s.value("tx_device_name", "").toString();
   volume = s.value("volume", 80).toInt();
+  ptt_key = s.value("ptt_key", static_cast<int>(Qt::Key_Pause)).toInt();
+  ptt_hold = s.value("ptt_hold", true).toBool();
   window_geometry = s.value("window_geometry", QRect()).toRect();
 
   // A password key must never exist. If an older build wrote one, remove it
@@ -33,6 +35,8 @@ void Settings::Save() const {
   s.setValue("rx_device_name", rx_device_name);
   s.setValue("tx_device_name", tx_device_name);
   s.setValue("volume", volume);
+  s.setValue("ptt_key", ptt_key);
+  s.setValue("ptt_hold", ptt_hold);
   s.setValue("window_geometry", window_geometry);
   s.sync();
 }

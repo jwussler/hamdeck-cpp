@@ -9,6 +9,8 @@
 #include <QJsonArray>
 #include <QPair>
 #include <QScreen>
+#include <QComboBox>
+#include <QKeyEvent>
 #include <QScrollArea>
 #include <QStatusBar>
 #include <QVBoxLayout>
@@ -95,6 +97,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     tx_label_->setText(QString("tx: %1 KiB/s out%2")
                            .arg(bps / 1024.0, 0, 'f', 1)
                            .arg(tx_audio_.using_test_tone() ? " — TEST TONE" : ""));
+  });
+
+  connect(&hotkey_, &PttHotkey::PttRequested, this, [this](bool on) {
+    // Goes through the same route the button uses, so there is one path to the
+    // transmitter rather than two that can disagree.
+    api_.Get(on ? "/api/ptt/on" : "/api/ptt/off");
   });
 
   RestoreGeometryClamped();
@@ -274,6 +282,52 @@ QWidget* MainWindow::BuildPanel() {
   });
   tl->addWidget(arm_button_);
 
+  // ── PTT hotkey ─────────────────────────────────────────────────────────────
+  // Several choices, because any single key can collide with a keyboard driver,
+  // a game overlay or a desktop environment on a given machine. The fix should
+  // be "pick another" rather than "give up".
+  auto* hk = new QVBoxLayout;
+  auto* hk_cap = new QLabel("PTT KEY");
+  hk_cap->setStyleSheet(QString("color:%1; font-size:9px; font-weight:bold;"
+                                "letter-spacing:1px;").arg(theme::kTextDim));
+  hk_cap->setAlignment(Qt::AlignCenter);
+  hotkey_box_ = new QComboBox;
+  for (const auto& c : PttHotkeyChoices()) {
+    hotkey_box_->addItem(c.label, c.qt_key);
+    hotkey_box_->setItemData(hotkey_box_->count() - 1, c.note, Qt::ToolTipRole);
+  }
+  const int idx = hotkey_box_->findData(settings_.ptt_key);
+  hotkey_box_->setCurrentIndex(idx >= 0 ? idx : 0);
+  hotkey_.SetKey(hotkey_box_->currentData().toInt());
+  connect(hotkey_box_, &QComboBox::currentIndexChanged, this, [this](int i) {
+    settings_.ptt_key = hotkey_box_->itemData(i).toInt();
+    hotkey_.SetKey(settings_.ptt_key);
+    settings_.Save();
+    if (hotkey_hint_) {
+      hotkey_hint_->setToolTip(PttHotkeyChoices()[i].note);
+    }
+  });
+  hk->addWidget(hk_cap);
+  hk->addWidget(hotkey_box_);
+  tl->addSpacing(10);
+  tl->addLayout(hk);
+
+  hold_button_ = Btn("HOLD", 74);
+  hold_button_->setCheckable(true);
+  hold_button_->setChecked(settings_.ptt_hold);
+  hold_button_->setToolTip(
+      "HOLD: key while the key is down, unkey when released.\n"
+      "TOGGLE: press to key, press again to unkey.");
+  hotkey_.SetMode(settings_.ptt_hold ? PttMode::kHold : PttMode::kToggle);
+  connect(hold_button_, &QPushButton::clicked, this, [this](bool on) {
+    settings_.ptt_hold = on;
+    hotkey_.SetMode(on ? PttMode::kHold : PttMode::kToggle);
+    hold_button_->setText(on ? "HOLD" : "TOGGLE");
+    settings_.Save();
+  });
+  hold_button_->setText(settings_.ptt_hold ? "HOLD" : "TOGGLE");
+  tl->addWidget(hold_button_);
+
   auto* vol_label = new QLabel("VOLUME");
   vol_label->setStyleSheet(
       QString("color:%1; font-size:10px; font-weight:bold; letter-spacing:1px;")
@@ -319,10 +373,38 @@ QWidget* MainWindow::BuildPanel() {
   conn_label_ = new QLabel("not connected");
   audio_label_ = new QLabel("audio: idle");
   tx_label_ = new QLabel("tx: disarmed");
+  // ⚠️ Say plainly that the hotkey only works focused. Calling it a "global
+  // hotkey" when it is not is the same class of lie as a status route that
+  // reports ok for something it never did.
+  hotkey_hint_ = new QLabel("PTT key: window focus only");
+  hotkey_hint_->setStyleSheet(QString("color:%1;").arg(theme::kTextDim));
+  hotkey_hint_->setToolTip(
+      "This hotkey fires while the HamDeck window has focus.\n"
+      "A global hotkey (working while another app is focused) needs\n"
+      "platform-specific code that is not written yet.");
+  statusBar()->addPermanentWidget(hotkey_hint_);
   statusBar()->addPermanentWidget(tx_label_);
   statusBar()->addPermanentWidget(audio_label_);
   statusBar()->addWidget(conn_label_);
   return root;
+}
+
+void MainWindow::keyPressEvent(QKeyEvent* e) {
+  if (hotkey_.HandleKeyPress(e)) return;
+  QMainWindow::keyPressEvent(e);
+}
+
+void MainWindow::keyReleaseEvent(QKeyEvent* e) {
+  if (hotkey_.HandleKeyRelease(e)) return;
+  QMainWindow::keyReleaseEvent(e);
+}
+
+bool MainWindow::event(QEvent* e) {
+  // ⚠️ Losing focus with the key held never delivers a release, so the rig would
+  // stay keyed while the operator is looking at another window - and only the
+  // host watchdog would stop it, minutes later.
+  if (e->type() == QEvent::WindowDeactivate) hotkey_.FocusLost();
+  return QMainWindow::event(e);
 }
 
 void MainWindow::ResizeToContentForCapture() {

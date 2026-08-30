@@ -17,6 +17,7 @@
 // that station.
 
 #include <QRect>
+#include <Qt>
 #include <QString>
 
 class Settings {
@@ -30,6 +31,15 @@ class Settings {
   QString rx_device_name;    // by NAME - see above
   QString tx_device_name;
   int volume = 80;
+
+  // PTT hotkey, as a Qt::Key value plus a mode.
+  //
+  // ⚠️ Defaults to Pause/Break, NOT F13. F13 is the better key in theory - no
+  // keyboard sends it, so nothing can conflict - but that is also why nobody can
+  // press it without a footswitch or a programmable key mapped to it. A default
+  // the operator cannot press is not a default.
+  int ptt_key = Qt::Key_Pause;   // symbol, not a magic number
+  bool ptt_hold = true;          // hold-to-talk; false = press-to-toggle
 
   // Geometry, clamped on restore - never trusted as written.
   QRect window_geometry;

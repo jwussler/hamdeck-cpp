@@ -24,6 +24,7 @@ qt_add_executable(hamdeck-client
     src/api_client.cpp
     src/rx_audio.cpp
     src/tx_audio.cpp
+    src/ptt_hotkey.cpp
     src/mainwindow.cpp
     src/smeter.cpp
     src/theme.cpp
@@ -37,6 +38,11 @@ target_compile_options(hamdeck-client PRIVATE -Wall -Wextra)
 # CI must RUN the binary, not just build it. The .NET client shipped a release
 # that could not launch at all while every test passed.
 enable_testing()
+qt_add_executable(test_hotkey tests_hotkey.cpp src/ptt_hotkey.cpp)
+target_link_libraries(test_hotkey PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
+add_test(NAME hotkey COMMAND test_hotkey)
+set_tests_properties(hotkey PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 add_test(NAME client_selftest COMMAND hamdeck-client --selftest)
 set_tests_properties(client_selftest PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)

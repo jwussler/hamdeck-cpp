@@ -11,6 +11,7 @@
 #include "rx_audio.h"
 #include "smeter.h"
 #include "settings.h"
+#include "ptt_hotkey.h"
 #include "tx_audio.h"
 
 class MainWindow : public QMainWindow {
@@ -36,6 +37,9 @@ class MainWindow : public QMainWindow {
 
  protected:
   void closeEvent(QCloseEvent* e) override;
+  void keyPressEvent(QKeyEvent* e) override;
+  void keyReleaseEvent(QKeyEvent* e) override;
+  bool event(QEvent* e) override;
 
  private:
   QWidget* BuildPanel();
@@ -54,6 +58,7 @@ class MainWindow : public QMainWindow {
   ApiClient api_;
   RxAudio rx_;
   TxAudio tx_audio_;
+  PttHotkey hotkey_;
 
   QLabel* freq_label_ = nullptr;
   QLabel* mode_label_ = nullptr;
@@ -75,6 +80,9 @@ class MainWindow : public QMainWindow {
   QPushButton* agc_button_ = nullptr;
   QPushButton* arm_button_ = nullptr;
   QLabel* tx_label_ = nullptr;
+  class QComboBox* hotkey_box_ = nullptr;
+  QPushButton* hold_button_ = nullptr;
+  QLabel* hotkey_hint_ = nullptr;
   bool tx_ = false;
   bool stale_ = false;
 };

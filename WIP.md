@@ -57,7 +57,7 @@ are private-storage-only and must never be published. See `SITE.md`.
 | PTT tail-wait → `/api/ptt/{off,toggle,unkey}` | **yes** |
 | RX mute on TX is done client-side; host-side recording is not | **yes** |
 | ~~Client TX audio~~ ✅ done — 93.8 KiB/s measured into the host | no |
-| Global PTT hotkey (F13) — platform code, Qt has no API for it | no |
+| PTT hotkey ✅ done (window-focus). **Global** hotkey still needs platform code | no |
 | 19 `/api/admin/*` routes — user management is config-file-only today | no |
 | `/audio` HTTP endpoint, `/wsflexknob`, the CAT proxy, the static web UI | no |
 
@@ -332,6 +332,44 @@ because the one real risk of having it is somebody transmitting it thinking it i
 
 `--screenshot` now grows the window to the panel's natural height for capture only — normal
 operation keeps the work-area clamp, which exists to stop exactly that on a real desktop.
+
+## 7c. The PTT hotkey
+
+Seven choices, not one, because any single key can collide with a keyboard driver, a game
+overlay or a desktop environment on a given machine — the fix should be *pick another*, not
+*give up*. HOLD or TOGGLE, both remembered.
+
+### ⚠️ F13 is the best key and the worst default, at the same time
+F13 is technically ideal *because no physical keyboard sends it*, so nothing can conflict with
+it. That is also exactly why it cannot be the default: **if no keyboard sends it, the
+operator's does not either.** It needs a footswitch, a macro key or a programmable keyboard
+remapped to it — which is the setup most operators eventually want, and not one anybody has on
+day one.
+
+So the default is **Pause/Break**: on most full-size keyboards, pressable today, and almost
+nothing else listens for it. F13/F14/F15 sit in the list for anyone with the hardware, with the
+tradeoff written into the tooltip. Scroll Lock is there too — same idea, and on many keyboards
+it lights an LED, which is a free transmit indicator.
+
+### ⚠️ It is a WINDOW-FOCUS hotkey, and the UI says so
+A *global* hotkey — one that works while another application is focused — cannot be done with
+Qt alone. Windows `RegisterHotKey` delivers key-**down** only, so it can only ever be
+press-to-toggle; hold-to-talk needs a `WH_KEYBOARD_LL` hook, which sees every keystroke on the
+machine (a real privacy and antivirus-flagging consideration, not just an implementation
+detail). X11 needs `XGrabKey` and fights desktop environments that already grabbed the
+combination; macOS needs Accessibility permission granted by hand.
+
+None of that is written. The status bar says **"PTT key: window focus only"** — calling it a
+global hotkey when it is not would be the same class of lie as a status route reporting ok for
+something it never did.
+
+### Two safety properties, both tested
+- **Auto-repeat is suppressed.** A held key repeats at the OS repeat rate; without filtering,
+  the transmitter keys and unkeys several times a second for as long as the key is held.
+  Tested: 1 press + 25 auto-repeats + 1 release produces **exactly 2 events**, not 52.
+- **Losing focus while held unkeys.** A key held when the window loses focus never delivers its
+  release, so the rig would stay keyed while the operator looks at another window — and only
+  the host watchdog would stop it, minutes later. Tested in both HOLD and TOGGLE modes.
 
 ## 8. The client
 
