@@ -229,6 +229,23 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
         return false;
       });
 
+  // ── The admin gate ─────────────────────────────────────────────────────────
+  // ⚠️ /api/admin/* needs ADMIN, not merely a session. These routes add users,
+  // change passwords, revoke transmit rights and end other people's sessions.
+  //
+  // It runs in the same place as the auth gate, before routing, so an admin
+  // route added later is covered without anyone remembering - and it is checked
+  // on the LOCAL listener too. Local callers skip authentication because the
+  // kernel vouches for where they came from, but "is this an admin" is a
+  // question about a user, and there is no user on an unauthenticated port.
+  server.SetAdminGate([&deps](const HttpRequest& req, HttpResponse& res) -> bool {
+    if (req.path.rfind("/api/admin/", 0) != 0) return true;
+    const std::string token = ExtractToken(req);
+    if (deps.auth && deps.auth->IsAdmin(token)) return true;
+    WriteJson(res, 403, R"({"status":"error","message":"Admin access required"})");
+    return false;
+  });
+
   // ── The VFO lock gate ──────────────────────────────────────────────────────
   // Runs on every path, like the auth gate, so a frequency-moving route added
   // later is covered without anyone remembering to check. Enforced on BOTH
@@ -1352,6 +1369,191 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
           const bool keyed = rigp && rigp->Snapshot().tx;
           return tx->Accept(data, len, keyed);
         });
+  }
+
+  // ── Administration ─────────────────────────────────────────────────────────
+  // The admin gate above has already run; nothing here re-checks it.
+  {
+    AuthService* auth = deps.auth;
+    Config* cfg = deps.config;
+    auto persist = deps.save_config;
+
+    // Mirror the in-memory user list into the config and write it out.
+    // ⚠️ Without this an added user exists until the next restart, which on a
+    // station host is the next power cut rather than a maintenance window.
+    auto persist_users = [auth, cfg, persist](std::string& err) {
+      if (!auth || !cfg || !persist) {
+        err = "config is not writable on this host";
+        return false;
+      }
+      cfg->web_users.clear();
+      for (const auto& u : auth->ListUsers()) {
+        ConfigUser cu;
+        cu.username = u.username;
+        cu.is_admin = u.is_admin;
+        cu.can_transmit = u.can_transmit;
+        cu.password_hash = auth->PasswordHashOf(u.username);
+        cfg->web_users.push_back(cu);
+      }
+      return persist(err);
+    };
+
+    server.Get("/api/admin/users", [auth](const HttpRequest&, HttpResponse& res) {
+      std::string rows;
+      if (auth) {
+        for (const auto& u : auth->ListUsers()) {
+          if (!rows.empty()) rows += ",";
+          rows += std::format(R"({{"username":"{}","is_admin":{},"can_transmit":{}}})",
+                              u.username, JsonBool(u.is_admin), JsonBool(u.can_transmit));
+        }
+      }
+      WriteJson(res, 200, std::format(R"({{"status":"ok","users":[{}]}})", rows));
+    });
+
+    server.Get("/api/admin/sessions", [auth](const HttpRequest&, HttpResponse& res) {
+      std::string rows;
+      if (auth) {
+        for (const auto& x : auth->ListSessions()) {
+          if (!rows.empty()) rows += ",";
+          // ⚠️ token_short only - a full session token in an admin listing is a
+          // credential in a log, a screenshot and a support ticket.
+          rows += std::format(
+              R"({{"token_short":"{}","username":"{}","is_admin":{},)"
+              R"("can_transmit":{},"idle_seconds":{}}})",
+              x.token_short, x.username, JsonBool(x.is_admin),
+              JsonBool(x.can_transmit), x.idle_seconds);
+        }
+      }
+      WriteJson(res, 200, std::format(R"({{"status":"ok","sessions":[{}]}})", rows));
+    });
+
+    server.Post("/api/admin/user/add", [auth, persist_users](const HttpRequest& req,
+                                                             HttpResponse& res) {
+      const std::string user = JsonField(req.body, "username");
+      const std::string pass = JsonField(req.body, "password");
+      const bool is_admin = req.body.find("\"is_admin\":true") != std::string::npos;
+      const bool can_tx = req.body.find("\"can_transmit\":false") == std::string::npos;
+      if (user.empty() || pass.empty()) {
+        WriteJson(res, 400,
+                  R"({"status":"error","message":"username and password are required"})");
+        return;
+      }
+      // ⚠️ Hashed here, immediately. A plaintext password must never reach the
+      // config file, and the only way to guarantee that is never to store one.
+      auth->AddUser(user, AuthService::HashPassword(pass), is_admin, can_tx);
+      std::string err;
+      if (!persist_users(err)) {
+        WriteJson(res, 500,
+                  std::format(R"({{"status":"error","message":"user added but NOT saved: {}"}})",
+                              err));
+        return;
+      }
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","message":"User '{}' added"}})", user));
+    });
+
+    server.Post("/api/admin/user/password", [auth, persist_users](const HttpRequest& req,
+                                                                  HttpResponse& res) {
+      const std::string user = JsonField(req.body, "username");
+      const std::string pass = JsonField(req.body, "password");
+      if (user.empty() || pass.empty()) {
+        WriteJson(res, 400,
+                  R"({"status":"error","message":"username and password are required"})");
+        return;
+      }
+      if (!auth->ChangePassword(user, AuthService::HashPassword(pass))) {
+        WriteJson(res, 404, R"({"status":"error","message":"no such user"})");
+        return;
+      }
+      std::string err;
+      persist_users(err);
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","message":"Password changed for '{}'"}})",
+                            user));
+    });
+
+    server.GetPrefix("/api/admin/user/remove/",
+                     [auth, persist_users](const std::string& user, const HttpRequest&,
+                                           HttpResponse& res) {
+      // ⚠️ REFUSE TO REMOVE THE LAST ADMIN. The reference host does not check
+      // this. Removing the only admin leaves a host nobody can administer -
+      // recoverable only by editing a config file by hand and restarting, on a
+      // box that may be at the far end of a radio link.
+      bool target_is_admin = false;
+      for (const auto& u : auth->ListUsers()) {
+        if (u.username == user) target_is_admin = u.is_admin;
+      }
+      if (target_is_admin && auth->AdminCount() <= 1) {
+        WriteJson(res, 409,
+                  R"({"status":"error","message":"refusing to remove the last admin - )"
+                  R"(the host would have no one who could administer it"})");
+        return;
+      }
+      if (!auth->RemoveUser(user)) {
+        WriteJson(res, 404, R"({"status":"error","message":"no such user"})");
+        return;
+      }
+      std::string err;
+      persist_users(err);
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","message":"User '{}' removed"}})", user));
+    });
+
+    // /api/admin/user/tx/enable/<user> and .../disable/<user>
+    server.GetPrefix("/api/admin/user/tx/",
+                     [auth, persist_users](const std::string& suffix, const HttpRequest&,
+                                           HttpResponse& res) {
+      const auto slash = suffix.find('/');
+      if (slash == std::string::npos) {
+        WriteJson(res, 400,
+                  R"({"status":"error","message":"expected enable|disable/<username>"})");
+        return;
+      }
+      const std::string verb = suffix.substr(0, slash);
+      const std::string user = suffix.substr(slash + 1);
+      if (verb != "enable" && verb != "disable") {
+        WriteJson(res, 400, R"({"status":"error","message":"expected enable or disable"})");
+        return;
+      }
+      const bool allow = (verb == "enable");
+      if (!auth->SetCanTransmit(user, allow)) {
+        WriteJson(res, 404, R"({"status":"error","message":"no such user"})");
+        return;
+      }
+      std::string err;
+      persist_users(err);
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","username":"{}","can_transmit":{}}})",
+                            user, JsonBool(allow)));
+    });
+
+    server.GetPrefix("/api/admin/kick/", [auth](const std::string& user,
+                                                const HttpRequest&, HttpResponse& res) {
+      const int n = auth->KillUserSessions(user);
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","kicked":{},)"
+                            R"("message":"Killed {} sessions for '{}'"}})", n, n, user));
+    });
+
+    auto lockdown = [auth, cfg, persist](bool on) {
+      return [auth, cfg, persist, on](const HttpRequest&, HttpResponse& res) {
+        (void)auth;
+        if (cfg) cfg->admin_only_login = on;
+        std::string err;
+        if (persist) persist(err);
+        WriteJson(res, 200,
+                  std::format(R"({{"status":"ok","admin_only_login":{},"message":"{}"}})",
+                              JsonBool(on),
+                              on ? "Login restricted to admins" : "All users may log in"));
+      };
+    };
+    server.Get("/api/admin/lockdown/on", lockdown(true));
+    server.Get("/api/admin/lockdown/off", lockdown(false));
+    server.Get("/api/admin/lockdown/status", [cfg](const HttpRequest&, HttpResponse& res) {
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","admin_only_login":{}}})",
+                            JsonBool(cfg && cfg->admin_only_login)));
+    });
   }
 
   server.Post("/api/auth/logout", [&deps](const HttpRequest& req, HttpResponse& res) {

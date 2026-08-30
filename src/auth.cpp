@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 
 namespace {
 
@@ -178,4 +179,100 @@ void AuthService::PurgeExpired() {
       ++it;
     }
   }
+}
+
+bool AuthService::RemoveUser(const std::string& username) {
+  const std::string key = LowerTrim(username);
+  std::lock_guard<std::mutex> lock(mu_);
+  if (users_.erase(key) == 0) return false;
+  // Their sessions go too. Leaving a live session for a deleted account means
+  // the account is deleted everywhere except where it matters.
+  for (auto it = sessions_.begin(); it != sessions_.end();) {
+    it = (it->second.username == key) ? sessions_.erase(it) : std::next(it);
+  }
+  return true;
+}
+
+bool AuthService::ChangePassword(const std::string& username,
+                                 const std::string& new_hash) {
+  const std::string key = LowerTrim(username);
+  std::lock_guard<std::mutex> lock(mu_);
+  const auto it = users_.find(key);
+  if (it == users_.end()) return false;
+  it->second.password_hash = new_hash;
+  // ⚠️ Existing sessions are INVALIDATED. A password change that leaves old
+  // sessions working does not actually revoke anything, which is usually the
+  // whole reason it is being changed.
+  for (auto sit = sessions_.begin(); sit != sessions_.end();) {
+    sit = (sit->second.username == key) ? sessions_.erase(sit) : std::next(sit);
+  }
+  return true;
+}
+
+bool AuthService::SetCanTransmit(const std::string& username, bool allow) {
+  const std::string key = LowerTrim(username);
+  std::lock_guard<std::mutex> lock(mu_);
+  const auto it = users_.find(key);
+  if (it == users_.end()) return false;
+  it->second.can_transmit = allow;
+  // Live sessions carry their own copy of the flag, so update those too -
+  // otherwise revoking transmit rights does nothing until the user logs out.
+  for (auto& [token, s] : sessions_) {
+    if (s.username == key) s.can_transmit = allow;
+  }
+  return true;
+}
+
+int AuthService::KillUserSessions(const std::string& username) {
+  const std::string key = LowerTrim(username);
+  std::lock_guard<std::mutex> lock(mu_);
+  int n = 0;
+  for (auto it = sessions_.begin(); it != sessions_.end();) {
+    if (it->second.username == key) {
+      it = sessions_.erase(it);
+      ++n;
+    } else {
+      ++it;
+    }
+  }
+  return n;
+}
+
+std::vector<AuthService::UserRow> AuthService::ListUsers() const {
+  std::lock_guard<std::mutex> lock(mu_);
+  std::vector<UserRow> out;
+  for (const auto& [name, u] : users_) {
+    out.push_back({name, u.is_admin, u.can_transmit});
+  }
+  return out;
+}
+
+std::vector<AuthService::SessionRow> AuthService::ListSessions() const {
+  std::lock_guard<std::mutex> lock(mu_);
+  const auto now = std::chrono::steady_clock::now();
+  std::vector<SessionRow> out;
+  for (const auto& [token, s] : sessions_) {
+    // ⚠️ Only a PREFIX of the token. A full session token in an admin listing
+    // is a credential in a log, a screenshot and a support ticket.
+    out.push_back({token.substr(0, 8) + "...", s.username, s.is_admin,
+                   s.can_transmit,
+                   std::chrono::duration_cast<std::chrono::seconds>(
+                       now - s.last_activity).count()});
+  }
+  return out;
+}
+
+int AuthService::AdminCount() const {
+  std::lock_guard<std::mutex> lock(mu_);
+  int n = 0;
+  for (const auto& [name, u] : users_) {
+    if (u.is_admin) ++n;
+  }
+  return n;
+}
+
+std::string AuthService::PasswordHashOf(const std::string& username) const {
+  std::lock_guard<std::mutex> lock(mu_);
+  const auto it = users_.find(LowerTrim(username));
+  return it == users_.end() ? std::string() : it->second.password_hash;
 }

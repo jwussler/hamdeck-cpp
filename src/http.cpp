@@ -129,6 +129,7 @@ struct HandlerCtx {
   HttpServer::Impl* impl;
   PreRouting* pre;
   PreRouting* gate;
+  PreRouting* admin;
 };
 
 bool HttpServer::Listen(const std::string& listen_spec, int worker_threads) {
@@ -147,7 +148,7 @@ bool HttpServer::Listen(const std::string& listen_spec, int worker_threads) {
   impl_->ctx = mg_start(&callbacks, nullptr, options);
   if (!impl_->ctx) return false;
 
-  auto* hc = new HandlerCtx{impl_.get(), &pre_, &gate_};
+  auto* hc = new HandlerCtx{impl_.get(), &pre_, &gate_, &admin_gate_};
   mg_set_request_handler(impl_->ctx, "/", GenericHandler, hc);
 
   for (const auto& [path, route] : impl_->ws_routes) {
@@ -237,6 +238,11 @@ static int GenericHandler(mg_connection* conn, void* cbdata) {
   }
 
   if (hc->gate && *hc->gate && !(*hc->gate)(req, res)) {
+    WriteResponse(conn, res);
+    return 200;
+  }
+
+  if (hc->admin && *hc->admin && !(*hc->admin)(req, res)) {
     WriteResponse(conn, res);
     return 200;
   }

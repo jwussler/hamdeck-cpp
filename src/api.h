@@ -9,6 +9,7 @@
 #include "audio.h"
 #include "tx_audio.h"
 #include "auth.h"
+#include "config.h"
 #include "radio.h"
 
 // Which listener accepted the request. This is the ONLY trustworthy source of
@@ -48,6 +49,12 @@ struct ApiDeps {
   //
   // This is what /api/ptt/off waits for. See the comment on that route.
   std::function<int()> queued_audio_ms;
+
+  // Live config, and a way to persist it. Admin changes that are not written
+  // back vanish on the next restart - which on a station host is the next power
+  // cut, not some distant maintenance window.
+  Config* config = nullptr;
+  std::function<bool(std::string&)> save_config;
   // True when the CAT backend is the simulator. Surfaced on /api/backend so a
   // test tool can PROVE it is not pointed at the station.
   bool simulated = false;

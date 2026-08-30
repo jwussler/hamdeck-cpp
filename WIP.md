@@ -58,7 +58,9 @@ are private-storage-only and must never be published. See `SITE.md`.
 | RX mute on TX is done client-side; host-side recording is not | **yes** |
 | ~~Client TX audio~~ ✅ done — 93.8 KiB/s measured into the host | no |
 | PTT hotkey ✅ done (window-focus). **Global** hotkey still needs platform code | no |
-| 19 `/api/admin/*` routes — user management is config-file-only today | no |
+- **`/api/admin/*` user management** ✅ done — users, add, password, remove, transmit
+  permission, sessions, kick, lockdown. The remaining admin routes (presets, flexknob
+  buttons, mic release, rport gain, tx devices) are for hardware this host does not have.
 | `/audio` HTTP endpoint, `/wsflexknob`, the CAT proxy, the static web UI | no |
 
 `/api/cluster/spots` and `/api/session` are **absent on the reference host too** — matching
@@ -481,6 +483,56 @@ The selftest asserts both families are actually present.
   by fraction of width fixed it. A three-item readout does not need a layout negotiation.
 - The QML module needs its own directory matching the module name, and **every** component
   declared in `qmldir` — not just the singleton.
+
+## 8c. Administration
+
+`/api/admin/*` for user management: list, add, change password, remove, grant or revoke
+transmit, list sessions, kick, and lockdown. Adding a user no longer means editing a file by
+hand and restarting.
+
+### ⚠️ A third gate, and it runs on the LOCAL listener too
+Admin routes need **admin**, not merely a session — they add users, change passwords, revoke
+transmit rights and end other people's sessions. The gate sits beside the auth and VFO-lock
+gates, before routing, so an admin route added later is covered without anyone remembering.
+
+It is enforced on the loopback listener as well. Local callers skip *authentication* because
+the kernel vouches for where they came from, but **"is this an admin" is a question about a
+user, and there is no user on an unauthenticated port.**
+
+Verified: no session → 401, non-admin session → **403**, admin → 200.
+
+### ⚠️ Three side effects that are easy to miss
+- **Revoking transmit must reach LIVE sessions.** A session carries its own copy of the flag,
+  so updating only the user record means the revocation does nothing until that operator logs
+  out — precisely when it no longer matters.
+- **Changing a password invalidates existing sessions.** A change that leaves old sessions
+  working has not revoked anything, which is usually the entire reason for the change.
+- **Removing a user takes their sessions with them.** Otherwise the account is deleted
+  everywhere except where it counts.
+
+### ⚠️ Refusing to remove the last admin
+The reference host does not check this. Removing the only admin leaves a host nobody can
+administer — recoverable only by hand-editing a config file and restarting, on a box that may
+be at the far end of a radio link. The route answers **409** and says why.
+
+### ⚠️ The config writer PRESERVES KEYS IT DOES NOT KNOW
+A writer that serialises its own struct silently deletes everything else in the file — a
+setting a newer build added, a note the operator left. It reads the existing document, updates
+only what it manages, and writes that back **via a temp file and a rename**, so an interrupted
+write cannot leave a half-written config that then refuses to parse on the next start.
+
+Proven by putting two unknown keys in the live config, adding a user, and checking both
+survived. Also proven: the user survived a restart, and every stored password is a PBKDF2
+hash.
+
+### The failure mode was honest before it was fixed
+The first attempt reported `user added but NOT saved: cannot write .../config.json.tmp` — the
+service user owned the config file but not its **directory**. It said so rather than reporting
+success and losing the change at the next restart.
+
+### Session listings show a token PREFIX only
+A full session token in an admin listing is a credential in a log, a screenshot and a support
+ticket.
 
 ## 9. Adding radios nobody here owns
 

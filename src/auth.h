@@ -59,6 +59,32 @@ class AuthService {
   void Logout(const std::string& token);
   bool IsLockedOut(const std::string& username) const;
 
+  // ── Administration ────────────────────────────────────────────────────────
+  bool RemoveUser(const std::string& username);
+  bool ChangePassword(const std::string& username, const std::string& new_hash);
+  bool SetCanTransmit(const std::string& username, bool allow);
+  int  KillUserSessions(const std::string& username);
+
+  struct UserRow { std::string username; bool is_admin; bool can_transmit; };
+  std::vector<UserRow> ListUsers() const;
+
+  struct SessionRow {
+    std::string token_short, username;
+    bool is_admin, can_transmit;
+    long long idle_seconds;
+  };
+  std::vector<SessionRow> ListSessions() const;
+
+  // ⚠️ HOW MANY ADMINS ARE LEFT. Used to refuse the removal - or the
+  // demotion - of the last one. A host nobody can administer is a host that
+  // needs a config file edited by hand and a restart, on a box that may be at
+  // the other end of a radio link.
+  int AdminCount() const;
+
+  // The stored hash, so the config mirror can write users back without ever
+  // handling a plaintext password.
+  std::string PasswordHashOf(const std::string& username) const;
+
   int session_timeout_minutes() const { return session_timeout_minutes_; }
 
   // Throttle: five failures locks the account for five minutes. Matches C#.

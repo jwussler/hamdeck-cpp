@@ -79,6 +79,10 @@ class HttpServer {
   // lock, which is not a permission level - it is the operator's instruction
   // about their own radio and applies to every caller.
   void SetSecondGate(PreRouting gate) { gate_ = std::move(gate); }
+  // A third gate, for the admin routes. Separate from the others because it
+  // answers a different question - "which user is this" rather than "is there a
+  // session" or "has the operator locked the VFO".
+  void SetAdminGate(PreRouting gate) { admin_gate_ = std::move(gate); }
   void Get(const std::string& path, HttpHandler h);
   void Post(const std::string& path, HttpHandler h);
 
@@ -100,4 +104,5 @@ class HttpServer {
   std::unique_ptr<Impl> impl_;
   PreRouting pre_;
   PreRouting gate_;
+  PreRouting admin_gate_;
 };

@@ -103,9 +103,11 @@ int main(int argc, char** argv) {
   // the station on settings the operator did not choose and believes they
   // changed, including the transmit watchdog.
   Config config;
+  std::string config_path;
   for (const auto& path : Config::DefaultPaths()) {
     std::string err;
     if (Config::Load(path, config, err)) {
+      config_path = path;
       std::cout << "config: " << path << '\n' << std::flush;
       break;
     }
@@ -223,6 +225,16 @@ int main(int argc, char** argv) {
   deps.rx_audio = &rx_audio;
   deps.tx_audio = &tx_audio;
   deps.host = &host_state;
+  deps.config = &config;
+  // Where the config actually came from, so admin changes go back to the same
+  // file rather than to a path that merely happens to be first in the search.
+  deps.save_config = [&config, &config_path](std::string& err) {
+    if (config_path.empty()) {
+      err = "no config file was loaded - nothing to save to";
+      return false;
+    }
+    return config.Save(config_path, err);
+  };
   // Only a real playback device can answer this. With no device the callback
   // reports -1 and /api/ptt/off unkeys immediately, which is correct: there is
   // no audio queued to wait for.

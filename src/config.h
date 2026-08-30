@@ -66,6 +66,17 @@ struct Config {
   // the station on settings the operator did not choose and thinks they changed.
   static bool Load(const std::string& path, Config& out, std::string& error);
 
+  // ⚠️ Writes the file back, PRESERVING KEYS IT DOES NOT KNOW.
+  //
+  // A writer that serialises its own struct silently deletes everything else in
+  // the file - a setting a newer build added, a comment key, anything the
+  // operator put there by hand. It reads the existing document, updates only the
+  // fields it manages, and writes that back.
+  //
+  // Writes via a temporary file and renames, so an interrupted write cannot
+  // leave a half-written config that then fails to parse on the next start.
+  bool Save(const std::string& path, std::string& error) const;
+
   // Search order, first that exists.
   static std::vector<std::string> DefaultPaths();
 };

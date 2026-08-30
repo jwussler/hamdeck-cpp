@@ -133,3 +133,70 @@ bool Config::Load(const std::string& path, Config& out, std::string& error) {
   out = std::move(cfg);   // only now
   return true;
 }
+
+bool Config::Save(const std::string& path, std::string& error) const {
+  // Start from what is already on disk so unknown keys survive.
+  json j = json::object();
+  {
+    std::ifstream in(path);
+    if (in) {
+      std::stringstream buf;
+      buf << in.rdbuf();
+      try {
+        j = json::parse(buf.str(), nullptr, true, /*ignore_comments=*/true);
+      } catch (const std::exception&) {
+        // A file we could not parse is not a file to merge into: refuse rather
+        // than overwrite something the operator may still want to fix by hand.
+        error = "existing config is not valid JSON - refusing to overwrite it";
+        return false;
+      }
+      if (!j.is_object()) j = json::object();
+    }
+  }
+
+  j["radio_port"] = radio_port;
+  j["radio_baud"] = radio_baud;
+  j["record_sample_rate"] = record_sample_rate;
+  j["alsa_capture_device"] = alsa_capture_device;
+  j["alsa_playback_device"] = alsa_playback_device;
+  j["api_port"] = api_port;
+  j["dashboard_port"] = dashboard_port;
+  j["allow_anonymous_status"] = allow_anonymous_status;
+  j["ptt_timeout_seconds"] = ptt_timeout_seconds;
+  j["web_session_timeout"] = web_session_timeout;
+  j["admin_only_login"] = admin_only_login;
+
+  json users = json::array();
+  for (const auto& u : web_users) {
+    users.push_back({{"username", u.username},
+                     {"password_hash", u.password_hash},
+                     {"is_admin", u.is_admin},
+                     {"can_transmit", u.can_transmit}});
+  }
+  j["web_users"] = users;
+
+  // ⚠️ Temp file then rename. A crash or a full disk halfway through a direct
+  // write leaves a truncated config, and the host refuses to start on a config
+  // it cannot parse - which is correct, and would be a bad way to discover it.
+  const std::string tmp = path + ".tmp";
+  {
+    std::ofstream out(tmp);
+    if (!out) {
+      error = "cannot write " + tmp;
+      return false;
+    }
+    out << j.dump(2) << '\n';
+    if (!out) {
+      error = "write failed";
+      return false;
+    }
+  }
+  std::error_code ec;
+  std::filesystem::rename(tmp, path, ec);
+  if (ec) {
+    std::filesystem::remove(tmp, ec);
+    error = "could not replace " + path;
+    return false;
+  }
+  return true;
+}
