@@ -14,6 +14,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -45,6 +47,31 @@ class RadioPoller {
   RigSnapshot Snapshot() const;
   long long   CacheAgeMs() const;
 
+  // ⚠️ THE ONLY WAY A REQUEST THREAD MAY TOUCH THE RADIO.
+  // The serial lock is not re-entrant across threads (CARRYOVER.md section 5),
+  // so exactly one thread - the poller - ever speaks to the port. Handlers queue
+  // a command and return; the poller drains the queue at the top of each cycle.
+  // Queueing also gives commands a natural ordering, which matters for pairs
+  // like "set VFO then set frequency" that are wrong if they interleave.
+  void Enqueue(const std::string& cat_command);
+
+  // Transmit watchdog. Zero disables it.
+  //
+  // ⚠️ THIS MUST LIVE NEXT TO THE RADIO (CARRYOVER.md section 4b). A timeout in
+  // the client or the browser protects nothing: close the tab, sleep the laptop
+  // or lose the link while keyed and the rig stays keyed with nobody watching.
+  // The Linux host shipped without this for months because it existed only in
+  // the WPF host's window class.
+  void SetPttTimeoutSeconds(int seconds) { ptt_timeout_s_.store(seconds); }
+  int  PttTimeoutSeconds() const { return ptt_timeout_s_.load(); }
+
+  // Fired when the watchdog drops PTT, with the seconds held. For logging.
+  void OnWatchdogTrip(std::function<void(double)> cb) { watchdog_cb_ = std::move(cb); }
+  int  WatchdogTrips() const { return watchdog_trips_.load(); }
+
+  // Default from the C# Config: ptt_timeout_seconds = 180.
+  static constexpr int kDefaultPttTimeoutSeconds = 180;
+
   // Anything older than this is reported stale. Set well above the poll interval
   // so a single slow round trip is not an alarm, but low enough that a wedged
   // poller is obvious within a couple of seconds.
@@ -56,12 +83,23 @@ class RadioPoller {
  private:
   void PollLoop();
   void PollOnce();
+  void DrainQueue();
+  void CheckWatchdog(bool tx_now);
 
   std::unique_ptr<CatTransport> cat_;
   mutable std::mutex mu_;
   RigSnapshot snap_;
   std::atomic<bool> running_{false};
   std::thread thread_;
+
+  std::mutex queue_mu_;
+  std::deque<std::string> queue_;
+
+  std::atomic<int> ptt_timeout_s_{kDefaultPttTimeoutSeconds};
+  std::atomic<int> watchdog_trips_{0};
+  std::function<void(double)> watchdog_cb_;
+  std::chrono::steady_clock::time_point keyed_since_{};
+  bool was_tx_ = false;
 };
 
 // FTDX-101 MD table. Returns "" for a code we do not know, never a guess - a

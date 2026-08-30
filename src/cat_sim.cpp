@@ -46,7 +46,26 @@ bool SimulatedRig::Send(const std::string& cmd) {
     mode_code_ = cmd[3] - '0';
     return true;
   }
-  if (cmd == "TX1;") { tx_ = true;  return true; }
-  if (cmd == "TX0;") { tx_ = false; return true; }
+  if (cmd.rfind("FB", 0) == 0 && cmd.size() == 12) {
+    freq_b_ = std::stoll(cmd.substr(2, 9));
+    return true;
+  }
+  if (cmd.rfind("PC", 0) == 0 && cmd.size() == 6) {
+    power_ = std::stoi(cmd.substr(2, 3));
+    return true;
+  }
+  if (cmd == "TX1;") { tx_    = true;  return true; }
+  if (cmd == "TX0;") { tx_    = false; return true; }
+  if (cmd == "ST1;") { split_ = true;  return true; }
+  if (cmd == "ST0;") { split_ = false; return true; }
+  if (cmd == "VS1;") { vfo_b_ = true;  return true; }
+  if (cmd == "VS0;") { vfo_b_ = false; return true; }
+  if (cmd == "LK1;") { lock_  = true;  return true; }
+  if (cmd == "LK0;") { lock_  = false; return true; }
+
+  // An unrecognised set-command must be REFUSED, not silently swallowed. A
+  // simulator that accepts anything makes malformed CAT look like working CAT,
+  // and the bug then only appears with the radio attached - the most expensive
+  // place to find it.
   return false;
 }

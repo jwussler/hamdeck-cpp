@@ -31,8 +31,50 @@ void RadioPoller::Stop() {
   if (thread_.joinable()) thread_.join();
 }
 
+void RadioPoller::Enqueue(const std::string& cat_command) {
+  std::lock_guard<std::mutex> lock(queue_mu_);
+  queue_.push_back(cat_command);
+}
+
+void RadioPoller::DrainQueue() {
+  for (;;) {
+    std::string cmd;
+    {
+      std::lock_guard<std::mutex> lock(queue_mu_);
+      if (queue_.empty()) return;
+      cmd = queue_.front();
+      queue_.pop_front();
+    }
+    cat_->Send(cmd);   // on the poller thread, where serial access belongs
+  }
+}
+
+// Runs every poll cycle, on the thread that owns the serial port, so it can key
+// down without waiting for anything. Granularity is the poll interval (200ms),
+// which is far finer than a 180s timeout needs.
+void RadioPoller::CheckWatchdog(bool tx_now) {
+  const int limit = ptt_timeout_s_.load();
+  const auto now = std::chrono::steady_clock::now();
+
+  if (tx_now && !was_tx_) keyed_since_ = now;   // rising edge
+  was_tx_ = tx_now;
+  if (!tx_now || limit <= 0) return;
+
+  const double held =
+      std::chrono::duration_cast<std::chrono::milliseconds>(now - keyed_since_).count() / 1000.0;
+  if (held < limit) return;
+
+  // Drop PTT directly rather than queueing it. Nothing is worth an open carrier,
+  // and a queued command waits behind whatever else is pending.
+  cat_->Send("TX0;");
+  watchdog_trips_.fetch_add(1);
+  was_tx_ = false;
+  if (watchdog_cb_) watchdog_cb_(held);
+}
+
 void RadioPoller::PollLoop() {
   while (running_.load()) {
+    DrainQueue();
     PollOnce();
     std::this_thread::sleep_for(std::chrono::milliseconds(kPollIntervalMs));
   }
@@ -63,6 +105,7 @@ void RadioPoller::PollOnce() {
   if (auto r = cat_->Exchange("LK;");  r && r->size() >= 4)  s.vfo_locked = r->at(2) != '0';
 
   s.taken = std::chrono::steady_clock::now();
+  CheckWatchdog(s.tx);
   std::lock_guard<std::mutex> lock(mu_);
   snap_ = s;
 }

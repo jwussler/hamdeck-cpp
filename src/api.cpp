@@ -3,7 +3,9 @@
 #include <chrono>
 #include <format>
 #include <iostream>
+#include <functional>
 #include <set>
+#include <vector>
 #include <thread>
 
 #include "version.h"
@@ -94,6 +96,35 @@ std::string JsonField(const std::string& body, const std::string& key) {
   return body.substr(p + 1, end - p - 1);
 }
 
+std::string OkJson(const std::string& key, const std::string& val_json) {
+  return std::format(R"({{"status":"ok","{}":{}}})", key, val_json);
+}
+
+std::string Quoted(const std::string& s) { return "\"" + s + "\""; }
+
+// FTDX-101 MD codes, the inverse of ModeName().
+int ModeCode(const std::string& name) {
+  if (name == "LSB") return 1;
+  if (name == "USB") return 2;
+  if (name == "CW")  return 3;
+  if (name == "FM")  return 4;
+  if (name == "AM")  return 5;
+  if (name == "DATA-U") return 9;   // the C# /api/mode/data maps here
+  return 0;
+}
+
+std::string Pad(long long v, int width) {
+  std::string s = std::to_string(v);
+  return std::string(width > (int)s.size() ? width - s.size() : 0, '0') + s;
+}
+
+// ⚠️ POWER CAP, PORTED FAITHFULLY AND DELIBERATELY NOT "FIXED".
+// In the C# host a LOCAL caller is capped at 100 W while a remote caller gets
+// 200 W - which reads backwards, so it is exactly the kind of thing to port
+// as-is and ask about rather than quietly invert. Flagged in WIP.md.
+constexpr int kLocalPowerCap = 100;
+constexpr int kMaxWatts      = 200;
+
 }  // namespace
 
 void InstallRoutes(httplib::Server& server, Listener listener, int bound_port,
@@ -181,6 +212,93 @@ void InstallRoutes(httplib::Server& server, Listener listener, int bound_port,
                                *token, deps.auth->session_timeout_minutes() * 60));
     WriteJson(res, 200, R"({"status":"ok","message":"Login successful"})");
   });
+
+  // ── The declarative table ──────────────────────────────────────────────────
+  // Most of the 141 C# routes are one CAT verb each. They belong in a table, not
+  // in 141 hand-written functions: a table is auditable at a glance, and adding a
+  // route cannot accidentally skip the auth gate, which already ran above.
+  //
+  // Handlers NEVER touch the serial port. They queue a command (drained by the
+  // poller thread) and read state from the cache. See RadioPoller::Enqueue.
+  struct Route {
+    const char* path;
+    std::function<std::string(bool is_local)> handler;
+  };
+
+  RadioPoller* rig = deps.poller;
+  auto set_mode = [rig](const char* name) {
+    return [rig, name](bool) {
+      if (rig) rig->Enqueue(std::format("MD0{};", ModeCode(name)));
+      return OkJson("mode", Quoted(name));
+    };
+  };
+  auto set_power = [rig](const char* label, int watts) {
+    return [rig, label, watts](bool) {
+      if (rig) rig->Enqueue("PC" + Pad(watts, 3) + ";");
+      return std::format(R"({{"status":"ok","power":"{}","watts":{}}})", label, watts);
+    };
+  };
+
+  const std::vector<Route> table = {
+      {"/api/test", [](bool) { return std::string(R"({"ok":true,"message":"API is working"})"); }},
+
+      {"/api/mode/usb",  set_mode("USB")},
+      {"/api/mode/lsb",  set_mode("LSB")},
+      {"/api/mode/cw",   set_mode("CW")},
+      {"/api/mode/am",   set_mode("AM")},
+      {"/api/mode/fm",   set_mode("FM")},
+      {"/api/mode/data", set_mode("DATA-U")},
+
+      {"/api/vfo/a", [rig](bool) { if (rig) rig->Enqueue("VS0;"); return OkJson("vfo", Quoted("A")); }},
+      {"/api/vfo/b", [rig](bool) { if (rig) rig->Enqueue("VS1;"); return OkJson("vfo", Quoted("B")); }},
+
+      {"/api/split/on",  [rig](bool) { if (rig) rig->Enqueue("ST1;"); return OkJson("split", "1"); }},
+      {"/api/split/off", [rig](bool) { if (rig) rig->Enqueue("ST0;"); return OkJson("split", "0"); }},
+      {"/api/split/toggle", [rig](bool) {
+         const bool now = rig && rig->Snapshot().split;
+         if (rig) rig->Enqueue(now ? "ST0;" : "ST1;");
+         return OkJson("split", now ? "false" : "true");
+       }},
+
+      {"/api/lock/on",  [rig](bool) { if (rig) rig->Enqueue("LK1;"); return OkJson("lock", "1"); }},
+      {"/api/lock/off", [rig](bool) { if (rig) rig->Enqueue("LK0;"); return OkJson("lock", "0"); }},
+
+      // ⚠️ PTT ON is here; PTT OFF IS NOT. Unkeying must wait for the audio still
+      // queued in the ALSA buffer or the tail of every transmission is lost
+      // (CARRYOVER.md section 4a), and that wait needs the real device depth from
+      // /proc/asound. Shipping an unkey that drops PTT immediately would look
+      // like it works and quietly cut the end off every over - the exact bug that
+      // took a report from a net to find. It lands with the audio work.
+      {"/api/ptt/on",  [rig](bool) { if (rig) rig->Enqueue("TX1;"); return OkJson("ptt", "1"); }},
+      {"/api/ptt/key", [rig](bool) { if (rig) rig->Enqueue("TX1;"); return OkJson("ptt", "1"); }},
+
+      {"/api/power/limit", [](bool is_local) {
+         return std::format(R"({{"status":"ok","max_watts":{},"is_local":{}}})",
+                            is_local ? kLocalPowerCap : kMaxWatts, JsonBool(is_local));
+       }},
+      {"/api/power/qrp",  set_power("qrp", 5)},
+      {"/api/power/low",  set_power("low", 25)},
+      {"/api/power/mid",  set_power("mid", 50)},
+      {"/api/power/high", set_power("high", 100)},
+      {"/api/power/max",  [rig](bool is_local) {
+         const int w = is_local ? kLocalPowerCap : kMaxWatts;
+         if (rig) rig->Enqueue("PC" + Pad(w, 3) + ";");
+         return std::format(R"({{"status":"ok","power":"{}","watts":{},"clamped":{}}})",
+                            is_local ? "high" : "max", w, JsonBool(is_local));
+       }},
+
+      {"/api/freq",   [rig](bool) {
+         return std::format(R"({{"freq":{}}})", rig ? rig->Snapshot().freq : 0); }},
+      {"/api/freq-b", [rig](bool) {
+         return std::format(R"({{"freq_b":{}}})", rig ? rig->Snapshot().freq_b : 0); }},
+  };
+
+  for (const auto& route : table) {
+    server.Get(route.path, [h = route.handler, trusted](const httplib::Request&,
+                                                        httplib::Response& res) {
+      WriteJson(res, 200, h(trusted));
+    });
+  }
 
   server.Post("/api/auth/logout", [&deps](const httplib::Request& req, httplib::Response& res) {
     if (deps.auth) deps.auth->Logout(ExtractToken(req));

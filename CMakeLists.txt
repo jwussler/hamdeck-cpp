@@ -30,3 +30,6 @@ add_test(NAME staleness COMMAND test_staleness)
 add_executable(test_auth tests/test_auth.cpp src/auth.cpp)
 target_link_libraries(test_auth PRIVATE OpenSSL::Crypto)
 add_test(NAME auth COMMAND test_auth)
+
+add_executable(test_watchdog tests/test_watchdog.cpp src/cat_sim.cpp src/radio.cpp)
+add_test(NAME watchdog COMMAND test_watchdog)

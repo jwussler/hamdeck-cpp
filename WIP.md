@@ -158,7 +158,7 @@ Most of those routes are thin CAT wrappers, so this is not 141 hand-written hand
    it turns nearly all 141 routes into radio-free work and gives CI a target it can hit
    forever, since CI will never have a radio.
 2. **Status cache + 200 ms poller** ✅ done. `/api/status` served entirely from cache.
-3. **Declarative route table** — build the table, not 141 functions.
+3. **Declarative route table** ✅ started. Core operating set done; see below.
 4. **Auth/session** ✅ done. See below.
 5. **WebSocket** `/ws` and `/ws/tx` — httplib has none, so framing is hand-rolled.
    Testable with synthetic audio.
@@ -226,6 +226,47 @@ as building a scope lock into a tool instead of trusting the operator to remembe
 hashes to PBKDF2 on successful login. Whether any such hash still exists on the station is
 unknown, and inventing a second accepted hash format on a guess widens the auth surface for
 no reason. Ask before adding it.
+
+## Route table + command queue + TX watchdog (08/30/2026)
+
+### ⚠️ Request threads NEVER touch the serial port
+The serial lock is not re-entrant across threads (CARRYOVER.md section 5), so exactly one
+thread — the poller — speaks to the port. Handlers `Enqueue()` a CAT command and return; the
+poller drains the queue at the top of each 200 ms cycle and reads state from the cache.
+Queueing also gives commands a natural order, which matters for pairs like "set VFO then set
+frequency" that are wrong if they interleave.
+
+### The table
+Most of the 141 routes are one CAT verb each, so they live in a table rather than 141
+hand-written functions: auditable at a glance, and a new route cannot accidentally skip the
+auth gate, which has already run. Done: `mode` (6), `vfo`, `split` incl. toggle, `lock`,
+`power` (6), `freq`/`freq-b` reads, `test`. Verified by driving the rig through the API and
+reading the state back: USB/A/5W → LSB/B/25W/split.
+
+### ⚠️ `/api/ptt/off` is deliberately NOT implemented — it 404s
+Unkeying must wait for the audio still queued in the ALSA buffer, or the tail of every
+transmission is lost (CARRYOVER.md section 4a), and that wait needs the real device depth
+from `/proc/asound`. An unkey that drops PTT immediately would *look* like it works and
+quietly cut the end off every over — the exact bug that took a report from a net to find. A
+404 is honest; a wrong unkey is not. It lands with the audio work.
+
+### TX watchdog — done, default 180 s
+Lives next to the radio, on the poller thread (CARRYOVER.md section 4b). `ptt_timeout_seconds`
+matches the C# default of 180; 0 disables. The test asserts the **radio actually stopped**,
+read back through `TX;`, not that a trip counter moved — a counter is a claim, `TX0;` is the
+outcome.
+
+### ❓ QUESTION FOR JOE: the power cap looks backwards
+In the C# host a **local** caller is capped at **100 W** while a **remote** caller gets
+**200 W**:
+
+```csharp
+["/api/power/limit"] = local => new { max_watts = local ? LocalPowerCap : 200, is_local = local }
+```
+
+That reads inverted — you would expect the remote path to be the restricted one. It is
+ported **exactly as-is** rather than quietly "fixed", because a power limit is a station
+decision and inverting one on a guess is not a refactor. Confirm which way it should be.
 
 ## Open decisions (Joe's, not mine)
 
