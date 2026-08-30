@@ -20,7 +20,7 @@ Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anythin
 | **Host** | **running the station.** The .NET server VM is shut down |
 | **Client** | QML panel: connects, live status, rig control, RX **and TX** audio, PTT hotkey, admin, **resolution-aware** (§8d) |
 | **Route coverage** | **140 of 141** exact routes + all **18** prefix families (DX cluster only, which 404s on the reference too) |
-| **Tests** | **11 host (ctest)**, all green |
+| **Tests** | **11 host (ctest)**, all green — and now green under `RelWithDebInfo` too, which is what CI builds |
 | **Parity** | 25/25 with 5 listed deliberate divergences |
 | **Verification** | 12/12 read-only, 50/50 driven routes read back from the rig, 46/46 smoke, 7/7 honest-absence, keypad and VFO-lock walked |
 | **Radio** | **attached and operating.** §4b records the six CAT bugs only hardware found |
@@ -273,6 +273,16 @@ These are the expensive lessons. Each cost real debugging, on this project or th
 - **Do not infer a hang from one early look.** Shutdown was reported as a deadlock; it was
   simply still shutting down. Measure the duration.
 - **Look at the actual output.** A UI is not verified until someone has seen it render.
+
+- ⚠️ **`assert()` IS NOT A TEST — CI DELETED 154 OF THEM.** CI builds
+  `RelWithDebInfo`, which defines `NDEBUG`, which removes `assert(expr)` **expression and
+  all**. `assert(q.Pop(out));` did not just stop checking: the `Pop` never ran, so the next
+  line read `out[0]` on an empty vector and `audio_queue` **segfaulted on the runner while
+  passing on the build VM** — which builds with no build type and therefore keeps asserts
+  live. Six pushes of red CI, and the only reason it was noticed at all is that one assertion
+  crashed instead of quietly vanishing. The tests use `CHECK()` from `tests/check.h` now: it
+  always evaluates, in every build type, and names the file and line. Proven under
+  `-O2 -DNDEBUG` with a deliberately failing check, not assumed.
 
 ### Truth in what the software says
 - **If a capability is absent, its status route must say so.** The reference

@@ -9,7 +9,7 @@
 #include <unistd.h>
 
 #include <atomic>
-#include <cassert>
+#include "check.h"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -84,23 +84,23 @@ int main() {
   // CP2105 is a dual UART, so one physical device gives two ports and only one
   // is CAT; indices also shift when USB devices come and go.
   const bool opened = cat.OpenFirstResponding({"/dev/does-not-exist", dev});
-  assert(opened);
-  assert(cat.Connected());
+  CHECK(opened);
+  CHECK(cat.Connected());
   std::printf("probe:    found CAT on the second candidate via ID; -> %s\n",
               cat.Exchange("ID;")->c_str());
 
   auto fa = cat.Exchange("FA;");
-  assert(fa && *fa == "FA014074000;");
+  CHECK(fa && *fa == "FA014074000;");
   std::printf("read:     FA; -> %s\n", fa->c_str());
 
   // Chunked reply must be reassembled, not truncated at the first read().
   auto st = cat.Exchange("ST;");
-  assert(st && *st == "ST0;");
+  CHECK(st && *st == "ST0;");
   std::printf("chunked:  reassembled -> %s\n", st->c_str());
 
   // Only the first terminated reply is returned; trailing bytes are not leaked.
   auto md = cat.Exchange("MD0;");
-  assert(md && *md == "MD02;");
+  CHECK(md && *md == "MD02;");
   std::printf("trailing: returned only %s, ignored the rest\n", md->c_str());
 
   // ⚠️ The critical one: a stale reply must NEVER be returned as the answer to a
@@ -112,7 +112,7 @@ int main() {
   // Without the verb check that returns VS0; as the model identity, and every
   // reply after it is off by one, each individually plausible.
   auto next = cat.Exchange("FA;");
-  assert(next && *next == "FA014074000;");
+  CHECK(next && *next == "FA014074000;");
   std::printf("no-slip:  next command still got its own reply\n");
 
   // The exact shape observed on the real radio: a stale reply sitting in front
@@ -122,7 +122,7 @@ int main() {
     ::write(g_master, leftover.data(), leftover.size());
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     auto id2 = cat.Exchange("ID;");
-    assert(id2 && *id2 == "ID0682;");
+    CHECK(id2 && *id2 == "ID0682;");
     std::printf("stale:    'VS0;ID0682;' -> returned %s, discarded the leftover\n",
                 id2->c_str());
   }
@@ -136,27 +136,27 @@ int main() {
   std::printf("timeout:  unanswered command -> %s after %lldms (limit %dms)\n",
               none.has_value() ? none->c_str() : "nullopt",
               static_cast<long long>(ms), SerialCat::kReplyTimeoutMs);
-  assert(!none.has_value());
+  CHECK(!none.has_value());
   // Tolerance below the nominal limit: poll() rounds and the deadline is checked
   // at the top of the loop, so a correct 250ms timeout measures ~249ms. The
   // assertion that matters is that it RETURNED and did so promptly - a hang is
   // the failure being guarded against, not a millisecond of rounding.
-  assert(ms >= SerialCat::kReplyTimeoutMs - 10);
-  assert(ms < SerialCat::kReplyTimeoutMs + 250);
+  CHECK(ms >= SerialCat::kReplyTimeoutMs - 10);
+  CHECK(ms < SerialCat::kReplyTimeoutMs + 250);
 
   // Two processes must not share the CAT link.
   SerialCat second;
   const bool second_opened = second.Open(dev);
-  assert(!second_opened);
+  CHECK(!second_opened);
   std::printf("exclusive: a second opener is refused\n");
 
   // An unsupported baud is refused rather than silently substituted.
   SerialCat odd;
-  assert(!odd.Open(dev, 12345));
+  CHECK(!odd.Open(dev, 12345));
   std::printf("baud:     unsupported rate refused\n");
 
   cat.Close();
-  assert(!cat.Connected());
+  CHECK(!cat.Connected());
   g_run.store(false);
   rig.join();
   ::close(g_master);

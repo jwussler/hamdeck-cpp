@@ -6,7 +6,7 @@
 // transmitting, read back through CAT - not merely that a trip counter moved.
 // A counter is a claim; TX; returning 0 is the outcome.
 
-#include <cassert>
+#include "check.h"
 #include <chrono>
 #include <cstdio>
 #include <memory>
@@ -34,35 +34,35 @@ int main() {
   poller.Enqueue("FA014200000;");
   poller.Enqueue("MD01;");
   SettleMs(600);
-  assert(poller.Snapshot().freq == 14200000);
-  assert(poller.Snapshot().mode == "LSB");
+  CHECK(poller.Snapshot().freq == 14200000);
+  CHECK(poller.Snapshot().mode == "LSB");
   std::printf("queue:    commands applied in order (freq=%lld mode=%s)\n",
               poller.Snapshot().freq, poller.Snapshot().mode.c_str());
 
   // Key up, then leave it keyed past the limit and watch the watchdog take it.
   poller.Enqueue("TX1;");
   SettleMs(400);
-  assert(poller.Snapshot().tx);
+  CHECK(poller.Snapshot().tx);
   std::printf("ptt:      keyed, watchdog limit %ds\n", poller.PttTimeoutSeconds());
 
   SettleMs(1400);
 
   // The outcome, straight from the rig - not from our own bookkeeping.
   const auto tx = raw->Exchange("TX;");
-  assert(tx.has_value());
+  CHECK(tx.has_value());
   std::printf("watchdog: rig reports %s after %.1fs held, trips=%d\n",
               tx->c_str(), tripped_at, poller.WatchdogTrips());
-  assert(*tx == "TX0;");
-  assert(poller.WatchdogTrips() == 1);
-  assert(tripped_at >= 1.0);
-  assert(!poller.Snapshot().tx);
+  CHECK(*tx == "TX0;");
+  CHECK(poller.WatchdogTrips() == 1);
+  CHECK(tripped_at >= 1.0);
+  CHECK(!poller.Snapshot().tx);
 
   // Zero disables it: keyed stays keyed.
   poller.SetPttTimeoutSeconds(0);
   poller.Enqueue("TX1;");
   SettleMs(1600);
-  assert(poller.Snapshot().tx);
-  assert(poller.WatchdogTrips() == 1);
+  CHECK(poller.Snapshot().tx);
+  CHECK(poller.WatchdogTrips() == 1);
   std::printf("watchdog: 0 disables (still keyed after 1.6s, trips still 1)\n");
 
   // ── Unkey on shutdown ─────────────────────────────────────────────────────
@@ -74,13 +74,13 @@ int main() {
   poller.SetPttTimeoutSeconds(0);          // watchdog off, so it cannot do the work
   poller.Enqueue("TX1;");
   SettleMs(400);
-  assert(poller.Snapshot().tx);
-  assert(raw->Exchange("TX;").value() == "TX1;");
+  CHECK(poller.Snapshot().tx);
+  CHECK(raw->Exchange("TX;").value() == "TX1;");
 
   poller.Stop();                            // as on the shutdown path
   const bool confirmed = poller.UnkeyAndConfirm();
-  assert(confirmed);
-  assert(raw->Exchange("TX;").value() == "TX0;");
+  CHECK(confirmed);
+  CHECK(raw->Exchange("TX;").value() == "TX0;");
   std::printf("shutdown: keyed rig unkeyed and CONFIRMED after the poller stopped\n");
 
   std::printf("PASS\n");

@@ -9,7 +9,7 @@
 //
 // So: stop the poller and watch the cache actually age.
 
-#include <cassert>
+#include "check.h"
 #include <chrono>
 #include <cstdio>
 #include <memory>
@@ -26,7 +26,7 @@ int main() {
   const long long fresh = poller.CacheAgeMs();
   std::printf("running:  cache_age_ms=%lld (poll interval %dms)\n",
               fresh, RadioPoller::kPollIntervalMs);
-  assert(fresh >= 0 && fresh < RadioPoller::kStaleAfterMs);
+  CHECK(fresh >= 0 && fresh < RadioPoller::kStaleAfterMs);
 
   poller.Stop();
   std::this_thread::sleep_for(
@@ -36,11 +36,11 @@ int main() {
   const bool stale = aged > RadioPoller::kStaleAfterMs;
   std::printf("stopped:  cache_age_ms=%lld stale=%s (threshold %lldms)\n",
               aged, stale ? "true" : "false", RadioPoller::kStaleAfterMs);
-  assert(stale);
+  CHECK(stale);
 
   // A rig that never answers must read disconnected, never a stale-but-plausible
   // last-known value. This is the 3.6-hour-frequency bug in miniature.
-  assert(poller.Snapshot().connected);
+  CHECK(poller.Snapshot().connected);
   std::printf("PASS\n");
   return 0;
 }
