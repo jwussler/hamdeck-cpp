@@ -146,6 +146,49 @@ that means, and these are testable rules, not aspirations:
 - `./sync.sh` rsyncs the tree to `deck` and builds it there. The VM is the build host on
   purpose: it is where the ALSA and serial work will run.
 
+## The road from here (08/30/2026)
+
+141 routes in the C# `ApiServer.cs` dictionary across 46 groups — captured to
+`reference/routes-csharp.txt`, with the live JSON shapes in `reference/contracts.txt`.
+Most of those routes are thin CAT wrappers, so this is not 141 hand-written handlers.
+
+### Radio-free — the VM stays on the air. Most of the work.
+
+1. **Simulated rig** ✅ done. `CatTransport` + `SimulatedRig`. The highest-leverage item:
+   it turns nearly all 141 routes into radio-free work and gives CI a target it can hit
+   forever, since CI will never have a radio.
+2. **Status cache + 200 ms poller** ✅ done. `/api/status` served entirely from cache.
+3. **Declarative route table** — build the table, not 141 functions.
+4. **Auth/session.** Only `/api/health` and `/api/auth/status` are ever anonymous
+   (`AlwaysAnonymousRoutes` in `ApiServer.cs`); `allow_anonymous_status` gates the
+   read-only set. Cookie, `?token=`, `Bearer`.
+5. **WebSocket** `/ws` and `/ws/tx` — httplib has none, so framing is hand-rolled.
+   Testable with synthetic audio.
+6. **systemd unit + CI that runs the binary.**
+
+### Needs the radio — the only part where the VM comes down.
+
+7. **Real CAT serial**, `/dev/ttyUSB0` @ 38400, probing only with `ID;`.
+8. **ALSA via libasound** rather than `arecord`/`aplay` subprocesses — the actual point of
+   the port — plus `/proc/asound` delay, adaptive buffering, PTT tail-wait, watchdog,
+   RX mute on TX.
+
+**The cutover gate:** do not book a hardware window until item 7's `SerialCat` is written
+and passing against the simulator, so the window is spent *measuring* rather than
+debugging parser bugs that a radio-free test would have caught.
+
+## ⚠️ A test that cannot fail is not a test
+
+The obvious staleness check — `SIGSTOP` the process, re-query — is worthless. It freezes
+the HTTP server too, so the poller refreshes the cache the instant the process resumes and
+the answer comes back fresh. It looks like a pass and measures nothing. Same shape as the
+byte-count latency estimate in CARRYOVER.md section 3, which read ~0 in steady state while
+435 ms sat in the ALSA buffer: **an estimate whose failure mode is zero looks exactly like
+a working measurement.**
+
+The real test (`tests/test_staleness.cpp`, run by ctest) stops the poller and watches the
+cache age: `running: 99ms` → `stopped: 2200ms stale=true` against a 1500 ms threshold.
+
 ## Open decisions (Joe's, not mine)
 
 - **Auth on `[build-host]`.** The host already has its own session cookie. Gating it

@@ -15,6 +15,12 @@ FetchContent_Declare(httplib
   GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(httplib)
 
-add_executable(hamdeck-host src/main.cpp)
+add_executable(hamdeck-host src/main.cpp src/cat_sim.cpp src/radio.cpp)
 target_link_libraries(hamdeck-host PRIVATE httplib::httplib)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
+
+# CI must RUN things, not just build them (CARRYOVER.md section 8): the .NET
+# client shipped a release that could not launch while every test passed.
+enable_testing()
+add_executable(test_staleness tests/test_staleness.cpp src/cat_sim.cpp src/radio.cpp)
+add_test(NAME staleness COMMAND test_staleness)
