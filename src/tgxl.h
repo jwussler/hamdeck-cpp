@@ -48,22 +48,11 @@
 #include <string>
 #include <thread>
 
-// How the tuner drives the radio. Callbacks rather than a RadioPoller pointer,
-// so this file stays free of the rig and can be tested without one - and so the
-// caller decides how a command reaches the serial port. ⚠️ The setters must be
-// safe to call from a thread that is NOT the poller: they queue, they never
-// touch the port. See RadioPoller::Enqueue.
-struct TgxlRig {
-  std::function<int()> get_power;
-  std::function<std::string()> get_mode;
-  std::function<void(int)> set_power;
-  std::function<void(const std::string&)> set_mode;
-  std::function<void(bool)> set_ptt;
-};
+#include "rig_control.h"
 
 class TgxlTuner {
  public:
-  TgxlTuner(std::string host, int port, TgxlRig rig = {})
+  TgxlTuner(std::string host, int port, RigControl rig = {})
       : host_(std::move(host)), port_(port), rig_(std::move(rig)) {}
   ~TgxlTuner();
 
@@ -116,7 +105,7 @@ class TgxlTuner {
 
   std::string host_;
   int port_;
-  TgxlRig rig_;
+  RigControl rig_;
   std::atomic<bool> active_{false};
   std::atomic<bool> stop_{false};
   std::thread worker_;

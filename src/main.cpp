@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
   // The setters QUEUE their CAT commands; they never touch the serial port, so
   // they are safe to call from the tuner's own thread. The getters read the
   // poller's cache, which is at most one 200 ms cycle old.
-  TgxlRig tgxl_rig{
+  RigControl tgxl_rig{
       .get_power = [&poller] { return poller.Snapshot().power; },
       .get_mode = [&poller] { return poller.Snapshot().mode; },
       .set_power = [&poller](int w) { poller.Enqueue(std::format("PC{:03d};", w)); },
@@ -259,7 +259,12 @@ int main(int argc, char** argv) {
       },
       .set_ptt = [&poller](bool on) { poller.Enqueue(on ? "TX1;" : "TX0;"); },
   };
-  TgxlTuner tgxl(config.tgxl_host, config.tgxl_port, std::move(tgxl_rig));
+  TgxlTuner tgxl(config.tgxl_host, config.tgxl_port, tgxl_rig);
+
+  // ⚠️ The amp tune is a TIMED CARRIER - 20 W CW for ten seconds, then 100 W.
+  // No external device: the amplifier tunes itself against the RF. Local
+  // callers only, enforced by the route on the loopback listener.
+  AmpTuner amp(tgxl_rig);
   if (tgxl.configured()) std::cout << "TGXL: " << tgxl.Describe() << '\n' << std::flush;
 
   HostState host_state;
@@ -270,6 +275,7 @@ int main(int argc, char** argv) {
   deps.rx_audio = &rx_audio;
   deps.tx_audio = &tx_audio;
   deps.host = &host_state;
+  deps.amp = &amp;
   deps.config = &config;
   deps.tgxl = &tgxl;
   deps.recorder = &recorder;

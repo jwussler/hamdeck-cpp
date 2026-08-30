@@ -52,6 +52,10 @@ class Settings {
   // not a cosmetic problem.
   QString global_ptt_key = "Off";
 
+  // Tuning step for the wheel and the ± keys, in Hz. 1 kHz is the reference
+  // panel's default and the one that suits SSB.
+  int step_hz = 1000;
+
   // Geometry, clamped on restore - never trusted as written.
   QRect window_geometry;
 

@@ -139,7 +139,8 @@ std::string StatusJson(const ApiDeps& deps) {
       // progress was invisible to every client: the panel could not show the
       // carrier it had started, and could not offer the second press that stops
       // it. The reference host reports both from the tuners themselves.
-      JsonBool(s.split), JsonBool(false), JsonBool(deps.tgxl && deps.tgxl->IsActive()),
+      JsonBool(s.split), JsonBool(deps.amp && deps.amp->IsActive()),
+      JsonBool(deps.tgxl && deps.tgxl->IsActive()),
       FreqBuffer(deps), JsonBool(host_vfo_locked), JsonBool(host_diversity),
       age < 0 ? 0 : age, JsonBool(stale));
 }
@@ -187,7 +188,8 @@ std::string HealthJson(const ApiDeps& deps, int bound_port) {
   return std::format(
       R"({{"status":"ok","service":"{}","version":"{}","port":{},)"
       R"("rig_connected":{},"amp_tuning":{},"tgxl_tuning":{},"freq_buffer":"{}"}})",
-      kServiceName, kVersion, bound_port, JsonBool(connected), JsonBool(false),
+      kServiceName, kVersion, bound_port, JsonBool(connected),
+      JsonBool(deps.amp && deps.amp->IsActive()),
       JsonBool(deps.tgxl && deps.tgxl->IsActive()), FreqBuffer(deps));
 }
 
@@ -1180,18 +1182,27 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // ⚠️ AMP TUNE REFUSES EVERY REMOTE CALLER. CARRYOVER.md section 2. The check is
   // the LISTENER the request arrived on - the control port is bound to loopback,
   // so "local" is a kernel guarantee, not a header a caller can set.
-  auto amp_tune = [](bool is_local) {
+  AmpTuner* amp = deps.amp;
+  auto amp_tune = [amp](bool is_local) {
     if (!is_local) {
       return std::string(R"({"status":"error",)"
                          R"("message":"Amp tune is only available when connected locally."})");
     }
-    return std::string(R"({"status":"error","available":false,"tuner":"amp",)"
-                       R"("message":"Amp tuner is not configured on this host"})");
+    if (!amp) {
+      return std::string(R"({"status":"error","available":false,"tuner":"amp",)"
+                         R"("message":"Amp tuner is not configured on this host"})");
+    }
+    const auto r = amp->Tune();
+    return std::format(
+        R"({{"status":"{}","tuner":"amp","available":true,"tuning":{},)"
+        R"("action":"{}","message":"{}"}})",
+        r.ok ? "ok" : "error", JsonBool(r.tuning), r.action, r.message);
   };
   generated.push_back({"/api/tune/amp", amp_tune});
   generated.push_back({"/api/amp/tune", amp_tune});
-  generated.push_back({"/api/tune/amp/status", [](bool) {
-      return std::string(R"({"status":"ok","tuning":false,"available":false})"); }});
+  generated.push_back({"/api/tune/amp/status", [amp](bool) {
+      return std::format(R"({{"status":"ok","tuning":{},"available":{}}})",
+                         JsonBool(amp && amp->IsActive()), JsonBool(amp != nullptr)); }});
 
   // ── CW keyer: present on the reference Linux host, not ported yet ─────────
   generated.push_back({"/api/cw/status", [](bool) {

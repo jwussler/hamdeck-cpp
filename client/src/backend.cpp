@@ -237,6 +237,7 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
     cw_speed_ = o.value("wpm").toInt();
     emit statusFullChanged();
   });
+  refreshRecord();
   api_.Get("/api/tune/tgxl/status", [this](QJsonObject o) {
     tuner_available_ = o.value("available").toBool();
     tuner_status_ = tuner_available_ ? "ready" : "not configured";
@@ -542,6 +543,62 @@ QString Backend::bandName() const {
     if (hz >= b.lo && hz <= b.hi) return b.name;
   }
   return "—";
+}
+
+QString Backend::preampName() const {
+  // The rig reports 0/1/2; the panel shows what the front panel calls them.
+  switch (full_.value("preamp").toInt()) {
+    case 1: return "AMP1";
+    case 2: return "AMP2";
+    default: return "IPO";
+  }
+}
+
+void Backend::setStepHz(int hz) {
+  // The steps the reference panel offers. Anything else is ignored rather than
+  // sent: /api/step takes the size in the path and a typo would move the rig
+  // somewhere nobody asked for.
+  static const QList<int> kSteps{10, 100, 1000, 5000, 10000};
+  if (!kSteps.contains(hz)) return;
+  settings_.step_hz = hz;
+  settings_.Save();
+  emit hotkeyChanged();
+}
+
+QString Backend::stepLabel() const {
+  const int hz = settings_.step_hz;
+  return hz >= 1000 ? QString("%1 kHz").arg(hz / 1000) : QString("%1 Hz").arg(hz);
+}
+
+QString Backend::recordStatus() const {
+  if (!record_.value("available").toBool()) {
+    const QString why = record_.value("reason").toString();
+    return why.isEmpty() ? "recording unavailable" : why;
+  }
+  if (record_.value("file_recording").toBool()) {
+    const int secs = record_.value("recorded_seconds").toInt();
+    return QString("recording · %1:%2").arg(secs / 60).arg(secs % 60, 2, 10, QChar('0'));
+  }
+  // ⚠️ "buffering" and "recording" are DIFFERENT and the panel must say which.
+  // The replay buffer is always running; a file recording is not. An operator
+  // who thinks a file is being written when only the buffer is running loses
+  // the over they meant to keep.
+  return record_.value("buffering").toBool() ? "buffer running · replay ready" : "idle";
+}
+
+void Backend::toggleRecording() {
+  api_.Get("/api/record/toggle", [this](QJsonObject) { refreshRecord(); });
+}
+
+void Backend::saveReplay() {
+  api_.Get("/api/record/replay", [this](QJsonObject) { refreshRecord(); });
+}
+
+void Backend::refreshRecord() {
+  api_.Get("/api/record/status", [this](QJsonObject o) {
+    record_ = o;
+    emit recordChanged();
+  });
 }
 
 QString Backend::setFreqText(const QString& text) {

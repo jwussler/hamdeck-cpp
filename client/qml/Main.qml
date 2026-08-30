@@ -121,6 +121,11 @@ ApplicationWindow {
             Readout {
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                // The wheel tunes, in the step the row below is set to. The
+                // reference panel does this and it is the fastest way to move.
+                stepHz: backend.stepHz
+                onStepped: (up) => backend.send("/api/step/" + backend.stepHz +
+                                                (up ? "/up" : "/down"))
                 freq: backend.freqText
                 mode: backend.mode
                 vfo: backend.vfo
@@ -207,10 +212,61 @@ ApplicationWindow {
                                onClicked: backend.send("/api/vfo/swap") }
                     PanelKey { Layout.fillWidth: true; text: "Split"
                                onClicked: backend.send("/api/split/toggle") }
-                    PanelKey { Layout.fillWidth: true; text: "−1 kHz"
-                               onClicked: backend.send("/api/step/1000/down") }
-                    PanelKey { Layout.fillWidth: true; text: "+1 kHz"
-                               onClicked: backend.send("/api/step/1000/up") }
+                    // ⚠️ These follow the STEP SIZE below, so the label
+                    // cannot say one thing while the rig moves another.
+                    PanelKey { Layout.fillWidth: true
+                               text: "− " + backend.stepLabel
+                               onClicked: backend.send("/api/step/" + backend.stepHz + "/down") }
+                    PanelKey { Layout.fillWidth: true
+                               text: "+ " + backend.stepLabel
+                               onClicked: backend.send("/api/step/" + backend.stepHz + "/up") }
+                    PanelKey { Layout.fillWidth: true; text: "A▸B"
+                               onClicked: backend.send("/api/vfo-copy/a2b") }
+                    // One press: copy A to B and go split. The compound
+                    // sequence runs ON the poller thread host-side, so a status
+                    // poll cannot land mid-sequence and cache a half-applied
+                    // state.
+                    PanelKey { Layout.fillWidth: true; text: "Quick split"
+                               onClicked: backend.send("/api/quick-split") }
+                    // ⚠️ TWO DIFFERENT LOCKS, and they are not interchangeable.
+                    // VFO LOCK is this host's software lock: it blocks every
+                    // frequency-changing route for every caller, including
+                    // local ones. LOCK is the rig's own CAT lock. Labelled
+                    // separately because confusing them means an operator
+                    // thinks their frequency is protected when it is not.
+                    PanelKey {
+                        Layout.fillWidth: true
+                        text: "VFO lock"
+                        lit: backend.vfoLocked
+                        onClicked: backend.send("/api/vfo-lock/toggle")
+                    }
+                    PanelKey {
+                        Layout.fillWidth: true
+                        text: "Rig lock"
+                        lit: backend.rigLocked
+                        onClicked: backend.send("/api/toggle/lock")
+                    }
+                }
+            }
+
+            Group {
+                title: "Tuning step"
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                GridLayout {
+                    columns: Theme.cols(win.contentW, Theme.u(70), 5)
+                    columnSpacing: Theme.gap; rowSpacing: Theme.gap
+                    Layout.fillWidth: true
+                    Repeater {
+                        model: [[10,"10 Hz"],[100,"100 Hz"],[1000,"1 kHz"],
+                                [5000,"5 kHz"],[10000,"10 kHz"]]
+                        delegate: PanelKey {
+                            Layout.fillWidth: true
+                            text: modelData[1]
+                            lit: backend.stepHz === modelData[0]
+                            onClicked: backend.stepHz = modelData[0]
+                        }
+                    }
                 }
             }
 
@@ -236,6 +292,30 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         text: "AGC " + backend.agc
                         onClicked: backend.send("/api/agc/cycle")
+                    }
+                    // IPO / AMP1 / AMP2 - cycled on the rig, so the label
+                    // follows what the rig reports rather than a click count.
+                    PanelKey {
+                        Layout.fillWidth: true
+                        text: "PRE " + backend.preampName
+                        onClicked: backend.send("/api/preamp/cycle")
+                    }
+                    PanelKey {
+                        Layout.fillWidth: true
+                        text: "XIT"
+                        lit: backend.dsp["xit"] === true
+                        onClicked: backend.send("/api/xit/toggle")
+                    }
+                    PanelKey {
+                        Layout.fillWidth: true
+                        text: "Mute"
+                        onClicked: backend.send("/api/mute/toggle")
+                    }
+                    PanelKey {
+                        Layout.fillWidth: true
+                        text: "Div"
+                        lit: backend.diversity
+                        onClicked: backend.send("/api/diversity/toggle")
                     }
                 }
             }
@@ -272,6 +352,10 @@ ApplicationWindow {
                     }
                     Rectangle { width: 1; height: Theme.keyH; color: Theme.line }
 
+                    // RIT ON/OFF is separate from nudging it: clearing the
+                    // offset and switching RIT off are different acts.
+                    PanelKey { text: "RIT"; lit: backend.dsp["rit"] === true
+                               onClicked: backend.send("/api/rit/toggle") }
                     PanelKey { text: "RIT −"; onClicked: backend.send("/api/rit/down") }
                     PanelKey { text: "RIT +"; onClicked: backend.send("/api/rit/up") }
                     PanelKey { text: "Clr";   onClicked: backend.send("/api/rit/clear") }
@@ -559,6 +643,41 @@ ApplicationWindow {
                             currentIndex: backend.inputIndex
                             onActivated: backend.inputIndex = currentIndex
                         }
+                    }
+                }
+            }
+
+            Group {
+                title: "Recording"
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.gap
+                    // ⚠️ Lit from the HOST's record status, not the click - the
+                    // recorder can be started by another client, and a button
+                    // that latches would claim a recording that never began.
+                    PanelKey {
+                        text: backend.recording ? "Stop recording" : "Record"
+                        enabledKey: backend.recordAvailable
+                        danger: backend.recording
+                        lit: backend.recording
+                        onClicked: backend.toggleRecording()
+                    }
+                    // The replay buffer is always running; this writes the last
+                    // of it to a file. It is how you keep an over you did not
+                    // know you wanted until it had happened.
+                    PanelKey {
+                        text: "Save replay"
+                        enabledKey: backend.recordAvailable
+                        onClicked: backend.saveReplay()
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: backend.recordStatus
+                        elide: Text.ElideRight
+                        font.family: Theme.body; font.pixelSize: Theme.f(11)
+                        color: backend.recording ? Theme.txRed : Theme.dim
                     }
                 }
             }

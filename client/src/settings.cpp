@@ -22,6 +22,7 @@ void Settings::Load() {
   ptt_hold = s.value("ptt_hold", true).toBool();
   ui_scale_mode = s.value("ui_scale_mode", "Auto").toString();
   global_ptt_key = s.value("global_ptt_key", "Off").toString();
+  step_hz = s.value("step_hz", 1000).toInt();
   window_geometry = s.value("window_geometry", QRect()).toRect();
 
   // A password key must never exist. If an older build wrote one, remove it
@@ -41,6 +42,7 @@ void Settings::Save() const {
   s.setValue("ptt_hold", ptt_hold);
   s.setValue("ui_scale_mode", ui_scale_mode);
   s.setValue("global_ptt_key", global_ptt_key);
+  s.setValue("step_hz", step_hz);
   s.setValue("window_geometry", window_geometry);
   s.sync();
 }

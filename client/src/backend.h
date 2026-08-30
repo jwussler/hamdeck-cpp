@@ -51,6 +51,15 @@ class Backend : public QObject {
   // rig rather than being hard-coded per client.
   Q_PROPERTY(QVariantList meterTicks READ meterTicks NOTIFY scaleChanged)
 
+  // ── Recording, reflected from the HOST ──
+  // ⚠️ The host has recorded and buffered since 08/30 and no panel could reach
+  // it. These follow /api/record/status, not a local flag: the recorder can be
+  // started by another client, and a button that latches on click would show
+  // "recording" for a recorder that refused to start.
+  Q_PROPERTY(bool recording READ recording NOTIFY recordChanged)
+  Q_PROPERTY(bool recordAvailable READ recordAvailable NOTIFY recordChanged)
+  Q_PROPERTY(QString recordStatus READ recordStatus NOTIFY recordChanged)
+
   // ── DSP, reflected from the rig ──
   Q_PROPERTY(QVariantMap dsp READ dsp NOTIFY statusFullChanged)
   Q_PROPERTY(QString agc READ agc NOTIFY statusFullChanged)
@@ -88,6 +97,16 @@ class Backend : public QObject {
   Q_PROPERTY(int ant READ ant NOTIFY statusFullChanged)
   Q_PROPERTY(long long freqB READ freqB NOTIFY statusFullChanged)
   Q_PROPERTY(QString bandName READ bandName NOTIFY statusChanged)
+  // ⚠️ Two locks, and they are not the same thing: vfoLocked is THIS HOST's
+  // software lock, which blocks frequency-changing routes for every caller;
+  // rigLocked is the radio's own CAT lock. See WIP §6.
+  Q_PROPERTY(bool vfoLocked READ vfoLocked NOTIFY statusChanged)
+  Q_PROPERTY(bool rigLocked READ rigLocked NOTIFY statusFullChanged)
+  Q_PROPERTY(bool diversity READ diversity NOTIFY statusChanged)
+  Q_PROPERTY(QString preampName READ preampName NOTIFY statusFullChanged)
+  // The tuning step the wheel and the ± keys use. Remembered.
+  Q_PROPERTY(int stepHz READ stepHz WRITE setStepHz NOTIFY hotkeyChanged)
+  Q_PROPERTY(QString stepLabel READ stepLabel NOTIFY hotkeyChanged)
   Q_PROPERTY(QString tunerStatus READ tunerStatus NOTIFY tunerChanged)
   Q_PROPERTY(bool tunerAvailable READ tunerAvailable NOTIFY tunerChanged)
   // ⚠️ FROM THE HOST'S STATUS, NOT FROM THE CLICK. Same rule as the PTT button
@@ -188,6 +207,13 @@ class Backend : public QObject {
   int ant() const { return full_.value("ant").toInt(); }
   long long freqB() const { return full_.value("freq_b").toVariant().toLongLong(); }
   QString bandName() const;
+  bool vfoLocked() const { return status_.value("vfo_locked").toBool(); }
+  bool rigLocked() const { return full_.value("lock").toBool(); }
+  bool diversity() const { return status_.value("diversity").toBool(); }
+  QString preampName() const;
+  int stepHz() const { return settings_.step_hz; }
+  void setStepHz(int hz);
+  QString stepLabel() const;
   QString tunerStatus() const { return tuner_status_; }
   bool tunerAvailable() const { return tuner_available_; }
   bool tunerActive() const { return status_.value("tgxl_tuning").toBool(); }
@@ -209,6 +235,13 @@ class Backend : public QObject {
   int alcPct() const { return meters_.value("alc_pct").toInt(); }
   int powerPct() const { return meters_.value("power_pct").toInt(); }
   QVariantList meterTicks() const { return ticks_; }
+
+  bool recording() const { return record_.value("file_recording").toBool() ||
+                                  record_.value("recording").toBool(); }
+  bool recordAvailable() const { return record_.value("available").toBool(); }
+  QString recordStatus() const;
+  Q_INVOKABLE void toggleRecording();
+  Q_INVOKABLE void saveReplay();
 
   QVariantMap dsp() const;
   QString agc() const { return full_.value("agc").toString("—"); }
@@ -258,10 +291,12 @@ class Backend : public QObject {
   void hotkeyChanged();
   void sessionChanged();
   void tunerChanged();
+  void recordChanged();
   void uiScaleChanged();
 
  private:
   void ApplyGlobalHotkey();
+  void refreshRecord();
 
   Settings settings_;
   ApiClient api_;
@@ -272,7 +307,7 @@ class Backend : public QObject {
   QString global_hotkey_status_ = "off";
   QWindow* window_ = nullptr;
 
-  QJsonObject status_, full_, meters_;
+  QJsonObject status_, full_, meters_, record_;
   QVariantList ticks_;
   QString audio_status_ = "idle";
   QString connection_text_ = "not connected";

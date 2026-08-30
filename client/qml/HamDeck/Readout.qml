@@ -14,6 +14,10 @@ ColumnLayout {
     property string band: "—"
     property double freqB: 0
     property bool editing: false
+    property int stepHz: 1000
+    // Emitted by the wheel. The caller decides what a step means - this
+    // component does not know the API exists.
+    signal stepped(bool up)
     property string entryError: ""
     // Handed the typed text; returns "" if it was accepted, or the refusal.
     property var onCommit: null
@@ -90,6 +94,11 @@ ColumnLayout {
             enabled: !readout.editing
             cursorShape: Qt.IBeamCursor
             onClicked: readout.startEdit()
+            // ⚠️ The wheel tunes; it does not scroll the panel. Over a
+            // frequency readout that is what the gesture means, and letting it
+            // fall through to the scroll area would move the whole panel while
+            // the operator was trying to move the VFO.
+            onWheel: (w) => { w.accepted = true; readout.stepped(w.angleDelta.y > 0) }
         }
 
         Text {

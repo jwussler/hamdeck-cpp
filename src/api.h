@@ -12,6 +12,7 @@
 #include "config.h"
 #include "recorder.h"
 #include "session_stats.h"
+#include "amp_tuner.h"
 #include "tgxl.h"
 #include "radio.h"
 
@@ -58,6 +59,7 @@ struct ApiDeps {
   // cut, not some distant maintenance window.
   Config* config = nullptr;
   TgxlTuner* tgxl = nullptr;
+  AmpTuner* amp = nullptr;
   Recorder* recorder = nullptr;
   SessionStats* stats = nullptr;
   std::function<bool(std::string&)> save_config;

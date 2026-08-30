@@ -32,7 +32,7 @@ does not offer.**
 | service | C# | here | decision |
 |---|---|---|---|
 | `Tuners.TgxlTuner` | 15 W CW carrier + autotune | ✅ **ported 08/30** | see WIP §8e — it never keyed the rig before |
-| `Tuners.AmpTuner` | 20 W CW, **10 s carrier**, ends at 100 W | ❌ **stub** — `/api/tune/amp` says "not configured" | **portable now**, local-only. Next. |
+| `Tuners.AmpTuner` | 20 W CW, **10 s carrier**, ends at 100 W | ✅ **ported 08/30** | local-only, verified on the simulator |
 | `Keyers.CwKeyer` | send CW text, 5 CW memories | ❌ stub — `/api/cw/*` reports `available:false` | portable; needs the CAT verbs checking against the manual |
 | `TcpCatProxy` | CAT on **localhost:4532** so N1MM shares the port through the same lock | ❌ not ported | **wanted** — this is what removes the virtual-serial-port splitter |
 | `WaveLogServer` | WaveLogGate: HTTP 54321 for QSY from the bandmap, WS 54322 status, Wavelog API posting | ❌ not ported | **wanted if the log is used** |
@@ -60,27 +60,29 @@ were never missing).
 - ✅ **System-wide PTT key** — `RegisterHotKey`, press-to-toggle, with `MOD_NOREPEAT` and the
   bare-key fallback, and error 1409 reported as "another program holds it".
 
+### Also done 08/30/2026
+- ✅ **Amp tune** (host) — 20 W CW, 10 s carrier, then **100 W** and the mode back. Ends at
+  100 W deliberately, as the reference does: restoring 5 W after tuning an amplifier is not
+  what anybody pressed the button for. Refuses remote callers on the listener, not a header.
+- ✅ **Recording and the replay buffer** in the panel — Record / Save replay, lit from the
+  host's status, and it distinguishes *buffering* from *recording a file*.
+- ✅ **VFO lock and rig CAT lock**, labelled separately because they are not the same lock.
+- ✅ **Quick split, VFO copy A▸B, preamp cycle, XIT, mute, diversity, RIT on/off.**
+- ✅ **Tuning step** — 10 Hz to 10 kHz, remembered; the ± keys and the wheel follow it, so a
+  label can never say one thing while the rig moves another.
+- ✅ **Mouse wheel over the readout tunes**, and the wheel is consumed there so it cannot
+  scroll the panel while the operator is moving the VFO.
+
 ### Still missing, roughly in the order they are worth doing
 | control | route | note |
 |---|---|---|
-| **Recording + replay buffer** | `/api/record/toggle`, `/replay`, `/status` | ⚠️ the HOST already implements this and the panel cannot reach it |
-| **VFO lock** | `/api/vfo-lock/toggle` | a safety feature of this host, invisible in the panel |
-| **Rig CAT lock** | `/api/toggle/lock` | different from the software VFO lock — see WIP §6 |
-| **Quick split** | `/api/quick-split` | one press; compound sequence already on the host |
-| **VFO copy A→B** | `/api/vfo-copy/a2b` | |
-| **Preamp / IPO** | `/api/preamp/cycle` | |
-| **RIT and XIT on/off** | `/api/rit/toggle`, `/api/xit/toggle` | panel has RIT up/down/clear only |
-| **Mute, mute-sub, mute-all** | `/api/mute*/toggle` | |
 | **RX antenna** | `/api/rxant/1`, `/api/ant/rx/toggle` | |
-| **Diversity** | `/api/diversity/toggle` | status field already carried |
 | **Memory recall** | `/api/memory/recall/{m}` | |
 | **Presets** | `/api/preset/`, `/api/admin/presets` | host route exists for hardware this host lacks |
 | **Voice memories** | `/api/voice/play/{n}`, `/stop`, `/status` | |
 | **SSB out level** | `/api/ssb-out-level/get|set` | |
 | **Remote TX** | `/api/remote-tx/on|off|gain|status` | |
 | **Rig internal ATU** | `/api/tune` | ⚠️ the WRONG tuner for this station — label it clearly if added |
-| **Mouse wheel tunes the VFO** | `/api/step/{hz}/{dir}` | C# `OnFreqWheel`; wheel over the readout |
-| **Step size selector** | `/api/step/{hz}/{dir}` | C# has a row of step sizes + ◀ ▶; this panel has ±1 kHz only |
 
 ---
 
