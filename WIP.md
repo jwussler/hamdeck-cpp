@@ -58,17 +58,93 @@ device moves **both** ports together.
 surface, the WebSocket framing, auth/session, the build and CI, the health route — gets
 built and proven on the VM with the VM untouched and the station on the air. The audio and
 CAT work, which is the whole reason the port is interesting, needs a **booked hardware
-window**. That is a deliberate act with the station off the air, not something to slide
-into:
+window** with the station off the air.
+
+### The hardware window — decided 08/30/2026
+
+Joe's call: **just shut the VM down to release the devices.** Stopping the VM frees the
+physical USB device on the pve host; 102's config keeps its `usb0`/`usb1` lines untouched,
+so giving the radio back is only a `qm start`.
 
 ```
+# take the radio
 ssh <reference-host> 'sudo systemctl stop the host service'
-ssh <hypervisor> 'qm <op> <vmid>; qm <op> <vmid> -delete usb0 -delete usb1
-         qm <op> <vmid> -usb0 host=10c4:ea70 -usb1 host=08bb:29c3; qm <op> <vmid>'
-# ... and the exact reverse to give the radio back ...
+ssh <hypervisor>     'qm <op> <vmid>'
+ssh <hypervisor>     'qm <op> <vmid> -usb0 host=10c4:ea70 -usb1 host=08bb:29c3'   # once, then it sticks
+ssh <hypervisor>     'qm <op> <vmid>'      # or qm reboot 105 if it is already up
+
+# give the radio back — always, at the end of every session
+ssh <hypervisor>     'qm <op> <vmid> && qm <op> <vmid> -delete usb0 -delete usb1'
+ssh <hypervisor>     'qm <op> <vmid>'
+ssh <reference-host> 'systemctl is-active the host service'    # prove it, do not assume
 ```
 
-Do not leave the station in that state unattended. Reverse it at the end of every session.
+Verify the handover on 105 before trusting it, rather than assuming the passthrough took:
+`lsusb | grep -E "10c4:ea70|08bb:29c3"`, `ls /dev/ttyUSB*`, `aplay -l`.
+
+⚠️ **the VM is `onboot: 1`.** If the pve host reboots during a hardware window it will
+bring 102 back up and the two VMs will fight over the devices. Left as-is on purpose — 102
+auto-starting is correct for a station — but it is the one way this procedure bites.
+
+⚠️ Never leave the radio detached from the VM unattended. The station is off the air for
+the whole window.
+
+## Findings from the live C# host — not in CARRYOVER.md
+
+### The port split is load-bearing (measured on the VM, 08/30/2026)
+
+CARRYOVER.md never says why the host listens on two ports. It matters:
+
+| port | binding | behaviour |
+|---|---|---|
+| **5001** | local only | control API. A LAN caller is refused outright: *"The control API only serves this machine. Use the dashboard port with a session, or set `api_bind_lan`."* |
+| **5002** | LAN | dashboard. `/api/health` answers with no session; everything else needs one. |
+
+This is what makes "local" mean something, and it is how `/api/tune/amp` can refuse every
+remote caller (CARRYOVER.md section 2). **The C++ host binds the control server to
+`127.0.0.1` so the guarantee is enforced by the kernel, not by a check somebody can forget
+to write.** Locality is *which socket accepted the request* — never a header, since
+`X-Forwarded-For` and friends are caller-controlled.
+
+The first scaffold got this wrong: it bound `0.0.0.0:5001`, publishing the control port to
+the whole LAN. Caught by comparing against the running C# host instead of trusting the doc.
+
+### Deliberate divergence: `port` reports the real port
+The C# host hardcodes `"port":5001` and answers that on 5002 as well — verified. Ours
+reports the port actually bound, so the field can tell two listeners apart.
+
+### ⚠️ A signal handler that swallows SIGTERM makes the service unkillable
+The first scaffold's `SIGTERM` handler set an atomic flag that nothing ever read, so the
+process caught the signal and kept serving. `pkill` looked like it worked and did nothing;
+a stale build answered a later probe and nearly passed as the new one. **Any handler must
+actually stop the server, or not exist.** This would have broken every `systemctl restart`.
+
+## Design decision: API-first, no privileged client (08/30/2026)
+
+Joe's call — the host stays **100% API-driven so other clients can be stood up**. Concretely
+that means, and these are testable rules, not aspirations:
+
+- **No capability reachable except through a documented route.** If the WPF panel can do it,
+  a curl can do it. No hidden endpoint, no server-rendered page that is the only way in.
+- **No client is privileged.** The browser UI is just another consumer of the same API. The
+  only asymmetry allowed is `local vs remote`, and it is enforced by the socket (above).
+- **The host holds no per-client UI state.** State belongs to the radio; clients are
+  disposable and may connect, drop and reconnect at will.
+- **Capabilities are discoverable.** The existing client already probes and greys out what is
+  missing (CARRYOVER.md section 1). Absent capabilities must say so in their own status
+  route — never a 200 that means "the route exists" (the `/api/record/start` lie).
+- **Audio is part of the API contract**, not a side channel: `/ws` RX 22050/16/mono, `/ws/tx`
+  TX 48000/16/mono.
+
+## Done so far
+
+- CMake + Ninja project, C++23, cpp-httplib pinned at v0.18.3 via FetchContent.
+- `GET /api/health` on both listeners. Verified **from shack over the LAN**, not localhost:
+  `:5002` answers, `:5001` is connection-refused, both answer on the box itself, `SIGTERM`
+  stops it, and the JSON shape is key-for-key and type-for-type identical to the live C#
+  host. `rig_connected` is honestly `false` — there is no radio on this VM.
+- `./sync.sh` rsyncs the tree to `deck` and builds it there. The VM is the build host on
+  purpose: it is where the ALSA and serial work will run.
 
 ## Open decisions (Joe's, not mine)
 
