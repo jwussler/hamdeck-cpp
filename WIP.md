@@ -35,15 +35,18 @@ restored, built, and passed all 8 tests.
 commits.** It is safe on private storage and **must not be published** — which is also why the
 script has no GitHub path in it.
 
-### 🛑 BLOCKER — do not push this repo yet
-The working tree is clean of site detail. **The git history is not.** Earlier commits of this
-file, and several commit messages, contain the site's WAN address, a VPN peer endpoint,
-internal addresses, VM ids and hostnames. Nothing has ever been pushed — there is no remote —
-so nothing has leaked, and the fix is cheap while that stays true.
+### History scrub — done 08/30/2026
+The git history **was** carrying site detail (WAN address, VPN peer endpoint, internal
+addresses, VM ids, ssh aliases) even though the working tree was clean. It was rewritten with
+`git-filter-repo`, replacing in **both blobs and commit messages** — `--replace-text` alone
+only touches blobs, which is why the first attempt still leaked.
 
-Two ways to clear it, Joe's call: **squash to a single initial commit** before adding a
-remote, or **rewrite the affected commits** with `git filter-repo`. Until then: no
-`git remote add`, no push.
+Verified afterwards: no match for any of those patterns anywhere in blobs or messages, all 24
+commits preserved, and the rewritten tree still builds and passes all 8 tests. The rewrite was
+validated **on a clone first**; the real repo was only touched once the copy came out clean.
+
+⚠️ **The pre-rewrite bundles in the backup location still contain the original history.** They
+are private-storage-only and must never be published. See `SITE.md`.
 
 ### What is left, and what it needs
 
