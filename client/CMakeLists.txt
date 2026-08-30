@@ -18,22 +18,16 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network WebSockets Multimedia Quick QuickControls2 Qml)
 qt_standard_project_setup()
 
-qt_add_executable(hamdeck-client
-    src/main.cpp
-    src/settings.cpp
-    src/api_client.cpp
-    src/rx_audio.cpp
-    src/tx_audio.cpp
-    src/ptt_hotkey.cpp
-    src/mainwindow.cpp
-    src/smeter.cpp
-    src/theme.cpp
-)
-
-target_link_libraries(hamdeck-client PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::WebSockets Qt6::Multimedia)
-
-target_compile_options(hamdeck-client PRIVATE -Wall -Wextra)
+# ⚠️ The Qt Widgets front end was REMOVED here, not kept as a fallback.
+#
+# It worked and was screenshot-verified, but two front ends against one API
+# drift - and the first thing to drift is exactly what a brand token table
+# exists to prevent. The QML one is the decision (CLAUDE.md); git has the other
+# if it is ever wanted back.
+#
+# What survived the swap is the part that mattered: api_client, rx_audio,
+# tx_audio, ptt_hotkey and settings were never touched, because every safety
+# rule lives there rather than in a view.
 
 # CI must RUN the binary, not just build it. The .NET client shipped a release
 # that could not launch at all while every test passed.
@@ -43,9 +37,7 @@ target_link_libraries(test_hotkey PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
 add_test(NAME hotkey COMMAND test_hotkey)
 set_tests_properties(hotkey PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
-add_test(NAME client_selftest COMMAND hamdeck-client --selftest)
-set_tests_properties(client_selftest PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+# The selftest that CI runs is qml_selftest, below.
 
 # ── Qt Quick client ─────────────────────────────────────────────────────────
 # QML rather than Widgets, per CLAUDE.md. The C++ core - api_client, rx_audio,
