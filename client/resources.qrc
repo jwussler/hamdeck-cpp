@@ -12,6 +12,7 @@
     <file>qml/HamDeck/Field.qml</file>
     <file>qml/HamDeck/Knob.qml</file>
     <file>qml/HamDeck/MeterBar.qml</file>
+    <file>qml/HamDeck/PanelCombo.qml</file>
     <file alias="fonts/BarlowCondensed-SemiBold.ttf">fonts/BarlowCondensed-SemiBold.ttf</file>
     <file alias="fonts/BarlowCondensed-Bold.ttf">fonts/BarlowCondensed-Bold.ttf</file>
     <file alias="fonts/IBMPlexSans.ttf">fonts/IBMPlexSans.ttf</file>

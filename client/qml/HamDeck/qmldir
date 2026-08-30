@@ -9,3 +9,4 @@ ConnectPanel 1.0 ConnectPanel.qml
 Field 1.0 Field.qml
 Knob 1.0 Knob.qml
 MeterBar 1.0 MeterBar.qml
+PanelCombo 1.0 PanelCombo.qml

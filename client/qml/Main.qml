@@ -404,10 +404,9 @@ ApplicationWindow {
                         SilkLabel { text: "PTT key" }
                         RowLayout {
                             spacing: Theme.u(6)
-                            ComboBox {
+                            PanelCombo {
                                 id: hkBox
                                 Layout.preferredWidth: Theme.u(132)
-                                font.pixelSize: Theme.f(12)
                                 model: backend.hotkeyChoices.map(c => c.label)
                                 currentIndex: backend.hotkeyIndex
                                 onActivated: backend.hotkeyIndex = currentIndex
@@ -497,9 +496,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         spacing: Theme.u(2)
                         SilkLabel { text: "Speaker" }
-                        ComboBox {
+                        PanelCombo {
                             Layout.fillWidth: true
-                            font.pixelSize: Theme.f(12)
                             model: backend.outputDevices
                             currentIndex: backend.outputIndex
                             onActivated: backend.outputIndex = currentIndex
@@ -509,9 +507,8 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         spacing: Theme.u(2)
                         SilkLabel { text: "Microphone" }
-                        ComboBox {
+                        PanelCombo {
                             Layout.fillWidth: true
-                            font.pixelSize: Theme.f(12)
                             model: backend.inputDevices
                             currentIndex: backend.inputIndex
                             onActivated: backend.inputIndex = currentIndex
@@ -530,9 +527,8 @@ ApplicationWindow {
                     ColumnLayout {
                         spacing: Theme.u(2)
                         SilkLabel { text: "Panel size" }
-                        ComboBox {
+                        PanelCombo {
                             Layout.preferredWidth: Theme.u(120)
-                            font.pixelSize: Theme.f(12)
                             model: backend.uiScaleModes
                             currentIndex: backend.uiScaleIndex
                             onActivated: backend.uiScaleIndex = currentIndex

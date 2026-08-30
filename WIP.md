@@ -648,9 +648,16 @@ QT_QPA_PLATFORM=offscreen ./hamdeck-qml --host 127.0.0.1 --port <sim> \
 `--ui-scale <f>` forces a scale (and the Display group **says** the scale came from the command
 line), and `--screenshot-size WxH` captures at a size this box has no monitor for.
 
-### Known, not fixed
-The `ComboBox`es render in Qt's Basic style — **white on a dark panel**. It predates this work
-and is a brand violation on a panel BRAND.md governs; it wants a styled control, not a scale fix.
+### The dropdowns are ours now
+⚠️ Qt Quick Controls' Basic style draws a **light** control — white field, white popup, black
+text — which put three white boxes on a near-black panel. `PanelCombo.qml` styles field, popup,
+delegate and indicator from the brand tokens, so the four places that use one cannot drift.
+Its popup is capped at 60% of the screen height: a machine with a dozen audio devices would
+otherwise open a list running off the display, and the device the operator wants is the one
+they cannot reach.
+
+⚠️ A new component must be declared in **both** `qmldir` **and** `resources.qrc` — miss either
+and it fails at runtime only.
 
 ---
 
