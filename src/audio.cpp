@@ -1,5 +1,7 @@
 #include "audio.h"
 
+#include "recorder.h"
+
 #include <chrono>
 #include <cmath>
 #include <format>
@@ -90,6 +92,7 @@ void RxAudioStream::ProduceLoop() {
   while (running_.load()) {
     std::vector<int16_t> chunk(kFramesPerChunk);
     if (!source_->Read(chunk.data(), kFramesPerChunk)) break;
+    if (recorder_) recorder_->Feed(chunk.data(), chunk.size());
     // Trims before pushing, dropping the oldest, exactly as the C# streamer does.
     queue_.Push(std::move(chunk));
     next += chunk_duration;

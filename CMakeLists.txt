@@ -37,7 +37,7 @@ FetchContent_Declare(nlohmann_json
   GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(nlohmann_json)
 
-add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp src/tx_audio.cpp src/alsa_devices.cpp src/rig_cal.cpp src/alsa_audio.cpp src/tgxl.cpp)
+add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp src/tx_audio.cpp src/alsa_devices.cpp src/rig_cal.cpp src/alsa_audio.cpp src/tgxl.cpp src/recorder.cpp)
 target_link_libraries(hamdeck-host PRIVATE civetweb-c-library OpenSSL::Crypto nlohmann_json::nlohmann_json asound)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
 
@@ -54,9 +54,12 @@ add_test(NAME auth COMMAND test_auth)
 add_executable(test_watchdog tests/test_watchdog.cpp src/cat_sim.cpp src/radio.cpp)
 add_test(NAME watchdog COMMAND test_watchdog)
 
-add_executable(test_audio_queue tests/test_audio_queue.cpp src/audio.cpp src/http.cpp)
+add_executable(test_audio_queue tests/test_audio_queue.cpp src/audio.cpp src/http.cpp src/recorder.cpp)
 target_link_libraries(test_audio_queue PRIVATE civetweb-c-library)
 add_test(NAME audio_queue COMMAND test_audio_queue)
+
+add_executable(test_recorder tests/test_recorder.cpp src/recorder.cpp)
+add_test(NAME recorder COMMAND test_recorder)
 
 # Drives the REAL serial code through a pty with a fake rig on the far end, so
 # every serial failure mode is found without the station off the air.

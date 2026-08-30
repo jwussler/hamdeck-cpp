@@ -104,6 +104,11 @@ class RxAudioStream {
   size_t SentChunks() const { return sent_.load(); }
   std::string Backend() const { return source_->Describe(); }
 
+  // ⚠️ Fed from the SAME audio the operator hears, not a second capture. A
+  // recording taken from a separate stream would drift from what was heard and
+  // would not include whatever the fan-out dropped.
+  void SetRecorder(class Recorder* r) { recorder_ = r; }
+
  private:
   void ProduceLoop();
   void SendLoop();
@@ -117,4 +122,5 @@ class RxAudioStream {
   std::vector<std::shared_ptr<WsConnection>> clients_;
 
   std::atomic<size_t> sent_{0};
+  class Recorder* recorder_ = nullptr;
 };

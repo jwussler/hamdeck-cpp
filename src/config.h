@@ -40,6 +40,13 @@ struct Config {
   bool audio_stream_enabled = true;
   bool tx_audio_enabled = true;
 
+  // Recording. ⚠️ Empty path means recording is OFF and its status route says
+  // so - it does not silently pick a directory and start filling it.
+  std::string record_path = "";
+  int record_buffer_seconds = 60;    // the replay buffer
+  int record_max_seconds = 10800;    // hard ceiling; 0 disables the ceiling
+  int record_warning_seconds = 300;
+
   // API
   int  api_port = 5001;               // control, bound to loopback
   int  dashboard_port = 5002;         // LAN

@@ -301,12 +301,63 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // ⚠️ CARRYOVER.md section 1: the reference /api/record/start answers
   // {"status":"ok","recording":true} while Start() sets IsRecording = false. The
   // only honest signal is this route's file_recording. Do not reproduce the lie.
-  server.Get("/api/record/status", [](const HttpRequest&, HttpResponse& res) {
-    WriteJson(res, 200,
-              R"({"recording":false,"buffering":false,"available":false,)"
-              R"("backend":"none","device":"","sample_rate":0,"frames_fed":0,)"
-              R"("file_recording":false,"replay":false})");
-  });
+  // ⚠️ Every field here is derived from what ACTUALLY happened, never from
+  // having been asked. CARRYOVER.md section 1: the reference /api/record/start
+  // answers ok/recording:true while Start() sets IsRecording = false.
+  {
+    Recorder* rec = deps.recorder;
+    server.Get("/api/record/status", [rec, &deps](const HttpRequest&, HttpResponse& res) {
+      const bool on = rec && rec->recording();
+      WriteJson(res, 200,
+                std::format(
+                    R"({{"recording":{},"buffering":{},"available":{},)"
+                    R"("backend":"{}","device":"{}","sample_rate":{},)"
+                    R"("frames_fed":{},"file_recording":{},"replay":false,)"
+                    R"("recorded_seconds":{},"reason":"{}"}})",
+                    JsonBool(on), JsonBool(rec && rec->buffering()),
+                    JsonBool(rec && rec->available()),
+                    rec && rec->available() ? "alsa/libasound" : "none",
+                    deps.config ? deps.config->alsa_capture_device : "",
+                    deps.config ? deps.config->record_sample_rate : 0,
+                    rec ? rec->frames_fed() : 0,
+                    JsonBool(on),   // the only honest signal, and it matches
+                    rec ? rec->recorded_seconds() : 0,
+                    rec && rec->available() ? "" : (rec ? rec->unavailable_reason()
+                                                        : "no recorder")));
+    });
+
+    auto report = [](HttpResponse& res, const Recorder::Result& r, const char* action) {
+      WriteJson(res, r.ok ? 200 : 409,
+                std::format(R"({{"status":"{}","action":"{}","filename":"{}",)"
+                            R"("message":"{}"}})",
+                            r.ok ? "ok" : "error", action, r.filename, r.message));
+    };
+    server.Get("/api/record/start", [rec, report](const HttpRequest&, HttpResponse& res) {
+      if (!rec) { WriteJson(res, 409, R"({"status":"error","message":"no recorder"})"); return; }
+      report(res, rec->Start(), "started");
+    });
+    server.Get("/api/record/stop", [rec, report](const HttpRequest&, HttpResponse& res) {
+      if (!rec) { WriteJson(res, 409, R"({"status":"error","message":"no recorder"})"); return; }
+      report(res, rec->Stop(), "stopped");
+    });
+    server.Get("/api/record/toggle", [rec, report](const HttpRequest&, HttpResponse& res) {
+      if (!rec) { WriteJson(res, 409, R"({"status":"error","message":"no recorder"})"); return; }
+      if (rec->recording()) report(res, rec->Stop(), "stopped");
+      else report(res, rec->Start(), "started");
+    });
+    server.Get("/api/record/toggle/stereo", [rec, report](const HttpRequest&, HttpResponse& res) {
+      // The rig's receive audio is MONO. The reference has a stereo variant for
+      // a two-receiver capture this host does not do, so it is the same call
+      // rather than a silent pretence at a second channel.
+      if (!rec) { WriteJson(res, 409, R"({"status":"error","message":"no recorder"})"); return; }
+      if (rec->recording()) report(res, rec->Stop(), "stopped");
+      else report(res, rec->Start(), "started");
+    });
+    server.Get("/api/record/replay", [rec, report](const HttpRequest&, HttpResponse& res) {
+      if (!rec) { WriteJson(res, 409, R"({"status":"error","message":"no recorder"})"); return; }
+      report(res, rec->SaveReplay(), "replay");
+    });
+  }
 
   // Voice keyer: present on the reference host and answering, contrary to the
   // note in CARRYOVER.md section 1 that lists it among the null services.

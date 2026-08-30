@@ -84,6 +84,10 @@ bool Config::Load(const std::string& path, Config& out, std::string& error) {
     Get(j, "alsa_playback_device", cfg.alsa_playback_device);
     Get(j, "audio_stream_enabled", cfg.audio_stream_enabled);
     Get(j, "tx_audio_enabled", cfg.tx_audio_enabled);
+    Get(j, "record_path", cfg.record_path);
+    Get(j, "record_buffer_seconds", cfg.record_buffer_seconds);
+    Get(j, "record_max_seconds", cfg.record_max_seconds);
+    Get(j, "record_warning_seconds", cfg.record_warning_seconds);
     Get(j, "api_port", cfg.api_port);
     Get(j, "dashboard_port", cfg.dashboard_port);
     Get(j, "api_bind_lan", cfg.api_bind_lan);
@@ -157,6 +161,9 @@ bool Config::Save(const std::string& path, std::string& error) const {
   j["radio_port"] = radio_port;
   j["radio_baud"] = radio_baud;
   j["record_sample_rate"] = record_sample_rate;
+  j["record_path"] = record_path;
+  j["record_buffer_seconds"] = record_buffer_seconds;
+  j["record_max_seconds"] = record_max_seconds;
   j["alsa_capture_device"] = alsa_capture_device;
   j["alsa_playback_device"] = alsa_playback_device;
   j["api_port"] = api_port;

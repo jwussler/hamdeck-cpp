@@ -20,6 +20,7 @@
 #include "auth.h"
 #include "alsa_audio.h"
 #include "cat_sim.h"
+#include "recorder.h"
 #include "tgxl.h"
 #include "config.h"
 #include "serial_cat.h"
@@ -195,6 +196,19 @@ int main(int argc, char** argv) {
     rx_source = std::make_unique<ToneSource>(config.record_sample_rate, 700.0);
   }
   RxAudioStream rx_audio(std::move(rx_source));
+
+  // ⚠️ The recorder is fed from the same audio the operator hears. Recording is
+  // OFF unless record_path is set - it does not pick a directory and start
+  // filling a disk on its own.
+  Recorder recorder(config.record_path, config.record_sample_rate,
+                    config.record_buffer_seconds, config.record_max_seconds,
+                    config.record_warning_seconds);
+  if (recorder.available()) {
+    std::cout << "recording: " << recorder.directory() << " (replay buffer "
+              << config.record_buffer_seconds << "s)\n" << std::flush;
+    rx_audio.SetRecorder(&recorder);
+  }
+
   rx_audio.Start();
 
   // TX audio. The null sink discards: the codec is on the reference host, so
@@ -238,6 +252,7 @@ int main(int argc, char** argv) {
   deps.host = &host_state;
   deps.config = &config;
   deps.tgxl = &tgxl;
+  deps.recorder = &recorder;
   // Where the config actually came from, so admin changes go back to the same
   // file rather than to a path that merely happens to be first in the search.
   deps.save_config = [&config, &config_path](std::string& err) {
