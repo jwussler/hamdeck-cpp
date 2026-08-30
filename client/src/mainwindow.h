@@ -3,12 +3,12 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QMainWindow>
-#include <QProgressBar>
 #include <QPushButton>
 #include <QSlider>
 
 #include "api_client.h"
 #include "rx_audio.h"
+#include "smeter.h"
 #include "settings.h"
 
 class MainWindow : public QMainWindow {
@@ -46,7 +46,7 @@ class MainWindow : public QMainWindow {
   QLabel* power_label_ = nullptr;
   QLabel* conn_label_ = nullptr;
   QLabel* audio_label_ = nullptr;
-  QProgressBar* smeter_ = nullptr;
+  SMeter* smeter_ = nullptr;
   QPushButton* ptt_button_ = nullptr;
   QSlider* volume_ = nullptr;
   bool tx_ = false;

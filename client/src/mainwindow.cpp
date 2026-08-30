@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include <QApplication>
+#include "theme.h"
 #include <QCloseEvent>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -67,22 +68,23 @@ QWidget* MainWindow::BuildPanel() {
 
   // ── Readout ────────────────────────────────────────────────────────────────
   freq_label_ = new QLabel("—.———.———");
-  QFont f = freq_label_->font();
-  f.setPointSize(34);
-  f.setBold(true);
-  f.setFamily("monospace");
+  QFont f("monospace", 46, QFont::Bold);
+  f.setStyleHint(QFont::TypeWriter);
   freq_label_->setFont(f);
   freq_label_->setAlignment(Qt::AlignCenter);
+  freq_label_->setStyleSheet(
+      QString("color:%1; background:#0d0f12; border:1px solid %2;"
+              "border-radius:8px; padding:10px 6px; letter-spacing:2px;")
+          .arg(theme::kReadout, theme::kEdge));
 
   mode_label_ = new QLabel("—");
   vfo_label_ = new QLabel("VFO —");
   power_label_ = new QLabel("— W");
   for (QLabel* l : {mode_label_, vfo_label_, power_label_}) {
-    QFont lf = l->font();
-    lf.setPointSize(13);
-    lf.setBold(true);
+    QFont lf("monospace", 15, QFont::Bold);
     l->setFont(lf);
     l->setAlignment(Qt::AlignCenter);
+    l->setStyleSheet(QString("color:%1; padding:2px;").arg(theme::kText));
   }
 
   auto* readout = new QVBoxLayout;
@@ -93,10 +95,7 @@ QWidget* MainWindow::BuildPanel() {
   subline->addWidget(power_label_);
   readout->addLayout(subline);
 
-  smeter_ = new QProgressBar;
-  smeter_->setRange(0, 255);
-  smeter_->setTextVisible(false);
-  smeter_->setFixedHeight(14);
+  smeter_ = new SMeter;
   readout->addWidget(smeter_);
   outer->addLayout(readout);
 
@@ -146,8 +145,8 @@ QWidget* MainWindow::BuildPanel() {
   // ── Transmit ───────────────────────────────────────────────────────────────
   auto* tx = new QGroupBox("Transmit");
   auto* tl = new QHBoxLayout(tx);
-  ptt_button_ = Btn("PTT", 120);
-  ptt_button_->setMinimumHeight(52);
+  ptt_button_ = Btn("PTT", 190);
+  ptt_button_->setMinimumHeight(64);
   ptt_button_->setCheckable(true);
   // ⚠️ PTT ON only. /api/ptt/off is not implemented on the host yet: unkeying
   // must wait for the audio still queued in the rig's buffer or the tail of
@@ -159,7 +158,12 @@ QWidget* MainWindow::BuildPanel() {
   });
   tl->addWidget(ptt_button_);
 
-  tl->addWidget(new QLabel("Volume"));
+  auto* vol_label = new QLabel("VOLUME");
+  vol_label->setStyleSheet(
+      QString("color:%1; font-size:10px; font-weight:bold; letter-spacing:1px;")
+          .arg(theme::kTextDim));
+  tl->addSpacing(12);
+  tl->addWidget(vol_label);
   volume_ = new QSlider(Qt::Horizontal);
   volume_->setRange(0, 100);
   volume_->setValue(settings_.volume);
@@ -230,8 +234,12 @@ void MainWindow::ApplyStatus(const QJsonObject& s) {
   }
   ptt_button_->setChecked(tx);
   ptt_button_->setText(tx ? "ON AIR" : "PTT");
-  ptt_button_->setStyleSheet(tx ? "background:#c62828;color:white;font-weight:bold;"
-                                : "");
+  smeter_->SetTransmitting(tx);
+  ptt_button_->setStyleSheet(
+      tx ? QString("background:%1; border:1px solid %1; color:white;"
+                   "font-weight:bold; font-size:15px; letter-spacing:2px;")
+               .arg(theme::kTx)
+         : QString("font-size:14px; letter-spacing:1px;"));
 
   // Count down the HOST's watchdog rather than inventing our own timeout.
   const int left = s.value("tx_timeout_in").toInt();
@@ -245,7 +253,7 @@ void MainWindow::ApplyStatus(const QJsonObject& s) {
 void MainWindow::ApplyStatusFull(const QJsonObject&) {}
 
 void MainWindow::ApplyMeters(const QJsonObject& m) {
-  smeter_->setValue(m.value("s_meter").toInt());
+  smeter_->SetValue(m.value("s_meter").toInt());
 }
 
 void MainWindow::SetStale(bool stale, const QString& detail) {
@@ -254,7 +262,12 @@ void MainWindow::SetStale(bool stale, const QString& detail) {
   // Say it plainly. The host went to the trouble of reporting cache_age_ms and
   // stale precisely because an old reading once looked live for hours.
   conn_label_->setText(stale ? "⚠ " + detail : "connected to " + settings_.BaseUrl());
-  freq_label_->setStyleSheet(stale ? "color:#999;" : "");
+  // Grey the readout when the host says its cache is stale, so an old frequency
+  // never sits there looking live.
+  freq_label_->setStyleSheet(
+      QString("color:%1; background:#0d0f12; border:1px solid %2;"
+              "border-radius:8px; padding:10px 6px; letter-spacing:2px;")
+          .arg(stale ? theme::kTextDim : theme::kReadout, theme::kEdge));
 }
 
 void MainWindow::RestoreGeometryClamped() {

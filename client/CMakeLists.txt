@@ -24,6 +24,8 @@ qt_add_executable(hamdeck-client
     src/api_client.cpp
     src/rx_audio.cpp
     src/mainwindow.cpp
+    src/smeter.cpp
+    src/theme.cpp
 )
 
 target_link_libraries(hamdeck-client PRIVATE

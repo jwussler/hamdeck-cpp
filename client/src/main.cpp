@@ -14,6 +14,7 @@
 
 #include "mainwindow.h"
 #include "settings.h"
+#include "theme.h"
 
 namespace {
 
@@ -55,6 +56,7 @@ int main(int argc, char** argv) {
   QApplication app(argc, argv);
   QApplication::setApplicationName("HamDeckClient");
   QApplication::setOrganizationName("HamDeck");
+  app.setStyleSheet(theme::StyleSheet());
 
   QCommandLineParser parser;
   parser.setApplicationDescription("HamDeck client");
