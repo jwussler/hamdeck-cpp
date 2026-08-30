@@ -14,6 +14,7 @@
 #include <QString>
 #include <QKeyEvent>
 #include <QVariantList>
+#include <QStringList>
 #include <QVariantMap>
 
 #include "api_client.h"
@@ -69,6 +70,24 @@ class Backend : public QObject {
   Q_PROPERTY(int savedPort READ savedPort CONSTANT)
   Q_PROPERTY(QString savedUser READ savedUser CONSTANT)
 
+  // ── Audio ──
+  Q_PROPERTY(int volume READ volume WRITE setVolume NOTIFY audioChanged)
+  Q_PROPERTY(int micGain READ micGain WRITE setMicGain NOTIFY audioChanged)
+  Q_PROPERTY(QStringList outputDevices READ outputDevices NOTIFY audioChanged)
+  Q_PROPERTY(QStringList inputDevices READ inputDevices NOTIFY audioChanged)
+  Q_PROPERTY(int outputIndex READ outputIndex WRITE setOutputIndex NOTIFY audioChanged)
+  Q_PROPERTY(int inputIndex READ inputIndex WRITE setInputIndex NOTIFY audioChanged)
+
+  // ── Rig knobs, read from the rig, written by the operator ──
+  Q_PROPERTY(int afGain READ afGain NOTIFY statusFullChanged)
+  Q_PROPERTY(int rfGain READ rfGain NOTIFY statusFullChanged)
+  Q_PROPERTY(int cwSpeed READ cwSpeed NOTIFY statusFullChanged)
+  Q_PROPERTY(int ant READ ant NOTIFY statusFullChanged)
+  Q_PROPERTY(long long freqB READ freqB NOTIFY statusFullChanged)
+  Q_PROPERTY(QString bandName READ bandName NOTIFY statusChanged)
+  Q_PROPERTY(QString tunerStatus READ tunerStatus NOTIFY tunerChanged)
+  Q_PROPERTY(bool tunerAvailable READ tunerAvailable NOTIFY tunerChanged)
+
   // ── Hotkey ──
   Q_PROPERTY(QVariantList hotkeyChoices READ hotkeyChoices CONSTANT)
   Q_PROPERTY(int hotkeyIndex READ hotkeyIndex WRITE setHotkeyIndex NOTIFY hotkeyChanged)
@@ -96,6 +115,27 @@ class Backend : public QObject {
   // it; the QML one had no equivalent until now.
   Q_INVOKABLE void shutdown();
   Q_INVOKABLE void disconnectSession();
+  Q_INVOKABLE void tuneTgxl();
+
+  int volume() const { return settings_.volume; }
+  void setVolume(int v);
+  int micGain() const { return tx_audio_.mic_gain(); }
+  void setMicGain(int v);
+  QStringList outputDevices() const;
+  QStringList inputDevices() const;
+  int outputIndex() const;
+  int inputIndex() const;
+  void setOutputIndex(int i);
+  void setInputIndex(int i);
+
+  int afGain() const { return full_.value("af_gain").toInt(); }
+  int rfGain() const { return full_.value("rf_gain").toInt(); }
+  int cwSpeed() const { return cw_speed_; }
+  int ant() const { return full_.value("ant").toInt(); }
+  long long freqB() const { return full_.value("freq_b").toVariant().toLongLong(); }
+  QString bandName() const;
+  QString tunerStatus() const { return tuner_status_; }
+  bool tunerAvailable() const { return tuner_available_; }
 
   QString freqText() const;
   QString mode() const { return status_.value("mode").toString("—"); }
@@ -146,6 +186,7 @@ class Backend : public QObject {
   void txChanged();
   void hotkeyChanged();
   void sessionChanged();
+  void tunerChanged();
 
  private:
   Settings settings_;
@@ -163,4 +204,7 @@ class Backend : public QObject {
   bool session_active_ = false;
   bool connecting_ = false;
   QString last_error_;
+  QString tuner_status_ = "idle";
+  bool tuner_available_ = false;
+  int cw_speed_ = 0;
 };

@@ -115,11 +115,15 @@ std::string StatusFullJson(const ApiDeps& deps) {
   return std::format(
       R"({{"ant":{},"rxant":{},"nb":{},"nr":{},"notch":{},"lock":{},"preamp":{},)"
       R"("att":{},"agc":"{}","vox":{},"comp":{},"mon":{},"rit":{},"rit_offset":{},)"
-      R"("xit":{},"freq_b":{},"rf_gain":{},"rxant_km":0}})",
+      R"("xit":{},"freq_b":{},"rf_gain":{},"rxant_km":0,)"
+      R"("af_gain":{},"sub_af_gain":{},"cw_speed":{},"width_idx":{}}})",
       s.ant, JsonBool(s.rxant), JsonBool(s.nb), JsonBool(s.nr), JsonBool(s.notch),
       JsonBool(s.vfo_locked), s.preamp, JsonBool(s.att), s.agc, JsonBool(s.vox),
       JsonBool(s.comp), JsonBool(s.mon), JsonBool(s.rit), s.rit_offset,
-      JsonBool(s.xit), s.freq_b, s.rf_gain);
+      JsonBool(s.xit), s.freq_b, s.rf_gain,
+      // Additive: the reference host does not report these, but a panel with an
+      // AF-gain knob needs to know where the knob is.
+      s.af_gain, s.sub_af_gain, s.cw_speed, s.width_idx);
 }
 
 std::string MetersJson(const ApiDeps& deps) {

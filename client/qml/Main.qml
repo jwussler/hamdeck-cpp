@@ -66,6 +66,8 @@ ApplicationWindow {
                 vfo: backend.vfo
                 watts: backend.power
                 stale: backend.stale
+                band: backend.bandName
+                freqB: backend.freqB
             }
 
             SMeter {
@@ -166,6 +168,57 @@ ApplicationWindow {
             }
 
             Group {
+                title: "Antenna · Filter · RIT · Tuner"
+                Layout.fillWidth: true
+                Layout.leftMargin: 12; Layout.rightMargin: 12
+                RowLayout {
+                    spacing: 8
+                    Layout.fillWidth: true
+
+                    Repeater {
+                        model: [1, 2, 3]
+                        delegate: PanelKey {
+                            text: "ANT " + modelData
+                            // Lit from the rig's reported antenna, not the click.
+                            lit: backend.ant === modelData
+                            onClicked: backend.send("/api/ant/" + modelData)
+                        }
+                    }
+                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 26; color: Theme.line }
+
+                    Repeater {
+                        model: [["Narrow","narrow"],["Med","medium"],["Wide","wide"]]
+                        delegate: PanelKey {
+                            text: modelData[0]
+                            onClicked: backend.send("/api/width/" + modelData[1])
+                        }
+                    }
+                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 26; color: Theme.line }
+
+                    PanelKey { text: "RIT −"; onClicked: backend.send("/api/rit/down") }
+                    PanelKey { text: "RIT +"; onClicked: backend.send("/api/rit/up") }
+                    PanelKey { text: "Clr";   onClicked: backend.send("/api/rit/clear") }
+
+                    Item { Layout.fillWidth: true }
+
+                    // ⚠️ THE TGXL, not the rig's internal ATU. They are different
+                    // tuners and this station uses this one; the button says which.
+                    PanelKey {
+                        text: "TUNE TGXL"
+                        enabledKey: backend.tunerAvailable
+                        danger: true
+                        lit: backend.tunerStatus === "tuning…"
+                        onClicked: backend.tuneTgxl()
+                    }
+                    Text {
+                        text: backend.tunerStatus
+                        font.family: Theme.body; font.pixelSize: 11
+                        color: backend.tunerAvailable ? Theme.dim : Theme.amber
+                    }
+                }
+            }
+
+            Group {
                 title: "Frequency entry"
                 Layout.fillWidth: true
                 Layout.leftMargin: 12; Layout.rightMargin: 12
@@ -233,34 +286,35 @@ ApplicationWindow {
                         onClicked: backend.toggleArm()
                     }
 
+                    // SWR and power as bars; ALC stays a number because it has
+                    // no useful scale to draw against - it is "is it hitting the
+                    // limit", not a magnitude.
                     ColumnLayout {
-                        spacing: 1
-                        SilkLabel { text: "SWR"; Layout.alignment: Qt.AlignHCenter }
-                        Text {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: backend.swr
-                            font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Medium
-                            color: parseFloat(backend.swr) >= 2.0 ? Theme.txRed : Theme.text
+                        Layout.preferredWidth: 150
+                        Layout.maximumWidth: 150
+                        spacing: 6
+                        MeterBar {
+                            Layout.fillWidth: true
+                            label: "SWR"
+                            // 1.0-3.0 across the bar; beyond 3 it pins and reddens.
+                            value: (parseFloat(backend.swr) - 1.0) / 2.0
+                            readout: backend.swr
+                            warn: parseFloat(backend.swr) >= 2.0
+                        }
+                        MeterBar {
+                            Layout.fillWidth: true
+                            label: "PWR"
+                            value: backend.powerPct / 100
+                            readout: backend.powerPct + "%"
                         }
                     }
+
                     ColumnLayout {
                         spacing: 1
                         SilkLabel { text: "ALC"; Layout.alignment: Qt.AlignHCenter }
                         Text {
                             Layout.alignment: Qt.AlignHCenter
                             text: backend.alcPct + "%"
-                            font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Medium
-                            color: Theme.text
-                        }
-                    }
-                    ColumnLayout {
-                        spacing: 1
-                        SilkLabel { text: "Pwr"; Layout.alignment: Qt.AlignHCenter }
-                        Text {
-                            Layout.alignment: Qt.AlignHCenter
-                            // Percent of rated output, never watts: the only
-                            // watt table available is for a 100 W radio.
-                            text: backend.powerPct + "%"
                             font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Medium
                             color: Theme.text
                         }
@@ -288,6 +342,90 @@ ApplicationWindow {
                                 text: backend.hotkeyHold ? "Hold" : "Toggle"
                                 onClicked: backend.hotkeyHold = !backend.hotkeyHold
                             }
+                        }
+                    }
+                }
+            }
+
+            Group {
+                title: "Levels"
+                Layout.fillWidth: true
+                Layout.leftMargin: 12; Layout.rightMargin: 12
+                RowLayout {
+                    spacing: 18
+                    Layout.fillWidth: true
+                    Knob {
+                        Layout.fillWidth: true
+                        label: "AF gain"; suffix: ""
+                        // The rig reports 0-255; the route takes percent.
+                        value: Math.round(backend.afGain * 100 / 255)
+                        onMoved: (v) => backend.send("/api/volume/set/" + v)
+                    }
+                    Knob {
+                        Layout.fillWidth: true
+                        label: "RF gain"
+                        value: Math.round(backend.rfGain * 100 / 255)
+                        onMoved: (v) => backend.send("/api/rf-gain/set/" + v)
+                    }
+                    Knob {
+                        Layout.fillWidth: true
+                        label: "RF power"; suffix: " W"
+                        from: 5; to: 200
+                        value: backend.power
+                        onMoved: (v) => backend.send("/api/power/set/" + v)
+                    }
+                    Knob {
+                        Layout.fillWidth: true
+                        label: "CW speed"; suffix: " wpm"
+                        from: 4; to: 60
+                        value: backend.cwSpeed
+                        onMoved: (v) => backend.send("/api/cw-speed/set/" + v)
+                    }
+                }
+            }
+
+            Group {
+                title: "Audio"
+                Layout.fillWidth: true
+                Layout.leftMargin: 12; Layout.rightMargin: 12
+                RowLayout {
+                    spacing: 16
+                    Layout.fillWidth: true
+
+                    Knob {
+                        Layout.fillWidth: true
+                        label: "Volume"; suffix: "%"
+                        value: backend.volume
+                        onMoved: (v) => backend.volume = v
+                    }
+                    Knob {
+                        Layout.fillWidth: true
+                        label: "Mic gain"; suffix: "%"
+                        from: 0; to: 200
+                        value: backend.micGain
+                        onMoved: (v) => backend.micGain = v
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        SilkLabel { text: "Speaker" }
+                        ComboBox {
+                            Layout.fillWidth: true
+                            model: backend.outputDevices
+                            currentIndex: backend.outputIndex
+                            onActivated: backend.outputIndex = currentIndex
+                        }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+                        SilkLabel { text: "Microphone" }
+                        ComboBox {
+                            Layout.fillWidth: true
+                            model: backend.inputDevices
+                            currentIndex: backend.inputIndex
+                            onActivated: backend.inputIndex = currentIndex
                         }
                     }
                 }

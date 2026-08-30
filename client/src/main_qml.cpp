@@ -141,7 +141,7 @@ int main(int argc, char** argv) {
         if (parser.isSet(tone_opt)) QTimer::singleShot(700, &app, [&] { backend.toggleArm(); });
         // Grow to the whole panel for capture only. Normal operation keeps the
         // work-area clamp, which exists to stop exactly this on a real desktop.
-        if (w) { w->setWidth(880); w->setHeight(940); }
+        if (w) { w->setWidth(920); w->setHeight(1180); }
         // Let real poll data land: a screenshot of an unpopulated window proves
         // nothing about whether the data path works.
         QTimer::singleShot(parser.isSet(tone_opt) ? 5000 : 2500, &app, [&, w, path] {

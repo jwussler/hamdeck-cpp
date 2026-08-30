@@ -2,6 +2,8 @@
 
 #include <QEventLoop>
 #include <QJsonArray>
+#include <QAudioDevice>
+#include <QMediaDevices>
 #include <QRect>
 
 Backend::Backend(QObject* parent) : QObject(parent) {
@@ -176,6 +178,17 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
     emit scaleChanged();
   });
 
+  // The knobs the status routes do not carry.
+  api_.Get("/api/cw-speed/get", [this](QJsonObject o) {
+    cw_speed_ = o.value("wpm").toInt();
+    emit statusFullChanged();
+  });
+  api_.Get("/api/tune/tgxl/status", [this](QJsonObject o) {
+    tuner_available_ = o.value("available").toBool();
+    tuner_status_ = tuner_available_ ? "ready" : "not configured";
+    emit tunerChanged();
+  });
+
   api_.StartPolling();
   rx_.SetVolume(settings_.volume);
   const QString token = api_.SessionToken();
@@ -266,4 +279,91 @@ QVariantMap Backend::restoreGeometry(int availW, int availH) {
   m.insert("width", g.width());
   m.insert("height", g.height());
   return m;
+}
+
+// ── Audio ───────────────────────────────────────────────────────────────────
+void Backend::setVolume(int v) {
+  settings_.volume = qBound(0, v, 100);
+  rx_.SetVolume(settings_.volume);
+  settings_.Save();
+  emit audioChanged();
+}
+
+void Backend::setMicGain(int v) {
+  tx_audio_.SetMicGain(v);
+  emit audioChanged();
+}
+
+QStringList Backend::outputDevices() const {
+  QStringList out{"System default"};
+  for (const QAudioDevice& d : QMediaDevices::audioOutputs()) out << d.description();
+  return out;
+}
+
+QStringList Backend::inputDevices() const {
+  QStringList out{"System default"};
+  for (const QAudioDevice& d : QMediaDevices::audioInputs()) out << d.description();
+  return out;
+}
+
+// ⚠️ Index 0 is always "System default", and an unknown remembered device falls
+// back to it rather than to whatever happens to be first in the list. On many
+// machines the first input is a monitor loopback, and transmitting the desktop's
+// own audio is a memorable mistake.
+int Backend::outputIndex() const {
+  const int i = outputDevices().indexOf(settings_.rx_device_name);
+  return i > 0 ? i : 0;
+}
+int Backend::inputIndex() const {
+  const int i = inputDevices().indexOf(settings_.tx_device_name);
+  return i > 0 ? i : 0;
+}
+
+void Backend::setOutputIndex(int i) {
+  const QStringList d = outputDevices();
+  // ⚠️ Stored by NAME, never index. Indices shift when USB devices come and go,
+  // which is what produced a dead microphone before.
+  settings_.rx_device_name = (i > 0 && i < d.size()) ? d.at(i) : QString();
+  settings_.Save();
+  emit audioChanged();
+}
+void Backend::setInputIndex(int i) {
+  const QStringList d = inputDevices();
+  settings_.tx_device_name = (i > 0 && i < d.size()) ? d.at(i) : QString();
+  settings_.Save();
+  emit audioChanged();
+}
+
+// ── Band name, for the readout ──────────────────────────────────────────────
+QString Backend::bandName() const {
+  const long long hz = status_.value("freq").toVariant().toLongLong();
+  struct B { long long lo, hi; const char* name; };
+  // Amateur allocations, so the label is right rather than a rounded guess. Out
+  // of band reports "—" rather than inventing the nearest one: a wrong band
+  // label on a panel is worse than none.
+  static const B kBands[] = {
+      {1800000, 2000000, "160m"},   {3500000, 4000000, "80m"},
+      {5330000, 5410000, "60m"},    {7000000, 7300000, "40m"},
+      {10100000, 10150000, "30m"},  {14000000, 14350000, "20m"},
+      {18068000, 18168000, "17m"},  {21000000, 21450000, "15m"},
+      {24890000, 24990000, "12m"},  {28000000, 29700000, "10m"},
+      {50000000, 54000000, "6m"},
+  };
+  for (const auto& b : kBands) {
+    if (hz >= b.lo && hz <= b.hi) return b.name;
+  }
+  return "—";
+}
+
+void Backend::tuneTgxl() {
+  tuner_status_ = "tuning…";
+  emit tunerChanged();
+  api_.Get("/api/tune/tgxl", [this](QJsonObject r) {
+    // The host's own message, passed through: "not configured" and "no answer"
+    // are different problems with different fixes.
+    tuner_status_ = r.value("message").toString(
+        r.value("status").toString() == "ok" ? "tuned" : "tuner error");
+    tuner_available_ = r.value("available").toBool();
+    emit tunerChanged();
+  });
 }

@@ -42,6 +42,13 @@ class TxAudio : public QObject {
   // this panel, another client, or the button on the microphone.
   void SetKeyed(bool keyed);
 
+  // ⚠️ Mic gain, applied in software before the audio leaves this machine. The rig has
+  // its own mic gain; this is the client's, so an operator can trim a quiet
+  // headset without walking to the radio. Clipped, not wrapped - a sample that
+  // overflows and wraps is a loud crack on the air rather than distortion.
+  void SetMicGain(int percent) { mic_gain_ = qBound(0, percent, 200); }
+  int mic_gain() const { return mic_gain_; }
+
   // A synthetic source, for proving the path on a machine with no microphone.
   // ⚠️ Named loudly and reported in every status line: a test tone that could be
   // mistaken for live audio would be worse than no test at all.
@@ -60,6 +67,7 @@ class TxAudio : public QObject {
   void OnMicReady();
   void OnTextFrame(const QString& text);
   void SendChunk(const QByteArray& pcm);
+  void SendChunkRaw(const QByteArray& pcm);
   void PushTestTone();
   bool OpenMic(const QString& device_name);
 
@@ -71,6 +79,7 @@ class TxAudio : public QObject {
   bool armed_ = false;
   bool keyed_ = false;
   bool test_tone_ = false;
+  int  mic_gain_ = 100;   // percent; 100 = unity
   QString last_error_;
 
   int sample_rate_ = 48000;

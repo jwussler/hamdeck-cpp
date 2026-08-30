@@ -11,6 +11,8 @@ ColumnLayout {
     property string vfo: "—"
     property int watts: 0
     property bool stale: false
+    property string band: "—"
+    property double freqB: 0
     spacing: 6
 
     Rectangle {
@@ -20,6 +22,26 @@ ColumnLayout {
         radius: 8
         border.width: 1
         border.color: Theme.line
+
+        // Band name, top-left of the readout. ⚠️ Shows "—" out of band rather
+        // than rounding to the nearest one: a wrong band label is worse than none.
+        SilkLabel {
+            text: readout.band
+            anchors { left: parent.left; top: parent.top; leftMargin: 12; topMargin: 8 }
+            color: Theme.amberDim
+            font.pixelSize: 13
+        }
+
+        // ⚠️ VFO-B in the DIM amber, so it is legible without competing with the
+        // active VFO. The brand has a token for exactly this.
+        Text {
+            anchors { right: parent.right; top: parent.top; rightMargin: 12; topMargin: 6 }
+            visible: readout.freqB > 0
+            text: "B  " + (readout.freqB / 1e6).toFixed(3)
+            font.family: Theme.mono
+            font.pixelSize: 13
+            color: Theme.amberDim
+        }
 
         Text {
             anchors.centerIn: parent

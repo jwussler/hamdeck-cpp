@@ -7,6 +7,7 @@
 #include <QMediaDevices>
 #include <QTimer>
 #include <cmath>
+#include <QtGlobal>
 
 namespace {
 // 20 ms at 48 kHz, matching the chunk size the host's pump loop expects.
@@ -159,6 +160,25 @@ void TxAudio::PushTestTone() {
 }
 
 void TxAudio::SendChunk(const QByteArray& pcm) {
+  // ⚠️ Gain is applied to a COPY and clipped at the 16-bit limits. Scaling in
+  // place would corrupt Qt's buffer, and letting a scaled sample overflow wraps
+  // it to the opposite polarity - which is a crack on the air, not distortion.
+  QByteArray scaled;
+  const QByteArray* out = &pcm;
+  if (mic_gain_ != 100) {
+    scaled = pcm;
+    auto* s = reinterpret_cast<qint16*>(scaled.data());
+    const int n = static_cast<int>(scaled.size() / 2);
+    for (int i = 0; i < n; ++i) {
+      const int v = static_cast<int>(s[i]) * mic_gain_ / 100;
+      s[i] = static_cast<qint16>(v > 32767 ? 32767 : (v < -32768 ? -32768 : v));
+    }
+    out = &scaled;
+  }
+  return SendChunkRaw(*out);
+}
+
+void TxAudio::SendChunkRaw(const QByteArray& pcm) {
   // A 16-bit stream must go out in whole samples. An odd byte count shifts every
   // following sample by one byte, which is loud noise on the air rather than a
   // subtle glitch - the host refuses it, and there is no reason to make it.
