@@ -4,7 +4,11 @@
 #include <QJsonArray>
 #include <QAudioDevice>
 #include <QMediaDevices>
+#include <QGuiApplication>
 #include <QRect>
+#include <QScreen>
+
+#include "place.h"
 
 Backend::Backend(QObject* parent) : QObject(parent) {
   settings_.Load();
@@ -358,31 +362,39 @@ void Backend::saveGeometry(int x, int y, int w, int h) {
 }
 
 QVariantMap Backend::restoreGeometry(int availW, int availH) {
-  // ⚠️ Clamp to the work area and re-centre if it would land outside. A window
-  // taller than the display puts its title bar out of reach and the app cannot
-  // be closed, moved or resized. Saved geometry is never trusted as written.
-  // The screen is known here even on the first frame, so the scale is usable.
-  setScreen(availW, availH, dpr_);
-
-  QRect g = settings_.window_geometry;
-  if (!g.isValid() || g.width() < 320 || g.height() < 240) {
-    // ⚠️ The DEFAULT SIZE SCALES TOO. A fixed 880x760 is most of a laptop and a
-    // postage stamp on a 4K monitor, and the panel inside it is being drawn at
-    // uiScale() either way - so a fixed default guarantees the first launch
-    // either clips or wastes most of the screen.
-    const qreal k = uiScale();
-    g = QRect(0, 0, qMin(qRound(880 * k), availW), qMin(qRound(760 * k), availH));
+  // ⚠️ THE WORK AREA HAS AN ORIGIN, AND QML CANNOT TELL US WHAT IT IS.
+  // Screen.desktopAvailableWidth/Height are sizes only, so a taskbar along the
+  // TOP or the LEFT - and a second monitor, which starts at a virtual-desktop
+  // offset - would have the window placed as if the work area began at 0,0.
+  // The origin comes from QScreen here; the sizes QML passed are used only as a
+  // fallback for a screen we cannot read.
+  QRect avail(0, 0, availW, availH);
+  if (const QScreen* s = QGuiApplication::primaryScreen()) {
+    const QRect ag = s->availableGeometry();
+    if (ag.width() > 0 && ag.height() > 0) avail = ag;
   }
-  g.setWidth(qMin(g.width(), availW));
-  g.setHeight(qMin(g.height(), availH));
+  setScreen(avail.width(), avail.height(), dpr_);
+
+  // All the arithmetic lives in PlaceWindow, which has its own test covering
+  // the arrangements this box cannot make: top and left taskbars, an unplugged
+  // monitor, a saved size larger than the screen. See client/tests_place.cpp.
+  const QRect g = PlaceWindow(settings_.window_geometry, avail, uiScale());
+
   QVariantMap m;
-  const bool fits = g.x() >= 0 && g.y() >= 0 &&
-                    g.x() + g.width() <= availW && g.y() + g.height() <= availH;
-  m.insert("x", fits ? g.x() : (availW - g.width()) / 2);
-  m.insert("y", fits ? g.y() : (availH - g.height()) / 2);
+  m.insert("x", g.x());
+  m.insert("y", g.y());
   m.insert("width", g.width());
   m.insert("height", g.height());
   return m;
+}
+
+// Throw away a stored position. The rescue path for a window that has already
+// been stranded off-screen by an older build - otherwise the only fix is to
+// find and edit an INI file, which is not a thing to ask of somebody whose
+// panel is currently unusable.
+void Backend::resetWindowGeometry() {
+  settings_.window_geometry = QRect();
+  settings_.Save();
 }
 
 // ── Audio ───────────────────────────────────────────────────────────────────

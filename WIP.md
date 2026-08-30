@@ -563,6 +563,57 @@ success and losing the change at the next restart.
 A full session token in an admin listing is a credential in a log, a screenshot and a support
 ticket.
 
+## 8c-2. Where the window lands — and what shipping 0.1.2 cost
+
+⚠️ **0.1.2 shipped a window nobody could move.** A fresh install placed itself at **(0,0)**.
+`x`/`y` position the **client area**, not the frame, so the title bar sat *above* the top of
+the screen — no drag handle, and the close button was on it. The function that did this already
+carried a comment about title bars ending up out of reach.
+
+**The failure was not the arithmetic, it was shipping an installer without ever watching the
+window open on a desktop.** Everything up to that point was verified headless, where there is
+no window manager and no decoration, so the bug was invisible by construction.
+
+### Fixed, in two parts
+- **`client/src/place.h/.cpp` — `PlaceWindow()` is pure arithmetic**: saved geometry, work area,
+  scale in; a rectangle out. No window, no screen lookup, so the cases a headless box cannot
+  produce can be tested directly.
+- **The work area has an ORIGIN, not just a size.** `Screen.desktopAvailableWidth/Height` are
+  sizes only, so a taskbar along the **top** or the **left** — and a second monitor, which
+  starts at a virtual-desktop offset — would be placed as if the work area began at 0,0. The
+  origin now comes from `QScreen::availableGeometry()` in C++; QML's sizes are only a fallback.
+- **A first run is centred**, never cornered. **A restored `y` is floored** below the work
+  area's top whatever was saved, so an older build's `0` cannot reproduce the trap on upgrade.
+  A position from a monitor that is gone is **re-centred**, not clamped.
+- **`--reset-window`** clears a stored position and exits without opening a window — the rescue
+  path for somebody whose panel is already unreachable, because the alternative is asking them
+  to find an INI file.
+
+### Two instruments, because one was not enough
+| | what it covers |
+|---|---|
+| `ctest -R place` (9 cases) | the arrangements this box cannot make: top/left taskbar, second monitor at an offset, unplugged monitor, oversized saved size, tiny screen |
+| `/tmp/placement.sh` (Xvfb + **openbox**) | where the **decorated frame** actually lands, read back with `xwininfo -frame` |
+
+⚠️ The unit test includes **"a good saved position is left alone"**. Without it, "always on
+screen" is satisfiable by ignoring the operator's position every launch, and the suite would
+pass while the app threw away where they put it.
+
+⚠️ The WM script's first version wrote the fake settings to `HamDeckClient.**conf**`; Qt's
+`IniFormat` writes `HamDeckClient.**ini**`. The file was ignored, so the "restored from a saved
+0,0" case silently ran the *fresh* path and reported a pass. Same shape as everything in §8d:
+**it was caught by reading the number, not by the test failing.**
+
+### Measured 08/30/2026, after the fix
+Frame fully on screen at 1024x600, 1366x768, 1920x1080 and 2560x1440 on a first run (centred,
+title bar clear); a saved `0,0` restored to `y=48`; a saved `3200,400` from a vanished monitor
+re-centred. 9/9 placement cases, 3/3 client tests, and the resolution walk still clean.
+
+⚠️ **Windows is still unwatched.** No one here has seen the window open on Windows — the
+placement logic is defensive and the maths is tested, but that is not the same claim.
+
+---
+
 ## 8d. Resolution awareness
 
 ⚠️ **THE PANEL WILL RUN ON SCREENS NOBODY HERE OWNS.** The same window is a third of a 4K

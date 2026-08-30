@@ -35,6 +35,15 @@ enable_testing()
 qt_add_executable(test_hotkey tests_hotkey.cpp src/ptt_hotkey.cpp)
 target_link_libraries(test_hotkey PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
 add_test(NAME hotkey COMMAND test_hotkey)
+
+# ⚠️ Window placement, as its own test with no window in it. The offscreen QPA
+# has no decoration and no window manager, so it cannot see the mistake this
+# covers: x/y position the CLIENT area, and a window asked for (0,0) puts its
+# title bar above the top of the screen. 0.1.2 shipped exactly that.
+qt_add_executable(test_place tests_place.cpp src/place.cpp)
+target_include_directories(test_place PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_place PRIVATE Qt6::Core)
+add_test(NAME place COMMAND test_place)
 set_tests_properties(hotkey PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # The selftest that CI runs is qml_selftest, below.
@@ -46,6 +55,7 @@ set_tests_properties(hotkey PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 qt_add_executable(hamdeck-qml
     src/main_qml.cpp
     src/backend.cpp
+    src/place.cpp
     src/settings.cpp
     src/api_client.cpp
     src/rx_audio.cpp

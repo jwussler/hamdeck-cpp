@@ -253,15 +253,24 @@ int main(int argc, char** argv) {
     QCommandLineOption tone_opt("tx-test-tone", "Transmit a test tone, not the microphone.");
     QCommandLineOption scale_opt("ui-scale", "Force the UI scale (0.5-3.0).", "factor");
     QCommandLineOption shotsize_opt("screenshot-size", "Screenshot size, WxH.", "WxH");
+    QCommandLineOption reset_opt("reset-window",
+                                "Forget the saved window position and exit.");
     QCommandLineOption res_opt("check-resolutions",
                                "Walk the panel across screen sizes; PNGs into DIR.", "dir");
     for (auto* o : {&selftest, &host_opt, &port_opt, &user_opt, &pass_opt, &shot_opt, &tone_opt,
-                    &scale_opt, &shotsize_opt, &res_opt}) {
+                    &scale_opt, &shotsize_opt, &res_opt, &reset_opt}) {
         parser.addOption(*o);
     }
     parser.process(app);   // unknown options abort
 
     Backend backend;
+    // ⚠️ Before the QML loads, and it exits without opening a window: the whole
+    // point is to be usable when the window cannot be reached.
+    if (parser.isSet(reset_opt)) {
+        backend.resetWindowGeometry();
+        std::cout << "saved window position cleared - start HamDeck normally\n";
+        return 0;
+    }
     if (parser.isSet(tone_opt)) backend.useTestTone();
     // ⚠️ Set BEFORE the QML loads. Applied afterwards it would be a visible
     // relayout, and a screenshot could catch the panel mid-change.

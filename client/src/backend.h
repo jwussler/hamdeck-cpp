@@ -114,6 +114,9 @@ class Backend : public QObject {
   Q_INVOKABLE void focusLost();
   Q_INVOKABLE void saveGeometry(int x, int y, int w, int h);
   Q_INVOKABLE QVariantMap restoreGeometry(int availW, int availH);
+  // --reset-window: forget a stored position that has left the window
+  // unreachable. See restoreGeometry for how one gets there.
+  void resetWindowGeometry();
 
   // The window tells us which screen it is on. ⚠️ It is called again when the
   // window is DRAGGED TO ANOTHER MONITOR, which is the case a scale computed

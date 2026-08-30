@@ -38,7 +38,7 @@ FetchContent_Declare(nlohmann_json
   GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(nlohmann_json)
 
-add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp src/tx_audio.cpp src/alsa_devices.cpp src/rig_cal.cpp src/alsa_audio.cpp src/tgxl.cpp src/recorder.cpp
+add_executable(hamdeck-host src/main.cpp src/log.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp src/tx_audio.cpp src/alsa_devices.cpp src/rig_cal.cpp src/alsa_audio.cpp src/tgxl.cpp src/recorder.cpp
     src/session_stats.cpp)
 target_link_libraries(hamdeck-host PRIVATE civetweb-c-library OpenSSL::Crypto nlohmann_json::nlohmann_json asound)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
