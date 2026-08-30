@@ -92,7 +92,8 @@ own. Pre-release: tested against one radio, and the installers are unsigned.")
 # start and then fail to load its UI without them, so they are hard dependencies.
 set(CPACK_DEBIAN_PACKAGE_DEPENDS
     "libqt6core6, libqt6gui6, libqt6network6, libqt6qml6, libqt6quick6, \
-libqt6websockets6, libqt6multimedia6, qml6-module-qtquick, \
+libqt6websockets6, libqt6multimedia6, qml6-module-qtqml, \
+qml6-module-qtqml-workerscript, qml6-module-qtquick, \
 qml6-module-qtquick-controls, qml6-module-qtquick-layouts, \
 qml6-module-qtquick-templates, qml6-module-qtquick-window")
 include(${CMAKE_CURRENT_SOURCE_DIR}/../packaging/CPack.cmake)
