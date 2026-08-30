@@ -18,7 +18,26 @@
 
 #include "backend.h"
 
+#ifdef _WIN32
+#include <windows.h>
+#include <cstdio>
+#endif
+
 namespace {
+
+#ifdef _WIN32
+// ⚠️ A GUI-subsystem app has no console, so --selftest and --screenshot would
+// print into nothing. Attaching to the PARENT console gives the best of both:
+// double-clicked it is a silent GUI app with no stray cmd window, and run from
+// a terminal it still reports. Called only when a flag was passed, so a normal
+// launch never touches a console at all.
+void AttachParentConsole() {
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
+    FILE* f = nullptr;
+    freopen_s(&f, "CONOUT$", "w", stdout);
+    freopen_s(&f, "CONOUT$", "w", stderr);
+}
+#endif
 
 // ⚠️ The brand faces are BUNDLED, not assumed present. BRAND.md makes the point
 // about a logo that names a font by name and falls back to whatever the viewer
@@ -66,6 +85,10 @@ int SelfTest(QQmlApplicationEngine& engine) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    // Any flag means somebody launched this from a terminal and wants output.
+    if (argc > 1) AttachParentConsole();
+#endif
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("HamDeckClient");
     QGuiApplication::setOrganizationName("HamDeck");

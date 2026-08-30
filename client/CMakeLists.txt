@@ -58,6 +58,18 @@ target_link_libraries(hamdeck-qml PRIVATE
     Qt6::Quick Qt6::QuickControls2 Qt6::Qml)
 # ⚠️ MSVC does not understand GCC/Clang warning flags and treats -Wextra as an
 # invalid numeric argument, failing the whole build. Guard them by compiler.
+# ⚠️ GUI SUBSYSTEM ON WINDOWS.
+# Without WIN32_EXECUTABLE the linker produces a CONSOLE application, and
+# Windows opens a black cmd window beside the panel on every launch. It is
+# invisible when the only testing is headless on Linux, and the first thing an
+# operator sees on Windows.
+#
+# The app still prints for --selftest and --screenshot: on Windows it attaches
+# to the parent console when a command-line flag is present (see main_qml.cpp),
+# so it behaves as a GUI app when double-clicked and as a console tool when run
+# from a terminal. CI depends on that output.
+set_target_properties(hamdeck-qml PROPERTIES WIN32_EXECUTABLE TRUE MACOSX_BUNDLE TRUE)
+
 if(MSVC)
     target_compile_options(hamdeck-qml PRIVATE /W3)
 else()
