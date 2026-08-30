@@ -15,6 +15,7 @@
 #include <thread>
 
 #include "alsa_devices.h"
+#include "rig_cal.h"
 #include "version.h"
 
 namespace {
@@ -124,9 +125,20 @@ std::string StatusFullJson(const ApiDeps& deps) {
 std::string MetersJson(const ApiDeps& deps) {
   if (!deps.poller) return R"({"status":"ok","s_meter":0,"swr":0,"alc":0,"power":0})";
   const RigSnapshot s = deps.poller->Snapshot();
+  // s_meter stays the raw 0-255 the reference host reports, so existing clients
+  // are unaffected. s_meter_db and s_unit are ADDITIVE: the calibration is
+  // rig-specific knowledge and belongs with the rig, not copy-pasted into every
+  // client that wants to show a real scale.
+  const int db = RawToDb(s.s_meter);
+  // The raw four stay exactly as the reference host reports them. Everything
+  // after is ADDITIVE and carries the unit in its name, so no client can mistake
+  // a percentage for watts.
   return std::format(
-      R"({{"status":"ok","s_meter":{},"swr":{},"alc":{},"power":{}}})",
-      s.s_meter, s.swr, s.alc, s.power_mtr);
+      R"({{"status":"ok","s_meter":{},"swr":{},"alc":{},"power":{},)"
+      R"("s_meter_db":{},"s_unit":"{}","swr_ratio":{:.1f},)"
+      R"("alc_pct":{},"power_pct":{}}})",
+      s.s_meter, s.swr, s.alc, s.power_mtr, db, DbToSUnit(db),
+      SwrFromRaw(s.swr), AlcPercentFromRaw(s.alc), PowerPercentFromRaw(s.power_mtr));
 }
 
 std::string HealthJson(const ApiDeps& deps, int bound_port) {
@@ -306,6 +318,34 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                   JsonBool(real_sink),
                   JsonBool(tx && !tx->Holder().empty()),
                   JsonBool(tx && !tx->Holder().empty())));
+  });
+
+  // The meter scale, so a client draws a calibrated face without hard-coding a
+  // table for a radio it may not be talking to. Swap the rig and every client's
+  // scale follows without shipping a new client.
+  server.Get("/api/meters/scale", [](const HttpRequest&, HttpResponse& res) {
+    std::string points, ticks;
+    for (const auto& p : SMeterCalibration()) {
+      if (!points.empty()) points += ",";
+      points += std::format(R"({{"raw":{},"db":{}}})", p.raw, p.db);
+    }
+    for (const auto& t : SMeterScaleTicks()) {
+      if (!ticks.empty()) ticks += ",";
+      ticks += std::format(R"({{"raw":{},"label":"{}"}})", t.raw, t.label);
+    }
+    WriteJson(res, 200,
+              std::format(
+                  R"({{"status":"ok","raw_max":255,"s9_raw":160,)"
+                  R"("source":"hamlib FTDX101D_STR_CAL - not measured on this station",)"
+                  R"("calibration":[{}],"ticks":[{}],)"
+                  R"("swr":{{"unit":"ratio","source":"hamlib yaesu_default_swr_cal, )"
+                  R"(tested on an FT-991 not this rig","warn_above":2.0}},)"
+                  R"("alc":{{"unit":"percent","source":"hamlib yaesu_default_alc_cal - )"
+                  R"(full scale is raw 64, not 255"}},)"
+                  R"("power":{{"unit":"percent","source":"hamlib )"
+                  R"(yaesu_default_rfpower_meter_cal, read as percent of rated output. )"
+                  R"(NOT watts: that table is for a 100 W radio and this is a 200 W rig"}}}})",
+                  points, ticks));
   });
 
   server.Get("/api/backend", [&deps](const HttpRequest&, HttpResponse& res) {

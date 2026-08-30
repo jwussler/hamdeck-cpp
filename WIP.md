@@ -690,6 +690,48 @@ with an honest note that this VM has no sound card.
 
 `--selftest` runs under `QT_QPA_PLATFORM=offscreen` in ctest, because CI must run the binary.
 
+## Meter calibration — looked up, not invented
+
+The meters were showing raw 0-255 and saying `uncalibrated`, which was honest but not useful.
+The numbers now come from **Hamlib's Yaesu calibration tables**, which are contributed by
+people with the actual radios. Better than an assumption; still not a measurement of this
+station, and every reading says which it is.
+
+**The calibration lives in the HOST**, and `/api/meters/scale` serves the table and the tick
+positions. Rig-specific knowledge belongs with the rig, not copy-pasted into every client:
+swap the radio and every client's scale follows without shipping a new client. The client
+draws **unlabelled** ticks when the host does not supply a scale, rather than inventing one.
+
+### ⚠️ Three assumptions that would each have been wrong
+
+| meter | the obvious guess | what the table says |
+|---|---|---|
+| **S-meter** | S9 at the middle of the range, raw 128 | **S9 is raw 160.** Raw 128 is about **S7** — the guess is ~1.5 S-units high, the difference between "5 by 9" and "5 by 7" in a report passed to another operator |
+| **ALC** | full scale at raw 255 | **full scale is raw 64.** A `raw/255` bar reads **25%** when ALC is actually at 100% — under-reading the meter that says the transmit audio is over-driven |
+| **Power** | raw 255 = 100 W, per the table | that table is for a **100 W** radio. This station's rig is **200 W**, so watts would read **half** |
+
+Power is therefore reported as **percent of rated output**, never watts — which is what the
+curve actually describes. Watts belong to whoever knows the rig's rating, and the host is not
+told it.
+
+SWR is a ratio and turns red at 2:1, where an operator wants to stop and look at the antenna.
+Its table is a hamlib *default* tested on an **FT-991**, not this rig: the curve shape is
+right, the exact breakpoints are unconfirmed, so it is reported to one decimal rather than
+three.
+
+Added fields are **additive** — `s_meter_db`, `s_unit`, `swr_ratio`, `alc_pct`, `power_pct` —
+and each carries its unit in its name, so no client can mistake a percentage for watts. The
+original raw four are untouched.
+
+Sources: Hamlib `rigs/yaesu/ftdx101.h` (`FTDX101D_STR_CAL`) and `rigs/yaesu/newcat.c`
+(`yaesu_default_swr_cal`, `yaesu_default_alc_cal`, `yaesu_default_rfpower_meter_cal`).
+
+⚠️ Hamlib defines the S-meter table for the FTDX-101**D**; its source states the code is
+shared with the **MP**, which has the same receiver and a bigger PA. Treated as applying to
+both. **If a reading ever looks wrong on the real radio, this is the first assumption to
+check** — and the fix is to measure against a known source, not to nudge the table until it
+looks nicer.
+
 ## ⚠️ A test that cannot fail is not a test
 
 The obvious staleness check — `SIGSTOP` the process, re-query — is worthless. It freezes the

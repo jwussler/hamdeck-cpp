@@ -6,6 +6,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QJsonArray>
 #include <QScreen>
 #include <QStatusBar>
 #include <QVBoxLayout>
@@ -162,6 +163,32 @@ QWidget* MainWindow::BuildPanel() {
   vol_label->setStyleSheet(
       QString("color:%1; font-size:10px; font-weight:bold; letter-spacing:1px;")
           .arg(theme::kTextDim));
+  // Transmit meters. Units come from the HOST - the client does not do the
+  // conversion, so it cannot disagree with another client about what a reading
+  // means. Power is a PERCENTAGE on purpose: the only watt table available is
+  // for a 100 W radio and this rig is 200 W, so watts would read half.
+  auto make_meter = [&](const char* caption, QLabel** out) {
+    auto* box = new QVBoxLayout;
+    auto* cap = new QLabel(caption);
+    cap->setStyleSheet(QString("color:%1; font-size:9px; font-weight:bold;"
+                              "letter-spacing:1px;").arg(theme::kTextDim));
+    cap->setAlignment(Qt::AlignCenter);
+    auto* val = new QLabel("—");
+    QFont vf("monospace", 13, QFont::Bold);
+    val->setFont(vf);
+    val->setAlignment(Qt::AlignCenter);
+    val->setStyleSheet(QString("color:%1;").arg(theme::kText));
+    val->setMinimumWidth(64);
+    box->addWidget(cap);
+    box->addWidget(val);
+    *out = val;
+    return box;
+  };
+  tl->addSpacing(14);
+  tl->addLayout(make_meter("SWR", &swr_label_));
+  tl->addLayout(make_meter("ALC", &alc_label_));
+  tl->addLayout(make_meter("PWR", &pwr_label_));
+
   tl->addSpacing(12);
   tl->addWidget(vol_label);
   volume_ = new QSlider(Qt::Horizontal);
@@ -205,6 +232,17 @@ bool MainWindow::ConnectTo(const QString& host, int port, const QString& user,
   }
   settings_.Save();
   conn_label_->setText("connected to " + settings_.BaseUrl());
+  // Fetch the meter scale once. A host that does not serve it leaves the meter
+  // unlabelled, which is the correct outcome rather than a guessed scale.
+  api_.Get("/api/meters/scale", [this](QJsonObject scale) {
+    QVector<SMeter::Tick> ticks;
+    for (const QJsonValue& v : scale.value("ticks").toArray()) {
+      ticks.push_back({v.toObject().value("raw").toInt(),
+                       v.toObject().value("label").toString()});
+    }
+    if (!ticks.isEmpty()) smeter_->SetScale(ticks);
+  });
+
   api_.StartPolling();
   rx_.SetVolume(settings_.volume);
   // Token in the query string: QWebSocket does not carry the REST cookie jar.
@@ -254,6 +292,26 @@ void MainWindow::ApplyStatusFull(const QJsonObject&) {}
 
 void MainWindow::ApplyMeters(const QJsonObject& m) {
   smeter_->SetValue(m.value("s_meter").toInt());
+  // Only label the meter when the HOST supplies the unit. Deriving it here would
+  // mean this client carrying a calibration for a radio it may not be on.
+  if (m.contains("s_unit")) smeter_->SetUnitLabel(m.value("s_unit").toString());
+
+  if (m.contains("swr_ratio")) {
+    const double swr = m.value("swr_ratio").toDouble();
+    swr_label_->setText(QString::number(swr, 'f', 1));
+    // ⚠️ Above about 2:1 an operator wants to stop and look at the antenna, so
+    // the number says so rather than sitting there in the same colour as a
+    // perfect match.
+    swr_label_->setStyleSheet(
+        QString("color:%1;").arg(swr >= 2.0 ? theme::kTx : theme::kText));
+  }
+  if (m.contains("alc_pct")) {
+    alc_label_->setText(QString("%1%").arg(m.value("alc_pct").toInt()));
+  }
+  if (m.contains("power_pct")) {
+    // Percent, and labelled as such. Never watts - see the host's note.
+    pwr_label_->setText(QString("%1%").arg(m.value("power_pct").toInt()));
+  }
 }
 
 void MainWindow::SetStale(bool stale, const QString& detail) {

@@ -49,6 +49,9 @@ class MainWindow : public QMainWindow {
   SMeter* smeter_ = nullptr;
   QPushButton* ptt_button_ = nullptr;
   QSlider* volume_ = nullptr;
+  QLabel* swr_label_ = nullptr;
+  QLabel* alc_label_ = nullptr;
+  QLabel* pwr_label_ = nullptr;
   bool tx_ = false;
   bool stale_ = false;
 };

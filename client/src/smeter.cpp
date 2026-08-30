@@ -4,7 +4,7 @@
 #include <QPainter>
 
 SMeter::SMeter(QWidget* parent) : QWidget(parent) {
-  setMinimumHeight(58);
+  setMinimumHeight(64);
 }
 
 void SMeter::SetValue(int raw) {
@@ -30,13 +30,34 @@ void SMeter::paintEvent(QPaintEvent*) {
   // overlaps at small heights.
   const QRectF track(pad, 8, width() - 2 * pad, height() - 34);
 
-  // Ticks. Evenly spaced and unlabelled - see the header. They give the eye
-  // something to judge relative movement against without claiming a calibration.
-  p.setPen(QPen(QColor("#4a5563"), 1));
-  for (int i = 0; i <= 10; ++i) {
-    const qreal x = track.left() + track.width() * i / 10.0;
-    const qreal h = (i % 5 == 0) ? 6.0 : 3.0;
-    p.drawLine(QPointF(x, track.bottom() + 2), QPointF(x, track.bottom() + 2 + h));
+  // Ticks. Labelled at the host-supplied calibration points when we have them,
+  // evenly spaced and unlabelled when we do not - never labelled from a guess.
+  QFont tickfont = p.font();
+  tickfont.setPointSize(7);
+  p.setFont(tickfont);
+  if (ticks_.isEmpty()) {
+    p.setPen(QPen(QColor("#4a5563"), 1));
+    for (int i = 0; i <= 10; ++i) {
+      const qreal x = track.left() + track.width() * i / 10.0;
+      const qreal h = (i % 5 == 0) ? 6.0 : 3.0;
+      p.drawLine(QPointF(x, track.bottom() + 2), QPointF(x, track.bottom() + 2 + h));
+    }
+  } else {
+    for (const Tick& t : ticks_) {
+      const qreal x = track.left() + track.width() * (t.raw / 255.0);
+      const bool over_s9 = t.label.startsWith('+');
+      p.setPen(QPen(QColor(over_s9 ? "#c0392b" : "#4a5563"), 1));
+      p.drawLine(QPointF(x, track.bottom() + 2), QPointF(x, track.bottom() + 7));
+      p.setPen(QColor(over_s9 ? "#e07a6a" : "#8b97a5"));
+      // Clamp the label box inside the widget. The last tick sits at the far
+      // right, so a centred box runs off the edge and the label is clipped -
+      // which is exactly the one an operator most wants to read.
+      qreal lx = x - 16;
+      if (lx < 0) lx = 0;
+      if (lx + 32 > width()) lx = width() - 32;
+      p.drawText(QRectF(lx, track.bottom() + 7, 32, 11),
+                 Qt::AlignHCenter | Qt::AlignTop, t.label);
+    }
   }
 
   p.fillRect(track, QColor("#15181d"));
@@ -68,7 +89,20 @@ void SMeter::paintEvent(QPaintEvent*) {
   QFont f = p.font();
   f.setPointSize(8);
   p.setFont(f);
+  // The reading, said as an operator would say it - but only when the host has
+  // given us a calibration. Otherwise the raw number and an explicit
+  // "uncalibrated", so nobody reads an S-unit off a scale we invented.
+  p.setPen(QColor("#8b97a5"));
   p.drawText(body.adjusted(6, 0, 0, -1), Qt::AlignLeft | Qt::AlignBottom, "SIGNAL");
-  p.drawText(body.adjusted(0, 0, -6, -1), Qt::AlignRight | Qt::AlignBottom,
-             QString("raw %1 / 255 — uncalibrated").arg(value_));
+  if (!unit_.isEmpty()) {
+    QFont uf = p.font();
+    uf.setPointSize(10);
+    uf.setBold(true);
+    p.setFont(uf);
+    p.setPen(QColor(tx_ ? "#ff8a75" : "#ffb000"));
+    p.drawText(body.adjusted(0, 0, -8, -1), Qt::AlignRight | Qt::AlignBottom, unit_);
+  } else {
+    p.drawText(body.adjusted(0, 0, -6, -1), Qt::AlignRight | Qt::AlignBottom,
+               QString("raw %1 / 255 — uncalibrated").arg(value_));
+  }
 }
