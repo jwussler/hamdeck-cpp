@@ -148,7 +148,11 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
   QEventLoop loop;
   api_.Login(user, password, [&](bool success, QString message) {
     ok = success;
-    connection_text_ = success ? settings_.BaseUrl() : ("login failed: " + message);
+    // ⚠️ No "login failed:" prefix. The message already says what happened, and
+    // for a host that was never reached the prefix contradicts it - "login
+    // failed: no answer from ..." reads as a rejected password and sends the
+    // operator to re-type one at a host that is not answering.
+    connection_text_ = success ? settings_.BaseUrl() : message;
     loop.quit();
   });
   loop.exec();

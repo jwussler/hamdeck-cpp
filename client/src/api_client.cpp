@@ -29,6 +29,21 @@ void ApiClient::Login(const QString& user, const QString& password,
       return;
     }
     authenticated_ = false;
+
+    // ⚠️ A TRANSPORT FAILURE IS NOT A LOGIN FAILURE, AND SAYING SO SENDS THE
+    // OPERATOR TO THE WRONG FIX. When the name does not resolve, the port is
+    // shut or the packet never arrives, there is no HTTP status at all and the
+    // attribute reads 0 - which this reported as "login failed (0)". It cost a
+    // real session of re-typing a password at a host that was never reached.
+    // Same rule as the audio status line: "not arriving" and "refused" are
+    // different problems and must not share a message.
+    if (code == 0) {
+      const QString where = QUrl(base_url_).host() + ":" +
+                            QString::number(QUrl(base_url_).port(80));
+      if (done) done(false, "no answer from " + where + " - " + reply->errorString());
+      return;
+    }
+
     // Surface the host's own message. It distinguishes bad credentials (401)
     // from the lockout (429), and a client that flattens both to "login failed"
     // leaves the operator retrying into a five-minute lockout.

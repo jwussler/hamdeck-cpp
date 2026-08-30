@@ -286,6 +286,15 @@ These are the expensive lessons. Each cost real debugging, on this project or th
   `-O2 -DNDEBUG` with a deliberately failing check, not assumed.
 
 ### Truth in what the software says
+- ⚠️ **"login failed (0)" was a lie, and it cost a live debugging session.** The login handler
+  read only the HTTP status attribute; on a DNS failure, a refused connection or a timeout
+  there is no status at all and it reads **0**, so a host that was never reached reported a
+  **rejected password**. The operator re-typed credentials at a box that was not answering.
+  A transport failure now says `no answer from <host:port> - <reason>` and the
+  "login failed:" prefix is gone, because it contradicted the message it was glued to.
+  Proven both ways: an unresolvable name, a shut port, and a real 401 that still reads
+  `Invalid credentials`. Same rule as the audio status line — **"not arriving" and "refused"
+  are different problems and must not share a message.**
 - **If a capability is absent, its status route must say so.** The reference
   `/api/record/start` answers `{"status":"ok","recording":true}` while `Start()` sets
   `IsRecording = false`. A 200 means the route exists, not that anything happened.
