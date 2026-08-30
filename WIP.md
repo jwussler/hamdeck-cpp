@@ -256,17 +256,45 @@ matches the C# default of 180; 0 disables. The test asserts the **radio actually
 read back through `TX;`, not that a trip counter moved — a counter is a claim, `TX0;` is the
 outcome.
 
-### ❓ QUESTION FOR JOE: the power cap looks backwards
-In the C# host a **local** caller is capped at **100 W** while a **remote** caller gets
-**200 W**:
+### ✅ CONFIRMED: the power cap is intentional — 100 W local, 200 W remote
 
-```csharp
-["/api/power/limit"] = local => new { max_watts = local ? LocalPowerCap : 200, is_local = local }
+Joe confirmed 08/30/2026. It reads inverted but it is deliberate, so it stays exactly as
+ported. **Do not "fix" this.** Not a bug, not a refactor target, not something to raise again.
+
+## How anything actually reaches the host — the network (traced 08/30/2026)
+
+**It is a VPN. WireGuard. Nothing about HamDeck is on the public internet.**
+
+| | |
+|---|---|
+| server | wg-easy v15 in Docker on **shack** (the VM), `wg0`, udp/51820 published |
+| tunnel subnet | `[vpn-net]/24`, server `[vpn-net]` |
+| peers | `[vpn-peer-name]` = [vpn-net] (3.6 GiB sent), `iPhone` = [vpn-net] — both enabled, both handshaking, both from endpoint `[vpn-peer]` |
+| tunnel mode | **full tunnel** — `AllowedIPs 0.0.0.0/0, ::/0`. The iPhone has none set so it inherits the same default. |
+| peer DNS | `[lan-host]` — the LAN router |
+| LAN reachability | peers NAT through the container bridge `[container-net]/24` → MASQUERADE → shack `[lan-host]` → LAN. `ip_forward=1`, `wg0` firewall disabled. |
+| this site's WAN | `[site-wan]` — **not** the peer endpoint, so those peers are genuinely remote |
+
+### ⚠️ `[reference-host]` is a LAN-ONLY split-DNS name
+
+It resolves **only** on `[lan-host]`. Public resolvers return nothing:
+
+```
+@[lan-host] -> [lan-host]        @1.1.1.1 -> (nothing)      @8.8.8.8 -> (nothing)
 ```
 
-That reads inverted — you would expect the remote path to be the restricted one. It is
-ported **exactly as-is** rather than quietly "fixed", because a power limit is a station
-decision and inverting one on a guess is not a refactor. Confirm which way it should be.
+There is no cloudflared ingress for it either. So the WPF client reaches the host **because
+it is on the WireGuard tunnel and using the LAN resolver**, not over the internet. This
+corrects an earlier note in this file that called it public DNS — it is not.
+
+### What this means for the C++ host
+
+- `[build-host]` should be a **local DNS record on [lan-host]**, exactly like
+  `[reference-host]`. No cloudflared ingress, no public exposure, nothing to gate.
+- It largely closes the open Authelia question: there is no public surface to put a gate in
+  front of. The host's own session auth is the boundary, and the VPN is the perimeter.
+- The client's link to the host is WireGuard, full tunnel. That is the "cell link" the
+  adaptive buffering in CARRYOVER.md section 3 exists to survive.
 
 ## Open decisions (Joe's, not mine)
 
