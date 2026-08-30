@@ -18,7 +18,7 @@ Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anythin
 | | |
 |---|---|
 | **Host** | **running the station.** The .NET server VM is shut down |
-| **Client** | QML panel: connects, live status, rig control, RX **and TX** audio, PTT hotkey, admin |
+| **Client** | QML panel: connects, live status, rig control, RX **and TX** audio, PTT hotkey, admin, **resolution-aware** (§8d) |
 | **Route coverage** | **140 of 141** exact routes + all **18** prefix families (DX cluster only, which 404s on the reference too) |
 | **Tests** | **11 host (ctest)**, all green |
 | **Parity** | 25/25 with 5 listed deliberate divergences |
@@ -240,6 +240,7 @@ cleanly. Tested with a **10 s watchdog** as a backstop and power at **QRP**, not
 | `tools/coverage.py` | probes every reference route to measure what is implemented | same `/api/backend` guard |
 | `--selftest` (host and client) | walks the startup path and exits | CI runs it under an external **timeout**: a hang is a failure |
 | `--screenshot` (client) | renders the live window to a PNG | the only way to inspect a UI on a headless box |
+| `--check-resolutions` (client) | walks the panel across seven screen sizes and measures every key | **refuses to run without a session** — the connect screen fits every resolution ever made and would pass while measuring nothing |
 
 **A scope lock the operator must remember is not a lock.** Most of this API is state-changing
 and many of those routes are GETs; a walker that simply fetched all 141 would key the
@@ -314,6 +315,14 @@ These are the expensive lessons. Each cost real debugging, on this project or th
   on settings the operator did not choose and believes they changed — including the watchdog.
   And parse into a local, assigning only on success: writing as you go leaves a caller holding
   a half-applied config, which also made one test pass for the wrong reason.
+- ⚠️ **Never `pkill -f` a pattern that also matches your own shell.** Cleaning up a throwaway
+  simulated host with `pkill -f hamdeck-host` over ssh matched the **live service** as well —
+  the ssh command line itself contained the string — and took the station host down for about
+  40 s. The unit has `Restart=on-failure`, and a clean SIGTERM exit is not a failure, so
+  nothing brought it back. Stop a service with `systemctl stop`, and a throwaway by the **PID
+  it printed when it started**. (The radio was not keyed, and shutdown drops PTT and confirms
+  by reading `TX;` back, so there was no open carrier — that is the safety net working, not a
+  reason to do it again.)
 - **Isolate test cases.** A shared object carried a rejected value into the next case, which
   then passed while reporting the wrong error.
 
@@ -543,6 +552,107 @@ success and losing the change at the next restart.
 ### Session listings show a token PREFIX only
 A full session token in an admin listing is a credential in a log, a screenshot and a support
 ticket.
+
+## 8d. Resolution awareness
+
+⚠️ **THE PANEL WILL RUN ON SCREENS NOBODY HERE OWNS.** The same window is a third of a 4K
+monitor and taller than a 1024x600 shack netbook. Left alone, Qt draws every one of those at
+the same pixel sizes: unreadable across the room on the first, clipped on the last.
+
+### Two problems, two mechanisms — conflating them is the bug
+| | what it answers | where it lives |
+|---|---|---|
+| **Density** | how big a thing is drawn | one number, `Backend::uiScale`, applied through `Theme.u()` / `Theme.f()` |
+| **Reflow** | how many fit on a row | `Theme.cols()`, evaluated against the width actually available |
+
+A panel that does only density is clipped on a narrow window; one that does only reflow is
+unreadable on a 4K. Every size in the QML now goes through `u()` or `f()` — the audit is one
+line, and anything it prints is an unscaled constant:
+
+```sh
+grep -nE 'pixelSize: [0-9]|spacing: [0-9]|Height: [0-9]' client/qml/*.qml client/qml/HamDeck/*.qml
+```
+
+- **Type has a floor (`f()` never goes below 9 px), sizes do not.** An unreadable legend is
+  worse than a cramped layout: the operator cannot tell what the key does.
+- **`Theme.scale` never multiplies devicePixelRatio.** Qt has already divided it out; folding
+  it back in draws a HiDPI panel at twice the size asked for. `dpr` is carried only so the
+  status line can *say* what it found.
+- **Auto = fit to the smaller axis**, `min(availW/1280, availH/900)`, clamped 0.80–1.75.
+  Fitting width alone would scale a 2560x1080 ultrawide up until the panel no longer fits
+  vertically — and this panel is far taller than it is wide.
+- **The mode is stored as a LABEL** ("Auto", "125%"), not an index, so inserting a mode later
+  cannot silently move every operator to a different scale.
+- **The screen is re-reported when the window is dragged to another monitor.** A scale computed
+  once at startup is wrong the moment the panel moves from the laptop to the desk monitor,
+  which is a daily event, not an exotic one.
+- **PTT and ARM keep their size at every resolution.** They scale; they never wrap into
+  something small. The one key that must be hit without looking is not where space is saved.
+- **The status bar drops items right-to-left as the window narrows**, in reverse order of how
+  much they matter. Elided text in a status bar is worse than absent text — "audio: strea…"
+  reads as a fault. The transmit state, on the left, never drops.
+
+### ⚠️ ScrollView resized the panel behind our back
+The panel was in a `ScrollView`, which **sizes its content item to the content's natural width
+and ignores a width binding on it**. The panel came out **691 px wide inside both a 1024 px and
+a 448 px window**, so every row reflowed against a width the keys were never given and the
+right-hand column fell off the edge. It is a `Flickable` with an explicit `ScrollBar` now —
+a Flickable leaves its children's geometry alone.
+
+That is also why reflow measures `panelCol.width` rather than the window's: a scrollbar, a
+margin and a container that resizes things sit between the two numbers.
+
+### The walk, and the three ways it lied before it worked
+`--check-resolutions [dir]` sets the screen to each of seven sizes, sizes the window twice per
+screen (work area, and the app's own minimum), and for every visible key measures: **squeezed**
+(drawn narrower than its own minimum, i.e. the legend is clipping), **off-edge** (past the right
+edge of the window), and the **smallest key in pixels**. It writes a PNG per size, because a
+number saying "fits" and a picture showing a readable panel are different claims.
+
+⚠️ **Every one of these passed cleanly while measuring nothing:**
+
+1. **Measuring `panelColumn.implicitWidth`** — the groups anchor their contents, which stops
+   implicit width propagating, so it read the margins: **20 px at every resolution, seven
+   passes.** The section-6 trap (*an estimate whose failure mode is a small number looks exactly
+   like a working measurement*) inside a test written to avoid it.
+2. **Finding keys by QML type name** — the engine names generated metaobjects its own way, so
+   it matched **zero keys** and reported a clean sheet. Keys carry `objectName: "panelKey"` now,
+   and **no keys found is a failure**, not a pass.
+3. **`findChildren()` instead of the visual tree** — QObject parentage misses everything a
+   `Repeater` created, which is the band row, the mode row, the receiver row and the keypad:
+   **17 keys of 58.** A measurement that counts only what you thought to look for is not
+   coverage.
+
+⚠️ And one that made the *panel* look broken when the instrument was: **the resize is not
+finished when `setWidth()` returns.** It arrives as a posted event and `grabWindow()` renders
+without draining the queue, so the walk measured a 459 px panel inside a 1920 px window and
+blamed the layout. It pumps the event loop now, and prints the width **the window reports**
+rather than the width it was asked for.
+
+### Verified 08/30/2026
+58 keys found at every size; **0 squeezed, 0 off-edge** across 1024x600, 1280x720, 1366x768,
+1600x900, 1920x1080, 2560x1440 and 3840x2160, at both the full work area and the app's minimum
+width. Smallest key **46 px** (0.80x) to **102 px** (1.75x). Screenshots inspected by eye at
+1024x600, 1920x1080, 3840x2160 and a deliberately narrow 620x1000 — the keypad, tuner row and
+transmit row wrap as intended and nothing is clipped.
+
+Run it against a **throwaway simulated host**, never the station: it needs a session, and the
+panel does not care whether the rig is real.
+
+```sh
+HAMDECK_CONFIG=/tmp/sim/config.json ./hamdeck-host &      # own ports, own record path
+QT_QPA_PLATFORM=offscreen ./hamdeck-qml --host 127.0.0.1 --port <sim> \
+    --user <u> --password <p> --check-resolutions /tmp/sim/shots
+```
+
+`--ui-scale <f>` forces a scale (and the Display group **says** the scale came from the command
+line), and `--screenshot-size WxH` captures at a size this box has no monitor for.
+
+### Known, not fixed
+The `ComboBox`es render in Qt's Basic style — **white on a dark panel**. It predates this work
+and is a brand violation on a panel BRAND.md governs; it wants a styled control, not a scale fix.
+
+---
 
 ## 9. Adding radios nobody here owns
 

@@ -8,14 +8,22 @@ import HamDeck
 // or the radio's own front panel - changes something.
 Rectangle {
     id: key
+    // ⚠️ Named so --check-resolutions can find every key in the window and
+    // measure it. Matching on the QML type name instead depends on how the
+    // engine happens to name generated metaobjects - which it did, and the walk
+    // silently found zero keys and reported a clean pass.
+    objectName: "panelKey"
     property alias text: label.text
     property bool lit: false
     property bool danger: false          // red means RF, never decoration
     property bool enabledKey: true
     signal clicked()
 
-    implicitWidth: Math.max(58, label.implicitWidth + 22)
-    implicitHeight: 38
+    // ⚠️ The touch target scales, and the label's own width is part of the
+    // minimum: a key wide enough at 100% clips its legend at 150%, because the
+    // text grew and the fixed 58 px did not.
+    implicitWidth: Math.max(Theme.minKeyW, label.implicitWidth + Theme.u(22))
+    implicitHeight: Theme.keyH
     radius: Theme.radius
     color: !enabledKey ? Theme.panelDeep
          : danger && lit ? Theme.txRed
@@ -35,7 +43,7 @@ Rectangle {
         anchors.centerIn: parent
         font.family: Theme.display
         font.weight: Font.DemiBold
-        font.pixelSize: 13
+        font.pixelSize: Theme.f(13)
         font.letterSpacing: 0.8
         font.capitalization: Font.AllUppercase
         color: !key.enabledKey ? Qt.darker(Theme.dim, 1.4)

@@ -19,7 +19,7 @@ ColumnLayout {
     property bool live: true          // false while the operator is dragging
     signal moved(int v)
 
-    spacing: 2
+    spacing: Theme.u(2)
 
     RowLayout {
         Layout.fillWidth: true
@@ -28,7 +28,7 @@ ColumnLayout {
         Text {
             text: (slider.pressed ? Math.round(slider.value) : knob.value) + knob.suffix
             font.family: Theme.mono
-            font.pixelSize: 12
+            font.pixelSize: Theme.f(12)
             font.weight: Font.Medium
             color: slider.pressed ? Theme.cyan : Theme.text
         }
@@ -48,8 +48,8 @@ ColumnLayout {
             x: slider.leftPadding
             y: slider.topPadding + slider.availableHeight / 2 - height / 2
             width: slider.availableWidth
-            height: 5
-            radius: 3
+            height: Theme.u(5)
+            radius: Theme.u(3)
             color: Theme.ground
             border.width: 1
             border.color: Theme.line
@@ -57,15 +57,18 @@ ColumnLayout {
                 width: slider.visualPosition * parent.width
                 height: parent.height
                 color: Theme.cyan
-                radius: 3
+                radius: Theme.u(3)
             }
         }
         handle: Rectangle {
             x: slider.leftPadding + slider.visualPosition * (slider.availableWidth - width)
             y: slider.topPadding + slider.availableHeight / 2 - height / 2
-            width: 14
-            height: 14
-            radius: 7
+            // ⚠️ The grab handle scales with everything else. A 14 px handle
+            // beside a 1.5x slider is a target the operator misses, and this is
+            // the control that sets transmit power.
+            width: Theme.u(14)
+            height: Theme.u(14)
+            radius: Theme.u(7)
             color: slider.pressed ? Theme.cyan : Theme.text
             border.width: 1
             border.color: Theme.line

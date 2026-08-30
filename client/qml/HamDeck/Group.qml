@@ -12,18 +12,18 @@ Rectangle {
     radius: Theme.radius
     border.width: 1
     border.color: Theme.line
-    implicitHeight: inner.implicitHeight + caption.height + 22
+    implicitHeight: inner.implicitHeight + caption.height + Theme.u(22)
 
     SilkLabel {
         id: caption
         text: group.title
-        x: 12
-        y: 8
+        x: Theme.pad
+        y: Theme.u(8)
     }
     ColumnLayout {
         id: inner
         anchors { left: parent.left; right: parent.right; top: caption.bottom
-                  leftMargin: 12; rightMargin: 12; topMargin: 8 }
-        spacing: 8
+                  leftMargin: Theme.pad; rightMargin: Theme.pad; topMargin: Theme.u(8) }
+        spacing: Theme.gap
     }
 }

@@ -33,6 +33,13 @@ Judge proposals on whether they make the C++ build better, not on whether C++ wa
 - **Keep `core/` free of any UI headers.** Protocol, radio state, audio and the PTT
   abstraction must not include Qt. That is what makes swapping the front end a weekend
   rather than a rewrite — and it's the exact discipline that saved the C# client.
+- ⚠️ **Anything with a UI is resolution-aware from the first line.** The panel must be readable
+  on a 4K monitor and unclipped on a 1024x600 netbook, and those are two different mechanisms:
+  a single density scale (`Theme.u()`/`f()`, from `Backend::uiScale`) *and* reflow against the
+  width actually available (`Theme.cols()`). No unscaled pixel constants. Prove it with
+  `--check-resolutions`, which measures every key at seven screen sizes — and look at the
+  PNGs it writes. See WIP.md §8d, including the four ways that walk passed while measuring
+  nothing.
 - Suggested libraries, all OSI-approved so code signing stays possible: miniaudio (audio),
   cpp-httplib (REST), IXWebSocket, nlohmann/json, Dear ImGui if a lighter UI is wanted.
 

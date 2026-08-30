@@ -12,13 +12,13 @@ ColumnLayout {
     property bool password: false
     signal accepted()
 
-    spacing: 3
+    spacing: Theme.u(3)
 
     SilkLabel { text: field.label }
 
     Rectangle {
         Layout.fillWidth: true
-        implicitHeight: 38
+        implicitHeight: Theme.keyH
         color: Theme.ground
         radius: Theme.radius
         border.width: 1
@@ -27,10 +27,10 @@ ColumnLayout {
 
         TextInput {
             id: input
-            anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
+            anchors { fill: parent; leftMargin: Theme.u(10); rightMargin: Theme.u(10) }
             verticalAlignment: TextInput.AlignVCenter
             font.family: Theme.mono
-            font.pixelSize: 14
+            font.pixelSize: Theme.f(14)
             color: Theme.text
             selectionColor: Theme.cyanFill
             selectedTextColor: Theme.text
@@ -43,7 +43,7 @@ ColumnLayout {
                 visible: input.text === "" && !input.activeFocus
                 text: field.placeholder
                 font.family: Theme.mono
-                font.pixelSize: 14
+                font.pixelSize: Theme.f(14)
                 color: Theme.dim
             }
         }

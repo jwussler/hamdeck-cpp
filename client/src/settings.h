@@ -41,6 +41,11 @@ class Settings {
   int ptt_key = Qt::Key_Pause;   // symbol, not a magic number
   bool ptt_hold = true;          // hold-to-talk; false = press-to-toggle
 
+  // UI density: "Auto" or a fixed percentage from Backend's mode table. Stored
+  // as the LABEL rather than an index, so inserting a mode later cannot silently
+  // move every existing operator to a different scale.
+  QString ui_scale_mode = "Auto";
+
   // Geometry, clamped on restore - never trusted as written.
   QRect window_geometry;
 

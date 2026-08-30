@@ -9,13 +9,56 @@ ApplicationWindow {
     visible: true
     title: "HamDeck"
     color: Theme.panelDeep
-    minimumWidth: 560
-    minimumHeight: 400
+
+    // ⚠️ THE MINIMUM SIZE SCALES WITH THE PANEL. A fixed 560x400 minimum is
+    // meaningless once every key inside it is being drawn 1.75x larger - the
+    // window would allow a size the panel cannot be drawn at, and Qt resolves
+    // that by ignoring the request and growing the window instead.
+    // Never larger than the screen: a minimum bigger than the display is a
+    // window that cannot be placed.
+    minimumWidth: Math.min(Theme.u(560), Screen.desktopAvailableWidth)
+    minimumHeight: Math.min(Theme.u(400), Screen.desktopAvailableHeight)
+
+    // ── Resolution ──────────────────────────────────────────────────────────
+    //
+    // Density comes from the backend as ONE number and is applied through
+    // Theme.u()/f(). Reflow is decided here, against the width actually
+    // available, because it is a different question with a different answer:
+    // a 4K monitor wants BIGGER keys, a narrow window wants FEWER PER ROW, and
+    // a panel that only does one of the two is wrong on half the desks it
+    // lands on.
+    Binding { target: Theme; property: "scale"; value: backend.uiScale }
+
+    // ⚠️ Re-reported when the window is dragged to another monitor. Screen is
+    // an attached property that follows the window, so these fire on the move -
+    // a scale computed once at startup is wrong the moment somebody drags the
+    // panel from a laptop panel to the 4K on the desk, which is exactly what
+    // happens every morning.
+    Screen.onDesktopAvailableWidthChanged: win.reportScreen()
+    Screen.onDesktopAvailableHeightChanged: win.reportScreen()
+    Screen.onDevicePixelRatioChanged: win.reportScreen()
+    function reportScreen() {
+        backend.setScreen(Screen.desktopAvailableWidth,
+                          Screen.desktopAvailableHeight,
+                          Screen.devicePixelRatio)
+    }
+
+    // Width available to the contents of a Group, after the panel's own margins
+    // and the group's padding. Every key row decides how many columns it can
+    // take from this.
+    //
+    // ⚠️ Derived from the panel column's REAL width, not from the window's.
+    // They are not the same number - a scrollbar, a margin and, as it turned
+    // out, a container that resized the panel behind our back all sit between
+    // them - and reflowing against a width the keys are not actually given is
+    // how a row ends up one column too wide.
+    readonly property int contentW: panelCol.width - Theme.pad * 4
 
     // ⚠️ Geometry is clamped by the backend and re-centred if it would land off
     // the work area. A window taller than the display puts its title bar out of
     // reach and the app cannot be closed.
     Component.onCompleted: {
+        win.reportScreen()
         const g = backend.restoreGeometry(Screen.desktopAvailableWidth,
                                           Screen.desktopAvailableHeight)
         win.x = g.x; win.y = g.y; win.width = g.width; win.height = g.height
@@ -45,22 +88,39 @@ ApplicationWindow {
             backend.connectTo(host, port, user, password)
     }
 
-    ScrollView {
+    // ⚠️ A FLICKABLE, NOT A ScrollView, AND THAT IS NOT A STYLE CHOICE.
+    // ScrollView sizes its content item to the content's own natural width and
+    // ignores a width binding on it: the panel came out 691 px wide inside both
+    // a 1024 px and a 448 px window, so every row was laid out for a window
+    // that did not exist and the right-hand column fell off the edge. Measured,
+    // not guessed - --check-resolutions prints the panel width beside the
+    // window width, which is how it was caught.
+    // A Flickable leaves its children's geometry alone.
+    Flickable {
+        id: flick
         anchors.fill: parent
-        contentWidth: availableWidth
         clip: true
         visible: backend.sessionActive
+        contentWidth: width
+        contentHeight: panelCol.implicitHeight
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
         ColumnLayout {
-            width: win.width
-            spacing: 10
-            anchors.margins: 12
+            id: panelCol
+            // ⚠️ Named, because --check-resolutions measures THIS item's
+            // implicitWidth against the viewport. Its width is forced to the
+            // viewport, so measuring width would be a test that cannot fail;
+            // implicitWidth is what the content actually needs.
+            objectName: "panelColumn"
+            width: flick.width - Theme.u(16)   // room for the scrollbar
+            spacing: Theme.u(10)
 
-            Item { Layout.preferredHeight: 2 }
+            Item { Layout.preferredHeight: Theme.u(2) }
 
             Readout {
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 freq: backend.freqText
                 mode: backend.mode
                 vfo: backend.vfo
@@ -72,7 +132,7 @@ ApplicationWindow {
 
             SMeter {
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 raw: backend.sMeterRaw
                 unit: backend.sUnit
                 ticks: backend.meterTicks
@@ -82,10 +142,13 @@ ApplicationWindow {
             Group {
                 title: "Band"
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
-                    columns: 6
-                    columnSpacing: 8; rowSpacing: 8
+                    // Wraps rather than shrinks. Eleven band keys on a 1024-wide
+                    // netbook become two rows of readable keys; squeezed onto
+                    // one row they would be 40 px wide with the legend clipped.
+                    columns: Theme.cols(win.contentW, Theme.minKeyW, 11)
+                    columnSpacing: Theme.gap; rowSpacing: Theme.gap
                     Layout.fillWidth: true
                     Repeater {
                         model: ["160","80","60","40","30","20","17","15","12","10","6"]
@@ -101,9 +164,10 @@ ApplicationWindow {
             Group {
                 title: "Mode"
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
-                RowLayout {
-                    spacing: 8
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                GridLayout {
+                    columns: Theme.cols(win.contentW, Theme.u(66), 6)
+                    columnSpacing: Theme.gap; rowSpacing: Theme.gap
                     Layout.fillWidth: true
                     Repeater {
                         model: [["LSB","lsb"],["USB","usb"],["CW","cw"],
@@ -123,9 +187,13 @@ ApplicationWindow {
             Group {
                 title: "VFO"
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
-                RowLayout {
-                    spacing: 8
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                GridLayout {
+                    // "−1 kHz" needs more room than a band number, so this row
+                    // wraps earlier than the band row. One minimum width for
+                    // every row would either waste space or clip these two.
+                    columns: Theme.cols(win.contentW, Theme.u(78), 6)
+                    columnSpacing: Theme.gap; rowSpacing: Theme.gap
                     Layout.fillWidth: true
                     PanelKey { Layout.fillWidth: true; text: "A"; lit: backend.vfo === "A"
                                onClicked: backend.send("/api/vfo/a") }
@@ -145,9 +213,10 @@ ApplicationWindow {
             Group {
                 title: "Receiver"
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
-                RowLayout {
-                    spacing: 8
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                GridLayout {
+                    columns: Theme.cols(win.contentW, Theme.u(64), 9)
+                    columnSpacing: Theme.gap; rowSpacing: Theme.gap
                     Layout.fillWidth: true
                     Repeater {
                         model: [["NB","nb"],["NR","nr"],["Notch","notch"],["Att","att"],
@@ -170,10 +239,14 @@ ApplicationWindow {
             Group {
                 title: "Antenna · Filter · RIT · Tuner"
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
-                RowLayout {
-                    spacing: 8
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                // ⚠️ A Flow, not a GridLayout: these keys are NATURAL width and
+                // grouped by meaning, and a grid would break the groups across
+                // rows at an arbitrary column. A Flow wraps between them and
+                // keeps ANT, filter and RIT reading as three clusters.
+                Flow {
                     Layout.fillWidth: true
+                    spacing: Theme.gap
 
                     Repeater {
                         model: [1, 2, 3]
@@ -184,7 +257,7 @@ ApplicationWindow {
                             onClicked: backend.send("/api/ant/" + modelData)
                         }
                     }
-                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 26; color: Theme.line }
+                    Rectangle { width: 1; height: Theme.keyH; color: Theme.line }
 
                     Repeater {
                         model: [["Narrow","narrow"],["Med","medium"],["Wide","wide"]]
@@ -193,13 +266,11 @@ ApplicationWindow {
                             onClicked: backend.send("/api/width/" + modelData[1])
                         }
                     }
-                    Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 26; color: Theme.line }
+                    Rectangle { width: 1; height: Theme.keyH; color: Theme.line }
 
                     PanelKey { text: "RIT −"; onClicked: backend.send("/api/rit/down") }
                     PanelKey { text: "RIT +"; onClicked: backend.send("/api/rit/up") }
                     PanelKey { text: "Clr";   onClicked: backend.send("/api/rit/clear") }
-
-                    Item { Layout.fillWidth: true }
 
                     // ⚠️ THE TGXL, not the rig's internal ATU. They are different
                     // tuners and this station uses this one; the button says which.
@@ -212,7 +283,9 @@ ApplicationWindow {
                     }
                     Text {
                         text: backend.tunerStatus
-                        font.family: Theme.body; font.pixelSize: 11
+                        height: Theme.keyH
+                        verticalAlignment: Text.AlignVCenter
+                        font.family: Theme.body; font.pixelSize: Theme.f(11)
                         color: backend.tunerAvailable ? Theme.dim : Theme.amber
                     }
                 }
@@ -221,20 +294,20 @@ ApplicationWindow {
             Group {
                 title: "Frequency entry"
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
-                RowLayout {
-                    spacing: 6
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                Flow {
                     Layout.fillWidth: true
+                    spacing: Theme.u(6)
                     Rectangle {
-                        Layout.preferredWidth: 120
-                        Layout.preferredHeight: 38
+                        width: Theme.u(120)
+                        height: Theme.keyH
                         color: Theme.ground
                         radius: Theme.radius
                         border.width: 1; border.color: Theme.line
                         Text {
                             anchors.centerIn: parent
                             text: backend.freqBuffer === "" ? "—" : backend.freqBuffer
-                            font.family: Theme.mono; font.pixelSize: 18
+                            font.family: Theme.mono; font.pixelSize: Theme.f(18)
                             font.weight: Font.Medium
                             color: Theme.amber
                         }
@@ -242,7 +315,6 @@ ApplicationWindow {
                     Repeater {
                         model: 10
                         delegate: PanelKey {
-                            Layout.fillWidth: true
                             text: String(index)
                             onClicked: backend.send("/api/freq/digit/" + index)
                         }
@@ -256,16 +328,21 @@ ApplicationWindow {
             Group {
                 title: "Transmit"
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
-                RowLayout {
-                    spacing: 10
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                Flow {
                     Layout.fillWidth: true
+                    spacing: Theme.u(10)
 
                     // ⚠️ Reflects the RIG's tx state, never its own click. Red
                     // means RF and nothing else in this app uses it.
+                    //
+                    // ⚠️ PTT AND ARM KEEP THEIR SIZE AT EVERY RESOLUTION - they
+                    // scale, but they never wrap to something small. The one key
+                    // that must be hit without looking is not the place to save
+                    // space on a narrow window.
                     PanelKey {
-                        Layout.preferredWidth: 170
-                        Layout.preferredHeight: 62
+                        width: Theme.u(170)
+                        implicitHeight: Theme.u(62)
                         text: backend.tx ? "On Air" : "PTT"
                         lit: backend.tx
                         danger: true
@@ -276,8 +353,8 @@ ApplicationWindow {
                     // the rig. Separate, so a connect never lands at the start
                     // of an over.
                     PanelKey {
-                        Layout.preferredWidth: 104
-                        Layout.preferredHeight: 62
+                        width: Theme.u(104)
+                        implicitHeight: Theme.u(62)
                         text: backend.armed ? "Armed" : "Arm TX"
                         lit: backend.armed
                         // A test tone must be unmistakable: it wears the
@@ -290,9 +367,8 @@ ApplicationWindow {
                     // no useful scale to draw against - it is "is it hitting the
                     // limit", not a magnitude.
                     ColumnLayout {
-                        Layout.preferredWidth: 150
-                        Layout.maximumWidth: 150
-                        spacing: 6
+                        width: Theme.u(150)
+                        spacing: Theme.u(6)
                         MeterBar {
                             Layout.fillWidth: true
                             label: "SWR"
@@ -310,26 +386,28 @@ ApplicationWindow {
                     }
 
                     ColumnLayout {
+                        width: Theme.u(52)
                         spacing: 1
                         SilkLabel { text: "ALC"; Layout.alignment: Qt.AlignHCenter }
                         Text {
                             Layout.alignment: Qt.AlignHCenter
                             text: backend.alcPct + "%"
-                            font.family: Theme.mono; font.pixelSize: 17; font.weight: Font.Medium
+                            font.family: Theme.mono; font.pixelSize: Theme.f(17)
+                            font.weight: Font.Medium
                             color: Theme.text
                         }
                     }
 
-                    Item { Layout.fillWidth: true }
-
                     ColumnLayout {
-                        spacing: 2
+                        width: Theme.u(210)
+                        spacing: Theme.u(2)
                         SilkLabel { text: "PTT key" }
                         RowLayout {
-                            spacing: 6
+                            spacing: Theme.u(6)
                             ComboBox {
                                 id: hkBox
-                                Layout.preferredWidth: 132
+                                Layout.preferredWidth: Theme.u(132)
+                                font.pixelSize: Theme.f(12)
                                 model: backend.hotkeyChoices.map(c => c.label)
                                 currentIndex: backend.hotkeyIndex
                                 onActivated: backend.hotkeyIndex = currentIndex
@@ -350,9 +428,13 @@ ApplicationWindow {
             Group {
                 title: "Levels"
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
-                RowLayout {
-                    spacing: 18
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                GridLayout {
+                    // A knob below about 120 px is not usable with a mouse and
+                    // its readout starts to clip, so these wrap to two rows on a
+                    // narrow window rather than shrink.
+                    columns: Theme.cols(win.contentW, Theme.u(120), 4)
+                    columnSpacing: Theme.u(18); rowSpacing: Theme.u(12)
                     Layout.fillWidth: true
                     Knob {
                         Layout.fillWidth: true
@@ -387,9 +469,14 @@ ApplicationWindow {
             Group {
                 title: "Audio"
                 Layout.fillWidth: true
-                Layout.leftMargin: 12; Layout.rightMargin: 12
-                RowLayout {
-                    spacing: 16
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                GridLayout {
+                    // A device name needs far more room than a knob, so this row
+                    // takes the wider minimum: a combo box showing "USB Audio…"
+                    // and nothing else does not tell an operator which device
+                    // their audio is going to.
+                    columns: Theme.cols(win.contentW, Theme.u(180), 4)
+                    columnSpacing: Theme.u(16); rowSpacing: Theme.u(12)
                     Layout.fillWidth: true
 
                     Knob {
@@ -408,10 +495,11 @@ ApplicationWindow {
 
                     ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: 2
+                        spacing: Theme.u(2)
                         SilkLabel { text: "Speaker" }
                         ComboBox {
                             Layout.fillWidth: true
+                            font.pixelSize: Theme.f(12)
                             model: backend.outputDevices
                             currentIndex: backend.outputIndex
                             onActivated: backend.outputIndex = currentIndex
@@ -419,10 +507,11 @@ ApplicationWindow {
                     }
                     ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: 2
+                        spacing: Theme.u(2)
                         SilkLabel { text: "Microphone" }
                         ComboBox {
                             Layout.fillWidth: true
+                            font.pixelSize: Theme.f(12)
                             model: backend.inputDevices
                             currentIndex: backend.inputIndex
                             onActivated: backend.inputIndex = currentIndex
@@ -431,52 +520,95 @@ ApplicationWindow {
                 }
             }
 
-            Item { Layout.preferredHeight: 4 }
+            Group {
+                title: "Display"
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.gap
+                    ColumnLayout {
+                        spacing: Theme.u(2)
+                        SilkLabel { text: "Panel size" }
+                        ComboBox {
+                            Layout.preferredWidth: Theme.u(120)
+                            font.pixelSize: Theme.f(12)
+                            model: backend.uiScaleModes
+                            currentIndex: backend.uiScaleIndex
+                            onActivated: backend.uiScaleIndex = currentIndex
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Auto fits the panel to this screen. " +
+                                          "A fixed size overrides it - useful when " +
+                                          "the panel shares a monitor with a logging program."
+                            ToolTip.delay: 400
+                        }
+                    }
+                    // ⚠️ Says what was MEASURED and what was chosen from it. A
+                    // scale with no stated basis cannot be told apart from one
+                    // somebody typed in, and this is the line an operator will
+                    // be asked to read out when the panel looks wrong.
+                    Text {
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignBottom
+                        text: backend.displayInfo
+                        elide: Text.ElideRight
+                        font.family: Theme.mono; font.pixelSize: Theme.f(11)
+                        color: Theme.dim
+                    }
+                }
+            }
+
+            Item { Layout.preferredHeight: Theme.u(4) }
         }
     }
 
     // Status bar
     footer: Rectangle {
-        height: 26
+        height: Theme.rowH
         color: Theme.ground
         border.width: 0
         Rectangle { width: parent.width; height: 1; color: Theme.line }
         RowLayout {
-            anchors { fill: parent; leftMargin: 12; rightMargin: 12 }
+            anchors { fill: parent; leftMargin: Theme.pad; rightMargin: Theme.pad }
+            spacing: Theme.u(6)
             Text {
                 text: backend.tx && backend.txTimeoutIn > 0
                       ? "transmitting · watchdog drops PTT in " + backend.txTimeoutIn + " s"
                       : backend.connectionText + " · cache " + backend.cacheAgeMs + " ms"
-                font.family: Theme.body; font.pixelSize: 11
+                font.family: Theme.body; font.pixelSize: Theme.f(11)
                 color: backend.tx ? Theme.txRed : (backend.stale ? Theme.amber : Theme.dim)
             }
             Item { Layout.fillWidth: true }
+            // ⚠️ THE STATUS BAR DROPS ITEMS RIGHT TO LEFT AS THE WINDOW NARROWS,
+            // in reverse order of how much they matter. Elided text in a status
+            // bar is worse than absent text - "audio: strea…" reads as a
+            // problem - and the transmit state, on the left, never drops.
             Text {
-                visible: backend.sessionActive
+                visible: backend.sessionActive && win.width > Theme.u(720)
                 text: "tx: " + backend.txStatus.replace("tx: ", "")
-                font.family: Theme.body; font.pixelSize: 11
+                font.family: Theme.body; font.pixelSize: Theme.f(11)
                 color: backend.testTone && backend.armed ? Theme.txRed : Theme.dim
             }
             Text {
-                visible: backend.sessionActive
+                visible: backend.sessionActive && win.width > Theme.u(860)
                 text: "· audio: " + backend.audioStatus
-                font.family: Theme.body; font.pixelSize: 11
+                font.family: Theme.body; font.pixelSize: Theme.f(11)
                 color: Theme.dim
             }
             Text {
                 // Say plainly that the hotkey is focus-only. Calling it global
                 // when it is not is the same lie as a status route reporting ok
                 // for something it never did.
-                visible: backend.sessionActive
+                visible: backend.sessionActive && win.width > Theme.u(1040)
                 text: "· PTT key: window focus only"
-                font.family: Theme.body; font.pixelSize: 11
+                font.family: Theme.body; font.pixelSize: Theme.f(11)
                 color: Theme.dim
             }
             Text {
                 // Nothing to disconnect from until there is a session.
                 visible: backend.sessionActive
                 text: "· disconnect"
-                font.family: Theme.body; font.pixelSize: 11
+                font.family: Theme.body; font.pixelSize: Theme.f(11)
                 font.underline: discMouse.containsMouse
                 color: discMouse.containsMouse ? Theme.cyan : Theme.dim
                 MouseArea {

@@ -88,6 +88,15 @@ class Backend : public QObject {
   Q_PROPERTY(QString tunerStatus READ tunerStatus NOTIFY tunerChanged)
   Q_PROPERTY(bool tunerAvailable READ tunerAvailable NOTIFY tunerChanged)
 
+  // ── Display ──
+  // ⚠️ The panel is drawn at ONE scale, decided here rather than in the QML, so
+  // there is a single number to reason about and a single place a test can pin.
+  // See Theme.qml for why density and reflow are deliberately separate.
+  Q_PROPERTY(qreal uiScale READ uiScale NOTIFY uiScaleChanged)
+  Q_PROPERTY(QStringList uiScaleModes READ uiScaleModes CONSTANT)
+  Q_PROPERTY(int uiScaleIndex READ uiScaleIndex WRITE setUiScaleIndex NOTIFY uiScaleChanged)
+  Q_PROPERTY(QString displayInfo READ displayInfo NOTIFY uiScaleChanged)
+
   // ── Hotkey ──
   Q_PROPERTY(QVariantList hotkeyChoices READ hotkeyChoices CONSTANT)
   Q_PROPERTY(int hotkeyIndex READ hotkeyIndex WRITE setHotkeyIndex NOTIFY hotkeyChanged)
@@ -105,6 +114,12 @@ class Backend : public QObject {
   Q_INVOKABLE void focusLost();
   Q_INVOKABLE void saveGeometry(int x, int y, int w, int h);
   Q_INVOKABLE QVariantMap restoreGeometry(int availW, int availH);
+
+  // The window tells us which screen it is on. ⚠️ It is called again when the
+  // window is DRAGGED TO ANOTHER MONITOR, which is the case a scale computed
+  // once at startup gets wrong - and a dual-monitor desk is the normal case,
+  // not the exotic one.
+  Q_INVOKABLE void setScreen(int availW, int availH, qreal dpr);
 
   void useTestTone() { tx_audio_.UseTestTone(true); }
 
@@ -171,6 +186,15 @@ class Backend : public QObject {
   int savedPort() const { return settings_.port; }
   QString savedUser() const { return settings_.username; }
 
+  qreal uiScale() const;
+  QStringList uiScaleModes() const;
+  int uiScaleIndex() const;
+  void setUiScaleIndex(int i);
+  QString displayInfo() const;
+  // --ui-scale on the command line, for capturing the panel at a scale this
+  // machine does not have a monitor for. Overrides the mode and says so.
+  void setUiScaleOverride(qreal s);
+
   QVariantList hotkeyChoices() const;
   int hotkeyIndex() const { return hotkey_index_; }
   void setHotkeyIndex(int i);
@@ -187,6 +211,7 @@ class Backend : public QObject {
   void hotkeyChanged();
   void sessionChanged();
   void tunerChanged();
+  void uiScaleChanged();
 
  private:
   Settings settings_;
@@ -207,4 +232,12 @@ class Backend : public QObject {
   QString tuner_status_ = "idle";
   bool tuner_available_ = false;
   int cw_speed_ = 0;
+
+  // Display. avail_* are DEVICE-INDEPENDENT pixels: Qt has already divided out
+  // the device pixel ratio, and multiplying it back in is the double-scaling
+  // bug that draws a HiDPI panel at twice the intended size.
+  int avail_w_ = 0;
+  int avail_h_ = 0;
+  qreal dpr_ = 1.0;
+  qreal ui_scale_override_ = 0.0;   // 0 = not overridden
 };

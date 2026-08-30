@@ -256,6 +256,102 @@ void Backend::keyReleased(int key, bool autoRepeat) {
 
 void Backend::focusLost() { hotkey_.FocusLost(); }
 
+// ── Display scale ───────────────────────────────────────────────────────────
+//
+// ⚠️ THE PANEL WILL BE RUN ON SCREENS NOBODY HERE OWNS. The same window is a
+// third of a 4K monitor, most of a 1366x768 laptop, and taller than a 1024x600
+// shack netbook. Left alone, Qt draws every one of those at the same pixel
+// sizes: unreadable across the room on the first, clipped on the last.
+//
+// Two knobs, deliberately separate (see Theme.qml):
+//   - DENSITY, decided here as one number and applied through Theme.u()/f().
+//   - REFLOW, decided in the QML against the width actually available.
+//
+// ⚠️ avail_w_/avail_h_ are DEVICE-INDEPENDENT pixels. Qt has already applied
+// the device pixel ratio; folding dpr in again is the double-scaling bug that
+// renders a HiDPI panel at twice the size asked for. dpr is carried only so the
+// status line can SAY what it found - it is never a term in the scale.
+namespace {
+// The geometry the panel was laid out at. Not a guess: it is the size the
+// window opens at with room for the status bar and a little desktop around it.
+constexpr qreal kRefW = 1280.0;
+constexpr qreal kRefH = 900.0;
+// ⚠️ Clamped at both ends, and the LOW end matters more. Below about 0.8 the
+// silkscreen legends stop being readable (Theme.f() also floors type at 9 px),
+// and a panel whose keys cannot be read is worse than one that scrolls.
+constexpr qreal kMinScale = 0.80;
+constexpr qreal kMaxScale = 1.75;
+
+struct ScaleMode { const char* label; qreal factor; };   // factor 0 = automatic
+const ScaleMode kModes[] = {
+    {"Auto", 0.0}, {"90%", 0.90}, {"100%", 1.00}, {"125%", 1.25}, {"150%", 1.50},
+};
+constexpr int kModeCount = static_cast<int>(sizeof(kModes) / sizeof(kModes[0]));
+}  // namespace
+
+void Backend::setScreen(int availW, int availH, qreal dpr) {
+  if (availW == avail_w_ && availH == avail_h_ && qFuzzyCompare(dpr, dpr_)) return;
+  avail_w_ = availW;
+  avail_h_ = availH;
+  dpr_ = dpr > 0 ? dpr : 1.0;
+  emit uiScaleChanged();
+}
+
+qreal Backend::uiScale() const {
+  // A command-line override beats everything and is reported as such: a
+  // screenshot taken at a scale the machine does not have must not be
+  // mistakable for one taken at the scale it does.
+  if (ui_scale_override_ > 0) return ui_scale_override_;
+  const int idx = uiScaleIndex();
+  if (idx > 0 && idx < kModeCount) return kModes[idx].factor;
+
+  // Automatic: fit to the SMALLER axis. Fitting width alone on a 2560x1080
+  // ultrawide would scale the panel up until it no longer fits vertically -
+  // and the panel is much taller than it is wide.
+  if (avail_w_ <= 0 || avail_h_ <= 0) return 1.0;
+  const qreal fit = qMin(avail_w_ / kRefW, avail_h_ / kRefH);
+  return qBound(kMinScale, fit, kMaxScale);
+}
+
+QStringList Backend::uiScaleModes() const {
+  QStringList out;
+  for (const auto& m : kModes) out << QString::fromUtf8(m.label);
+  return out;
+}
+
+int Backend::uiScaleIndex() const {
+  for (int i = 0; i < kModeCount; ++i) {
+    if (settings_.ui_scale_mode == QString::fromUtf8(kModes[i].label)) return i;
+  }
+  return 0;   // Auto, and an unrecognised stored value falls back to it
+}
+
+void Backend::setUiScaleIndex(int i) {
+  if (i < 0 || i >= kModeCount) return;
+  settings_.ui_scale_mode = QString::fromUtf8(kModes[i].label);
+  settings_.Save();
+  emit uiScaleChanged();
+}
+
+void Backend::setUiScaleOverride(qreal s) {
+  ui_scale_override_ = (s > 0) ? qBound(0.5, s, 3.0) : 0.0;
+  emit uiScaleChanged();
+}
+
+QString Backend::displayInfo() const {
+  // Says what was MEASURED and what was chosen, in that order. A scale with no
+  // stated basis is indistinguishable from one somebody typed in.
+  const QString screen = (avail_w_ > 0)
+      ? QString("%1×%2 work area").arg(avail_w_).arg(avail_h_)
+      : QString("screen unknown");
+  const QString dpr = QString(" · dpr %1").arg(dpr_, 0, 'f', 2);
+  QString basis;
+  if (ui_scale_override_ > 0) basis = " · --ui-scale";
+  else if (uiScaleIndex() > 0) basis = " · fixed";
+  else basis = " · auto";
+  return screen + dpr + basis + QString(" · ui %1×").arg(uiScale(), 0, 'f', 2);
+}
+
 void Backend::saveGeometry(int x, int y, int w, int h) {
   settings_.window_geometry = QRect(x, y, w, h);
   settings_.Save();
@@ -265,9 +361,17 @@ QVariantMap Backend::restoreGeometry(int availW, int availH) {
   // ⚠️ Clamp to the work area and re-centre if it would land outside. A window
   // taller than the display puts its title bar out of reach and the app cannot
   // be closed, moved or resized. Saved geometry is never trusted as written.
+  // The screen is known here even on the first frame, so the scale is usable.
+  setScreen(availW, availH, dpr_);
+
   QRect g = settings_.window_geometry;
   if (!g.isValid() || g.width() < 320 || g.height() < 240) {
-    g = QRect(0, 0, qMin(880, availW), qMin(760, availH));
+    // ⚠️ The DEFAULT SIZE SCALES TOO. A fixed 880x760 is most of a laptop and a
+    // postage stamp on a 4K monitor, and the panel inside it is being drawn at
+    // uiScale() either way - so a fixed default guarantees the first launch
+    // either clips or wastes most of the screen.
+    const qreal k = uiScale();
+    g = QRect(0, 0, qMin(qRound(880 * k), availW), qMin(qRound(760 * k), availH));
   }
   g.setWidth(qMin(g.width(), availW));
   g.setHeight(qMin(g.height(), availH));

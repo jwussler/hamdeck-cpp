@@ -7,7 +7,7 @@ import HamDeck
 Text {
     font.family: Theme.display
     font.weight: Font.DemiBold
-    font.pixelSize: 11
+    font.pixelSize: Theme.f(11)
     font.letterSpacing: 1.2
     font.capitalization: Font.AllUppercase
     color: Theme.dim

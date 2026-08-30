@@ -22,8 +22,11 @@ Item {
 
     ColumnLayout {
         anchors.centerIn: parent
-        width: Math.min(420, root.width - 48)
-        spacing: 14
+        // ⚠️ Fits the window it is given: on a 1024x600 netbook a fixed 420 px
+        // form with fixed spacing runs off the bottom, and the Connect button -
+        // the only control on the screen - is the part that goes.
+        width: Math.min(Theme.u(420), root.width - Theme.u(48))
+        spacing: Math.min(Theme.u(14), Math.max(Theme.u(6), root.height / 40))
 
         // Wordmark. BRAND.md: HAM in text, DECK in the accent — and inside the
         // app the accent is CYAN, not amber, matching the surrounding UI.
@@ -33,22 +36,22 @@ Item {
             Text {
                 text: "HAM"
                 font.family: Theme.display; font.weight: Font.Bold
-                font.pixelSize: 34; font.letterSpacing: 1.4
+                font.pixelSize: Theme.f(34); font.letterSpacing: 1.4
                 color: Theme.text
             }
             Text {
                 text: "DECK"
                 font.family: Theme.display; font.weight: Font.Bold
-                font.pixelSize: 34; font.letterSpacing: 1.4
+                font.pixelSize: Theme.f(34); font.letterSpacing: 1.4
                 color: Theme.cyan
             }
         }
 
         Text {
             Layout.alignment: Qt.AlignHCenter
-            Layout.bottomMargin: 6
+            Layout.bottomMargin: Theme.u(6)
             text: "Connect to a HamDeck host"
-            font.family: Theme.body; font.pixelSize: 12
+            font.family: Theme.body; font.pixelSize: Theme.f(12)
             color: Theme.dim
         }
 
@@ -87,8 +90,8 @@ Item {
 
         PanelKey {
             Layout.fillWidth: true
-            Layout.preferredHeight: 44
-            Layout.topMargin: 4
+            Layout.preferredHeight: Theme.u(44)
+            Layout.topMargin: Theme.u(4)
             text: backend.connecting ? "Connecting…" : "Connect"
             lit: !backend.connecting
             enabledKey: !backend.connecting
@@ -100,22 +103,22 @@ Item {
         // "login failed" leaves an operator retrying into the lockout.
         Text {
             Layout.fillWidth: true
-            Layout.topMargin: 2
+            Layout.topMargin: Theme.u(2)
             visible: backend.lastError !== ""
             text: backend.lastError
             wrapMode: Text.WordWrap
             horizontalAlignment: Text.AlignHCenter
-            font.family: Theme.body; font.pixelSize: 12
+            font.family: Theme.body; font.pixelSize: Theme.f(12)
             color: Theme.txRed
         }
 
         Text {
             Layout.fillWidth: true
-            Layout.topMargin: 8
+            Layout.topMargin: Theme.u(8)
             horizontalAlignment: Text.AlignHCenter
             text: "Pre-release · tested against one radio · this controls a transmitter"
             wrapMode: Text.WordWrap
-            font.family: Theme.body; font.pixelSize: 10
+            font.family: Theme.body; font.pixelSize: Theme.f(10)
             color: Theme.dim
         }
     }
