@@ -15,8 +15,10 @@ FetchContent_Declare(httplib
   GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(httplib)
 
-add_executable(hamdeck-host src/main.cpp src/cat_sim.cpp src/radio.cpp)
-target_link_libraries(hamdeck-host PRIVATE httplib::httplib)
+find_package(OpenSSL REQUIRED)
+
+add_executable(hamdeck-host src/main.cpp src/api.cpp src/cat_sim.cpp src/radio.cpp src/auth.cpp)
+target_link_libraries(hamdeck-host PRIVATE httplib::httplib OpenSSL::Crypto)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
 
 # CI must RUN things, not just build them (CARRYOVER.md section 8): the .NET
@@ -24,3 +26,7 @@ target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
 enable_testing()
 add_executable(test_staleness tests/test_staleness.cpp src/cat_sim.cpp src/radio.cpp)
 add_test(NAME staleness COMMAND test_staleness)
+
+add_executable(test_auth tests/test_auth.cpp src/auth.cpp)
+target_link_libraries(test_auth PRIVATE OpenSSL::Crypto)
+add_test(NAME auth COMMAND test_auth)

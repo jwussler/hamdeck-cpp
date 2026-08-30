@@ -159,9 +159,7 @@ Most of those routes are thin CAT wrappers, so this is not 141 hand-written hand
    forever, since CI will never have a radio.
 2. **Status cache + 200 ms poller** ✅ done. `/api/status` served entirely from cache.
 3. **Declarative route table** — build the table, not 141 functions.
-4. **Auth/session.** Only `/api/health` and `/api/auth/status` are ever anonymous
-   (`AlwaysAnonymousRoutes` in `ApiServer.cs`); `allow_anonymous_status` gates the
-   read-only set. Cookie, `?token=`, `Bearer`.
+4. **Auth/session** ✅ done. See below.
 5. **WebSocket** `/ws` and `/ws/tx` — httplib has none, so framing is hand-rolled.
    Testable with synthetic audio.
 6. **systemd unit + CI that runs the binary.**
@@ -188,6 +186,46 @@ a working measurement.**
 
 The real test (`tests/test_staleness.cpp`, run by ctest) stops the poller and watches the
 cache age: `running: 99ms` → `stopped: 2200ms stale=true` against a 1500 ms threshold.
+
+## Auth — done, and verified against the live host (08/30/2026)
+
+The hash format is a **compatibility contract**, not an implementation detail:
+
+```
+pbkdf2:<16-byte salt, lowercase hex>:<32-byte hash, lowercase hex>
+PBKDF2-HMAC-SHA256, 350000 iterations
+```
+
+Change any parameter and every stored credential silently stops working.
+
+**The test that matters is interop, not round-trip.** `tests/test_auth.cpp` verifies a hash
+produced by an *independent* PBKDF2 implementation (Python `hashlib`). A round-trip of our
+own hasher against our own verifier would pass even if every parameter were wrong — it
+proves the code is self-consistent, not that it is compatible. It is in the suite second,
+for what little it is worth.
+
+Behaviour confirmed against the VM and then matched:
+
+| | |
+|---|---|
+| anonymous on the LAN port | **only** `/api/health` and `/api/auth/status` — everything else 401 |
+| `allow_anonymous_status` | **off** on the live station (`/api/status` returns 401 on :5002) |
+| token transports | cookie `hamdeck_session`, then `Authorization: Bearer`, then `?token=` — in that order |
+| login response | token in **Set-Cookie**, never the body; `HttpOnly; SameSite=Strict; Max-Age=28800` |
+| throttle | 5 failures → 5 minute lockout |
+| failure delay | 500 ms on every rejection, so "no such user" and "wrong password" cost the same |
+| 401 body | byte-for-byte identical to the C# host |
+
+**The gate defaults to DENY and runs before routing.** `/api/ptt/on` does not exist yet and
+already answers 401 rather than 404, so every route added from here is protected unless
+somebody deliberately lists it as anonymous. The opposite default — open unless remembered
+— is the shape that leaks, because it fails open every time somebody forgets. Same reasoning
+as building a scope lock into a tool instead of trusting the operator to remember it.
+
+**Deliberately NOT implemented:** the C# host transparently upgrades legacy bare-SHA256
+hashes to PBKDF2 on successful login. Whether any such hash still exists on the station is
+unknown, and inventing a second accepted hash format on a guess widens the auth surface for
+no reason. Ask before adding it.
 
 ## Open decisions (Joe's, not mine)
 
