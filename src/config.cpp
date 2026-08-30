@@ -3,7 +3,9 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <system_error>
 #include <sstream>
 
 using nlohmann::json;
@@ -36,9 +38,27 @@ bool Config::Load(const std::string& path, Config& out, std::string& error) {
   // also made one of these tests pass for the wrong reason: a rejected value from
   // an earlier load was still present and tripped a different check.
   Config cfg;
+  // ⚠️ "MISSING" AND "UNREADABLE" ARE NOT THE SAME THING.
+  // A missing config is fine - the defaults are usable. A config that EXISTS but
+  // cannot be read is a permissions mistake, and treating it as absent means the
+  // station quietly runs on defaults while the operator's real settings sit on
+  // disk being ignored. That is exactly the failure the malformed-file rule
+  // exists to prevent, arriving through a different door.
+  //
+  // Found on deployment: the service ran as one user with the config owned 640
+  // by another, came up on the SIMULATOR with no users configured, and said
+  // nothing about it.
+  {
+    std::error_code ec;
+    const bool exists = std::filesystem::exists(path, ec);
+    if (!exists) {
+      error = "not found";
+      return false;
+    }
+  }
   std::ifstream f(path);
   if (!f) {
-    error = "not found";
+    error = "exists but cannot be read - check ownership and permissions";
     return false;
   }
   std::stringstream buf;

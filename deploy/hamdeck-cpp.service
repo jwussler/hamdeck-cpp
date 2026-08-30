@@ -27,13 +27,31 @@ TimeoutStopSec=10
 
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
 ProtectHome=true
-# The radio: serial port and the USB codec. Needed once the real CAT and ALSA
-# backends land; harmless before then.
-DeviceAllow=char-tty rw
-DeviceAllow=char-alsa rw
+
+# ⚠️ NO DeviceAllow LINES, DELIBERATELY.
+#
+# An earlier version had `DeviceAllow=char-tty rw`. Two things were wrong with
+# it, and together they stopped the host reaching the radio at all:
+#
+#   1. `char-tty` is major 4/136 - REAL terminals. A USB serial port is major
+#      188 and is not covered by it.
+#   2. Specifying ANY DeviceAllow flips systemd to a closed device policy, so
+#      everything not listed is denied. The narrow rule did not just fail to
+#      help, it actively blocked the port.
+#
+# The symptom was a host that read its config, then exited 1 on every restart
+# with "could not open CAT device" while the same user could open that device
+# by hand from a shell.
+#
+# Access is granted the ordinary way instead: group membership. The device nodes
+# are root:dialout and root:audio, and this is what those groups are for.
 SupplementaryGroups=dialout audio
+
+# ProtectSystem is deliberately NOT strict: the host writes nothing outside its
+# own state, but strict has surprised this unit once already and a station host
+# failing closed on a hardening flag is a worse outcome than the flag's benefit.
+ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target
