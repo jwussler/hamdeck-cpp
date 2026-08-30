@@ -12,15 +12,25 @@ Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anythin
 
 ## 1. Status at a glance
 
+> **End of 08/30/2026: see `DAY-08-30-2026.md`** for the full day across all three
+> repos, including the .NET and brand work that is not recorded here.
+
 | | |
 |---|---|
-| **Host** | complete except what needs the radio attached |
-| **Client** | Qt panel: connects, live status, rig control, RX **and TX** audio. No PTT-off, no hotkey |
-| **Route coverage** | **131 of 141** exact routes + all **18** prefix families |
-| **Tests** | 8 host (ctest) + client selftest, all green |
+| **Host** | **running the station.** The .NET server VM is shut down |
+| **Client** | QML panel: connects, live status, rig control, RX **and TX** audio, PTT hotkey, admin |
+| **Route coverage** | **140 of 141** exact routes + all **18** prefix families (DX cluster only, which 404s on the reference too) |
+| **Tests** | **11 host (ctest)**, all green |
 | **Parity** | 25/25 with 5 listed deliberate divergences |
-| **Verification** | 50/50 driven routes read back from the rig, 46/46 smoke, 25/25 parity, keypad and VFO-lock walked |
-| **Radio** | never attached yet — everything below was built and proven against a simulator |
+| **Verification** | 12/12 read-only, 50/50 driven routes read back from the rig, 46/46 smoke, 7/7 honest-absence, keypad and VFO-lock walked |
+| **Radio** | **attached and operating.** §4b records the six CAT bugs only hardware found |
+
+### Deploying — use `tools/deploy.sh`, not `sync.sh`
+⚠️ `sync.sh` builds on the VM and **installs nothing**. On 08/30 the service ran a binary
+from hours earlier while new routes were being "verified" against it; they 404'd, which is
+the only reason it was caught. `tools/deploy.sh` runs the suite, installs, restarts, and
+then compares the build id the **running service** reports (`/api/build`) against the
+binary it just installed. It is proven to fail on a stale binary.
 
 ### Backups — because there is no remote yet
 `tools/backup.sh` bundles the whole repo, **verifies the bundle**, copies it to a second
