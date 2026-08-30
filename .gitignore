@@ -1,3 +1,4 @@
 build/
+*/build/
 # Station-specific operational detail. NEVER commit this - the repo is public.
 SITE.md
