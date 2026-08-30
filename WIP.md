@@ -605,10 +605,39 @@ pass while the app threw away where they put it.
 0,0" case silently ran the *fresh* path and reported a pass. Same shape as everything in §8d:
 **it was caught by reading the number, not by the test failing.**
 
+### ⚠️ The gate passed 6/6 while measuring almost nothing
+The first version of `placement_check.sh` went green in CI and was wrong twice over. Both are
+worth keeping, because both read exactly like a working measurement:
+
+1. **`xwininfo -id <client> -frame` returns the CLIENT rectangle.** The flag reads like it asks
+   for the frame; it does not. So the script that existed to check the decoration never looked
+   at a decoration — it re-checked the client rect, which the unit test already covers. It now
+   reads **`_NET_FRAME_EXTENTS`**, the window manager's own statement of how far the decoration
+   extends on each side, and **fails if that property is absent** rather than reporting ok on a
+   number it never took.
+2. **`QSettings` honours `XDG_CONFIG_HOME` over `HOME`.** Setting `HOME` alone works on a box
+   where `XDG_CONFIG_HOME` is unset and does nothing on a GitHub runner, where it is set — so
+   in CI the two *saved-geometry* cases silently ran the **fresh** path and passed. The script
+   sets both now, and each saved case **asserts the saved size came back** (900 wide; no default
+   produces that), so a settings file the app never read is a failure instead of a green tick.
+
+⚠️ And with the decoration finally being measured, it found a **second bug in the fix**: a
+window whose client area starts at `x=0` has its **left border at −1**. Only the top had been
+reserved. `PlaceWindow` reserves a border on the left, right and bottom as well — on Windows
+the invisible resize border is about 8 px, so the edge you grab to resize was off the screen
+even with the title bar visible.
+
+⚠️ One assertion was itself too strict: a saved 900x800 **legitimately** clamps to 900x560 on a
+1024x600 screen, and asserting the height came back at 800 failed the tool for behaving
+correctly. Width is the tell; height is a bound.
+
 ### Measured 08/30/2026, after the fix
-Frame fully on screen at 1024x600, 1366x768, 1920x1080 and 2560x1440 on a first run (centred,
-title bar clear); a saved `0,0` restored to `y=48`; a saved `3200,400` from a vanished monitor
-re-centred. 9/9 placement cases, 3/3 client tests, and the resolution walk still clean.
+**Frame including decoration** (`_NET_FRAME_EXTENTS`, openbox, 20 px title bar) fully on screen
+at 1024x600, 1366x768, 1920x1080 and 2560x1440 on a first run — centred, e.g. client `432,84`
+with the frame at `431,64`. A saved `0,0` restored to client `10,48`, frame `9,28`. A saved
+`3200,400` from a vanished monitor re-centred. A saved 900x800 on a 1024x600 screen clamped to
+900x560 and still fully framed. **12/12 placement cases, 3/3 client tests**, and the resolution
+walk still clean.
 
 ⚠️ **Windows is still unwatched.** No one here has seen the window open on Windows — the
 placement logic is defensive and the maths is tested, but that is not the same claim.

@@ -94,6 +94,28 @@ int main() {
         Check("a good saved position is left alone", g == saved, g);
     }
 
+    // ⚠️ A decoration has FOUR sides, and only the top was reserved at first.
+    // Measured under openbox: a client area at x=0 puts the left border at -1,
+    // and on Windows the invisible resize border is about 8 px - so the edge
+    // you grab to resize the window is off the screen.
+    {
+        const QRect avail(0, 0, 1920, 1040);
+        const QRect g = PlaceWindow(QRect(0, 0, 900, 800), avail, 1.0);
+        Check("a saved x=0 leaves room for the left border", g.x() >= 8, g);
+    }
+    {
+        const QRect avail(0, 0, 1920, 1040);
+        const QRect g = PlaceWindow(QRect(1100, 300, 900, 800), avail, 1.0);
+        Check("the right border stays on screen too",
+              g.x() + g.width() + 8 <= avail.right() + 1, g);
+    }
+    {
+        const QRect avail(0, 0, 1920, 1040);
+        const QRect g = PlaceWindow(QRect(200, 900, 900, 800), avail, 1.0);
+        Check("the bottom border stays on screen too",
+              g.y() + g.height() + 8 <= avail.bottom() + 1, g);
+    }
+
     std::printf(failures ? "PLACEMENT FAILED\n" : "PLACEMENT PASSED\n");
     return failures ? 1 : 0;
 }

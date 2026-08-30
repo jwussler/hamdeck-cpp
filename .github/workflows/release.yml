@@ -59,6 +59,7 @@ jobs:
           done
           ./tools/placement_check.sh 1920x1080 saved-at-origin || exit 1
           ./tools/placement_check.sh 1920x1080 saved-offscreen || exit 1
+          ./tools/placement_check.sh 1024x600  saved-at-origin || exit 1
       - uses: actions/upload-artifact@v4
         with: { name: hamdeck-linux-deb, path: client/build/*.deb }
 
