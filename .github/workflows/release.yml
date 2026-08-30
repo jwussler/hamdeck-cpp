@@ -95,7 +95,17 @@ jobs:
         with: { name: hamdeck-windows-installer, path: packaging/Output/*.exe }
 
   macos:
-    runs-on: macos-latest
+    # ⚠️ NOT VERIFIED BY ANYONE. Nobody in this project has a Mac to run the
+    # result on, and CARRYOVER.md section 8 is about shipping a binary nobody
+    # started. This job exists to catch PORTABILITY breaks in the source, not to
+    # produce an artifact anybody should install - so it does not block a
+    # release, and it uploads nothing.
+    #
+    # macos-13 rather than macos-latest: the arm64 runner's SDK has dropped the
+    # AGL framework that this Qt build still links against, which fails at the
+    # link step for environment reasons rather than anything in the code.
+    continue-on-error: true
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
       - uses: jurplel/install-qt-action@v4
@@ -112,5 +122,5 @@ jobs:
       - name: Run the binary
         run: |
           QT_QPA_PLATFORM=offscreen ./client/build/hamdeck-qml --selftest
-      - uses: actions/upload-artifact@v4
-        with: { name: hamdeck-macos-app, path: client/build/hamdeck-qml }
+      # Deliberately no upload: see the note on this job. An artifact nobody has
+      # run is worse than no artifact, because somebody will install it.

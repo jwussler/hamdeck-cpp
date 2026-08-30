@@ -56,7 +56,13 @@ qt_add_executable(hamdeck-qml
 target_link_libraries(hamdeck-qml PRIVATE
     Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets Qt6::Multimedia
     Qt6::Quick Qt6::QuickControls2 Qt6::Qml)
-target_compile_options(hamdeck-qml PRIVATE -Wall -Wextra)
+# ⚠️ MSVC does not understand GCC/Clang warning flags and treats -Wextra as an
+# invalid numeric argument, failing the whole build. Guard them by compiler.
+if(MSVC)
+    target_compile_options(hamdeck-qml PRIVATE /W3)
+else()
+    target_compile_options(hamdeck-qml PRIVATE -Wall -Wextra)
+endif()
 
 add_test(NAME qml_selftest COMMAND hamdeck-qml --selftest)
 set_tests_properties(qml_selftest PROPERTIES
@@ -96,5 +102,9 @@ libqt6websockets6, libqt6multimedia6, qml6-module-qtqml, \
 qml6-module-qtqml-workerscript, qml6-module-qtquick, \
 qml6-module-qtquick-controls, qml6-module-qtquick-layouts, \
 qml6-module-qtquick-templates, qml6-module-qtquick-window")
-include(${CMAKE_CURRENT_SOURCE_DIR}/../packaging/CPack.cmake)
-include(CPack)
+# .deb packaging is Linux-only. Including it elsewhere configures a generator
+# that cannot run and clutters the build with irrelevant warnings.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    include(${CMAKE_CURRENT_SOURCE_DIR}/../packaging/CPack.cmake)
+    include(CPack)
+endif()
