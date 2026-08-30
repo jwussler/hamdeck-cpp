@@ -635,6 +635,61 @@ shutting down. *Measure the duration; do not infer a hang from one early look.*
 - The **CAT proxy** (`cat_proxy_enabled`, rigctld-style TCP passthrough).
 - The static web UI the reference host serves from `wwwroot`.
 
+## The Qt client
+
+`client/`, Qt 6 + CMake, building alongside the host. Chosen because the hard part of this
+project is the audio path — latency, buffer depth, the PTT tail — which needs native audio,
+and because WPF cannot cross-compile (CARRYOVER.md section 7), which is why the .NET client is
+Windows-only and needs a Windows CI runner. Qt gives one source for Windows, Linux and macOS
+in the same language as the host.
+
+**Rejected, with reasons:** a browser client cannot be the primary panel — `getUserMedia`
+requires a secure context, so the microphone is blocked over plain HTTP on a LAN address, and
+a browser cannot hold a global PTT hotkey when unfocused. Tauri/Electron would add a second
+toolchain for a UI whose hard part is audio, where native wins. A browser PWA is still the
+right answer for a *phone monitor*, once the hostname has TLS.
+
+### Section 6 traps, designed in rather than discovered
+- **Audio devices by NAME, never index** — indices shift when USB devices come and go.
+  A remembered device that has gone falls back to the **system default**, never to "the first
+  in the list", which is arbitrary.
+- **Settings outside the install directory** (`QSettings`, user scope) so updates cannot
+  overwrite them, and **no password is ever stored** — if an older build wrote one, `Load()`
+  removes it.
+- **No default host.** Verified by grep: no address appears anywhere in `client/src`.
+- **Window geometry clamped to the work area and re-centred** if it would land off-screen. A
+  window taller than the display puts its title bar out of reach and the app cannot be closed.
+- **Unknown flags abort.**
+
+### Things the panel does that a naive client would not
+- **The PTT button reflects the RIG's `tx` state**, never its own checked state. A button that
+  looks keyed while the rig is not is worse than no indicator.
+- **RX is muted from the rig's `tx`**, so every PTT source behaves alike, and the queue is
+  dropped on unmute so the operator returns to LIVE audio rather than a replay of themselves
+  (CARRYOVER.md section 4c, delayed auditory feedback).
+- **It counts down the HOST's watchdog** using `tx_timeout_in` instead of inventing its own.
+- **`stale` is shown, not hidden** — the readout greys and says so. The host reports
+  `cache_age_ms` precisely because a stale frequency once looked live for hours.
+- **"arriving" and "playing" are reported separately.** A stream that arrives but is not
+  audible is a *device* problem; one that does not arrive is a *link or auth* problem.
+  Collapsing both into "no audio" sends people to the wrong fix.
+
+### ⚠️ QWebSocket does not share the REST cookie jar
+The audio stream was refused at the upgrade and the panel simply had no receiver. The session
+token is now pulled from the cookie jar and passed as `?token=` — which is exactly why the
+host accepts that transport, since a browser cannot set headers on a WebSocket handshake
+either.
+
+### Verified by LOOKING at it
+`--screenshot` connects, waits for real poll data, renders the window to a PNG and exits. On a
+headless build box that is the only way to inspect what the panel actually draws, and claiming
+a UI works without looking at it is guessing. Captured: **7.200.000 / LSB / VFO A / 100 W**
+driven through the API, `cache 176 ms`, and **`audio: 43.1 KiB/s in (no playable device)`** —
+the exact rate CARRYOVER.md section 3 records from the live station, arriving in the client,
+with an honest note that this VM has no sound card.
+
+`--selftest` runs under `QT_QPA_PLATFORM=offscreen` in ctest, because CI must run the binary.
+
 ## ⚠️ A test that cannot fail is not a test
 
 The obvious staleness check — `SIGSTOP` the process, re-query — is worthless. It freezes the
