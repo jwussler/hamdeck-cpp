@@ -1,0 +1,108 @@
+name: release
+
+# Builds the client for each platform ON that platform.
+#
+# ⚠️ EVERY JOB RUNS THE BINARY BEFORE PACKAGING IT. A green build proves the code
+# compiles and proves nothing about whether the program starts - the .NET client
+# shipped a release that could not launch at all while every test passed
+# (CARRYOVER.md section 8). `--selftest` walks the startup path and exits, and it
+# runs under a timeout because a hang is a failure too.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq cmake ninja-build \
+            qt6-base-dev qt6-declarative-dev qt6-websockets-dev qt6-multimedia-dev \
+            qml6-module-qtquick qml6-module-qtquick-controls \
+            qml6-module-qtquick-layouts qml6-module-qtquick-templates \
+            qml6-module-qtquick-window libasound2-dev libssl-dev
+      - name: Build
+        run: |
+          cmake -S client -B client/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build client/build
+      - name: Test
+        run: ctest --test-dir client/build --output-on-failure
+      - name: Run the binary
+        run: QT_QPA_PLATFORM=offscreen timeout 60 ./client/build/hamdeck-qml --selftest
+      - name: Package
+        run: cd client/build && cpack -G DEB
+      # ⚠️ Verify the ARTIFACT, not the build: install the package and run what
+      # it installed, from the path it installed to.
+      - name: Install the package and run what it installed
+        run: |
+          sudo apt-get install -y -qq ./client/build/*.deb
+          QT_QPA_PLATFORM=offscreen timeout 60 /usr/bin/hamdeck-qml --selftest
+      - uses: actions/upload-artifact@v4
+        with: { name: hamdeck-linux-deb, path: client/build/*.deb }
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.1'
+          modules: 'qtwebsockets qtmultimedia qtdeclarative'
+      - name: Build
+        run: |
+          cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build client/build --config Release
+      - name: Run the binary
+        shell: pwsh
+        run: |
+          # ⚠️ On Windows this is the check that matters: a Qt app missing its
+          # platform plugin exits silently with no window and no message.
+          $p = Start-Process -FilePath "client\build\Release\hamdeck-qml.exe" `
+               -ArgumentList "--selftest" -NoNewWindow -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "selftest failed: $($p.ExitCode)" }
+      - name: Stage the Qt runtime beside the binary
+        shell: pwsh
+        run: |
+          mkdir packaging\deploy
+          copy client\build\Release\hamdeck-qml.exe packaging\deploy\
+          # windeployqt pulls in the platform plugin, the QML modules and the
+          # Qt DLLs. Without --qmldir it misses the QML imports entirely and the
+          # app launches to a blank window.
+          windeployqt --qmldir client\qml --release packaging\deploy\hamdeck-qml.exe
+      - name: Run it again from the staged directory
+        shell: pwsh
+        run: |
+          # Proves the DEPLOYED tree works, not just the build tree - which is
+          # where the platform-plugin failure actually shows up.
+          $p = Start-Process -FilePath "packaging\deploy\hamdeck-qml.exe" `
+               -ArgumentList "--selftest" -NoNewWindow -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "deployed selftest failed: $($p.ExitCode)" }
+      - name: Installer
+        run: iscc packaging\hamdeck.iss
+        shell: cmd
+      - uses: actions/upload-artifact@v4
+        with: { name: hamdeck-windows-installer, path: packaging/Output/*.exe }
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.1'
+          modules: 'qtwebsockets qtmultimedia qtdeclarative'
+      - name: Build
+        run: |
+          cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build client/build
+      - name: Run the binary
+        run: |
+          QT_QPA_PLATFORM=offscreen ./client/build/hamdeck-qml --selftest
+      - uses: actions/upload-artifact@v4
+        with: { name: hamdeck-macos-app, path: client/build/hamdeck-qml }

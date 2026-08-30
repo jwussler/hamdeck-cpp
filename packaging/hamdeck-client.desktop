@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=HamDeck
+GenericName=Remote HF radio control
+Comment=Operate an HF station over the network
+Exec=hamdeck-qml
+Icon=hamdeck
+Terminal=false
+Categories=HamRadio;Network;Audio;
+Keywords=amateur radio;ham;HF;CAT;transceiver;
