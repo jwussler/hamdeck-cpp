@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QMainWindow>
+#include <QMap>
 #include <QPushButton>
 #include <QSlider>
 
@@ -52,6 +53,12 @@ class MainWindow : public QMainWindow {
   QLabel* swr_label_ = nullptr;
   QLabel* alc_label_ = nullptr;
   QLabel* pwr_label_ = nullptr;
+  QLabel* buffer_label_ = nullptr;
+  // DSP toggles, keyed by the /api/status/full field they reflect. They show the
+  // RIG's state, never their own click history - a button that latches on click
+  // lies whenever the command fails or another client changes it.
+  QMap<QString, QPushButton*> dsp_;
+  QPushButton* agc_button_ = nullptr;
   bool tx_ = false;
   bool stale_ = false;
 };

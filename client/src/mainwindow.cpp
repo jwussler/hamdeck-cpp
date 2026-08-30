@@ -7,6 +7,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonArray>
+#include <QPair>
 #include <QScreen>
 #include <QStatusBar>
 #include <QVBoxLayout>
@@ -143,6 +144,67 @@ QWidget* MainWindow::BuildPanel() {
   }
   outer->addWidget(vfo);
 
+  // ── Receiver / DSP ─────────────────────────────────────────────────────────
+  auto* dsp = new QGroupBox("Receiver");
+  auto* dl = new QHBoxLayout(dsp);
+  struct DspSpec { const char* label; const char* field; const char* toggle; };
+  static const DspSpec kDsp[] = {
+      {"NB",    "nb",     "/api/nb/toggle"},
+      {"NR",    "nr",     "/api/nr/toggle"},
+      {"NOTCH", "notch",  "/api/notch/toggle"},
+      {"ATT",   "att",    "/api/att/toggle"},
+      {"VOX",   "vox",    "/api/vox/toggle"},
+      {"COMP",  "comp",   "/api/comp/toggle"},
+      {"MON",   "mon",    "/api/mon/toggle"},
+      {"RIT",   "rit",    "/api/rit/toggle"},
+  };
+  for (const auto& d : kDsp) {
+    auto* b = Btn(d.label, 62);
+    b->setCheckable(true);
+    const QString path = d.toggle;
+    connect(b, &QPushButton::clicked, this, [this, path, b] {
+      // Do NOT let the button keep its own checked state: re-assert it from the
+      // rig on the next poll. Until then it may briefly disagree, which is
+      // better than latching to a state the radio never reached.
+      api_.Get(path);
+    });
+    dsp_[d.field] = b;
+    dl->addWidget(b);
+  }
+  agc_button_ = Btn("AGC —", 84);
+  connect(agc_button_, &QPushButton::clicked, this,
+          [this] { api_.Get("/api/agc/cycle"); });
+  dl->addWidget(agc_button_);
+  outer->addWidget(dsp);
+
+  // ── Frequency entry ────────────────────────────────────────────────────────
+  auto* keypad = new QGroupBox("Frequency entry");
+  auto* kl = new QHBoxLayout(keypad);
+  buffer_label_ = new QLabel("");
+  QFont bf("monospace", 16, QFont::Bold);
+  buffer_label_->setFont(bf);
+  buffer_label_->setMinimumWidth(120);
+  buffer_label_->setAlignment(Qt::AlignCenter);
+  buffer_label_->setStyleSheet(
+      QString("color:%1; background:#0d0f12; border:1px solid %2; border-radius:4px;"
+              "padding:4px;").arg(theme::kReadout, theme::kEdge));
+  kl->addWidget(buffer_label_);
+  for (int d = 0; d <= 9; ++d) {
+    auto* b = Btn(QString::number(d), 34);
+    connect(b, &QPushButton::clicked, this,
+            [this, d] { api_.Get(QString("/api/freq/digit/%1").arg(d)); });
+    kl->addWidget(b);
+  }
+  for (const auto& pair : QList<QPair<QString, QString>>{
+           {"⌫", "/api/freq/backspace"}, {"CLR", "/api/freq/clear"},
+           {"GO", "/api/freq/send"}}) {
+    auto* b = Btn(pair.first, 44);
+    const QString path = pair.second;
+    connect(b, &QPushButton::clicked, this, [this, path] { api_.Get(path); });
+    kl->addWidget(b);
+  }
+  outer->addWidget(keypad);
+
   // ── Transmit ───────────────────────────────────────────────────────────────
   auto* tx = new QGroupBox("Transmit");
   auto* tl = new QHBoxLayout(tx);
@@ -263,6 +325,13 @@ void MainWindow::ApplyStatus(const QJsonObject& s) {
   vfo_label_->setText("VFO " + s.value("vfo").toString("—"));
   power_label_->setText(QString("%1 W").arg(s.value("power").toInt()));
 
+  // The host owns the frequency-entry buffer, so every client sees the same
+  // digits - including ones typed on another client's keypad.
+  if (buffer_label_) {
+    const QString buf = s.value("freq_buffer").toString();
+    buffer_label_->setText(buf.isEmpty() ? "—" : buf);
+  }
+
   const bool tx = s.value("tx").toBool();
   if (tx != tx_) {
     tx_ = tx;
@@ -288,7 +357,16 @@ void MainWindow::ApplyStatus(const QJsonObject& s) {
   }
 }
 
-void MainWindow::ApplyStatusFull(const QJsonObject&) {}
+void MainWindow::ApplyStatusFull(const QJsonObject& f) {
+  // Every toggle reflects the RIG. If another client - or the front panel -
+  // changes something, this follows within a poll rather than disagreeing.
+  for (auto it = dsp_.begin(); it != dsp_.end(); ++it) {
+    if (f.contains(it.key())) it.value()->setChecked(f.value(it.key()).toBool());
+  }
+  if (f.contains("agc")) {
+    agc_button_->setText("AGC " + f.value("agc").toString());
+  }
+}
 
 void MainWindow::ApplyMeters(const QJsonObject& m) {
   smeter_->SetValue(m.value("s_meter").toInt());
