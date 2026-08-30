@@ -16,6 +16,7 @@
 #include "http.h"
 #include "auth.h"
 #include "cat_sim.h"
+#include "serial_cat.h"
 #include "radio.h"
 #include "version.h"
 
@@ -60,7 +61,11 @@ int main(int argc, char** argv) {
     } else {
       // Unknown flags abort rather than being ignored. Silently accepting a
       // misspelled flag is how a safety option gets quietly disabled.
-      std::cerr << "unknown argument: " << arg << "\nusage: hamdeck-host [--selftest]\n";
+      std::cerr << "unknown argument: " << arg
+                << "\nusage: hamdeck-host [--selftest]\n"
+                   "  HAMDECK_CAT_DEVICE=<path>|auto   talk to the radio "
+                   "(default: simulated rig)\n"
+                   "  HAMDECK_ADMIN_HASH=pbkdf2:...    admin credential\n";
       return 2;
     }
   }
@@ -71,10 +76,37 @@ int main(int argc, char** argv) {
   // needs ignoring, so a dropped client cannot kill the host.
   std::signal(SIGPIPE, SIG_IGN);
 
-  // Simulated rig: the real CAT bridge is passed through to the reference host and the
-  // station is on the air. The backend is named in the banner so a simulator
-  // reading is never mistaken for the radio.
-  RadioPoller poller(std::make_unique<SimulatedRig>());
+  // ⚠️ THE DEFAULT IS THE SIMULATOR, DELIBERATELY.
+  // Talking to the radio has to be asked for. A host that hunts for a serial port
+  // on startup would grab the CAT link the moment it ran anywhere near the
+  // station - including on a laptop, in CI, or on a box that was only meant to be
+  // built on. Set HAMDECK_CAT_DEVICE to a device path, or "auto" to probe the
+  // usual candidates with ID; and nothing else.
+  //
+  // The backend is named in the banner and in /api/health's describe path, so a
+  // simulator reading is never mistaken for the radio.
+  std::unique_ptr<CatTransport> cat;
+  if (const char* dev = std::getenv("HAMDECK_CAT_DEVICE")) {
+    auto serial = std::make_unique<SerialCat>();
+    const bool ok =
+        (std::string(dev) == "auto")
+            ? serial->OpenFirstResponding({"/dev/ttyUSB0", "/dev/ttyUSB1"})
+            : serial->Open(dev);
+    if (!ok) {
+      // Fail loudly and exit. Falling back to the simulator here would be the
+      // worst possible behaviour: the host would come up looking healthy and
+      // report a rig that is not there.
+      std::cerr << "FATAL: could not open CAT device '" << dev
+                << "'. Not falling back to the simulator - a host that reports a "
+                   "rig it cannot reach is worse than one that refuses to start.\n";
+      return 1;
+    }
+    std::cout << "CAT: " << serial->Describe() << '\n' << std::flush;
+    cat = std::move(serial);
+  } else {
+    cat = std::make_unique<SimulatedRig>();
+  }
+  RadioPoller poller(std::move(cat));
   poller.Start();
 
   AuthService auth(480);

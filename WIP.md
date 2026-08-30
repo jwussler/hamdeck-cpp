@@ -66,8 +66,8 @@ thin CAT wrappers, so this is not 141 hand-written handlers.
 
 ### Needs the radio.
 
-7. **Real CAT serial**, 38400, probing **only** with `ID;`. Never probe with a control route
-   — doing that once changed the operating mode mid-session.
+7. **Real CAT serial** ✅ **written and tested without the radio** — see below. This is the
+   cutover gate, and it is now met.
 8. **ALSA via libasound** rather than `arecord`/`aplay` subprocesses — the actual point of
    the port — plus `/proc/asound` delay, adaptive buffering, PTT tail-wait, RX mute on TX.
 
@@ -285,6 +285,59 @@ a safety option gets quietly disabled.
 `deploy/hamdeck-cpp.service` carries no hostname or credential; the admin hash comes from an
 environment file outside the repo. `KillSignal=SIGTERM` with a 10 s stop timeout is
 deliberate given the earlier unkillable-process bug.
+
+## Serial CAT — written and proven with no radio attached
+
+`SerialCat` is done and tested through a **pty with a fake rig on the far end**, which is the
+whole reason it was written before the hardware window: every failure below is far cheaper to
+find here than with the station off the air.
+
+Proven (`tests/test_serial.cpp`, in ctest):
+
+| | |
+|---|---|
+| probe | finds the CAT port by **asking with `ID;`**, skipping a dead candidate first |
+| read | fixed-width reply parsed correctly |
+| chunked | a reply dribbled out byte by byte is reassembled, not truncated at the first `read()` |
+| trailing | returns only the first `;`-terminated reply, ignoring what follows |
+| **no-slip** | a stale reply is never returned as the answer to a later command |
+| timeout | an unanswered command returns `nullopt` in ~249 ms and **does not hang** |
+| exclusive | a second opener is refused |
+| baud | an unsupported rate is refused, not silently substituted |
+
+### ⚠️ The reply-slip bug is the one that would have been nasty
+Without flushing input before each command, a leftover reply from a previous timed-out
+command comes back as the answer to *this* one — and then every subsequent reply is off by
+one, **each individually plausible**. A frequency that is really the mode, a mode that is
+really the power. It would look like a flaky radio.
+
+### ⚠️ Exclusive access, failing closed
+The .NET host and this one both want the same port. Two processes interleaving commands on
+one CAT link produce replies attributed to the wrong command — a fault that looks like the
+radio and is nearly impossible to diagnose from either side. `flock(LOCK_EX|LOCK_NB)`, and a
+refusal to share.
+
+### ⚠️ The default is the SIMULATOR, and there is no fallback to it
+Talking to the radio must be asked for: `HAMDECK_CAT_DEVICE=<path>|auto`. A host that hunted
+for a serial port on startup would grab the CAT link the moment it ran anywhere near the
+station — on a laptop, in CI, on a box meant only for building.
+
+And when a device **is** named and cannot be opened, the host **exits 1**. It does not fall
+back to the simulator. A host that comes up looking healthy while reporting a rig it cannot
+reach is worse than one that refuses to start — that is the `/api/record/start` lie in a
+more dangerous place.
+
+## 🎯 THE CUTOVER GATE IS MET
+
+Everything that can be built without the radio is built. The next step is the hardware
+window, and it should be spent on what only the radio can show: `/proc/asound` delay,
+adaptive buffering, the PTT tail, and RX mute on TX.
+
+Order for the window, so the risky part comes last:
+1. `HAMDECK_CAT_DEVICE=auto ./hamdeck-host --selftest` — proves the port, the probe and the
+   identity in seconds, keying nothing.
+2. `/api/status` against the real rig; compare with the reference host's last known values.
+3. Only then the audio work.
 
 ## ⚠️ A test that cannot fail is not a test
 

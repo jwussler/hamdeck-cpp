@@ -27,7 +27,7 @@ FetchContent_MakeAvailable(civetweb)
 
 find_package(OpenSSL REQUIRED)
 
-add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/radio.cpp src/auth.cpp)
+add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp)
 target_link_libraries(hamdeck-host PRIVATE civetweb-c-library OpenSSL::Crypto)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
 
@@ -47,3 +47,9 @@ add_test(NAME watchdog COMMAND test_watchdog)
 add_executable(test_audio_queue tests/test_audio_queue.cpp src/audio.cpp src/http.cpp)
 target_link_libraries(test_audio_queue PRIVATE civetweb-c-library)
 add_test(NAME audio_queue COMMAND test_audio_queue)
+
+# Drives the REAL serial code through a pty with a fake rig on the far end, so
+# every serial failure mode is found without the station off the air.
+add_executable(test_serial tests/test_serial.cpp src/serial_cat.cpp)
+target_link_libraries(test_serial PRIVATE util)
+add_test(NAME serial COMMAND test_serial)
