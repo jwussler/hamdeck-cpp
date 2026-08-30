@@ -54,7 +54,7 @@ are private-storage-only and must never be published. See `SITE.md`.
 |---|---|
 | Real ALSA capture and playback (replacing the tone source and null sink) | **yes** |
 | `/proc/asound` delay measurement + adaptive buffering | **yes** |
-| PTT tail-wait → `/api/ptt/{off,toggle,unkey}` | **yes** |
+| ~~PTT tail-wait~~ ✅ **done and tested on the radio** — measured 149 ms drained | done |
 | RX mute on TX is done client-side; host-side recording is not | **yes** |
 | ~~Client TX audio~~ ✅ done — 93.8 KiB/s measured into the host | no |
 | PTT hotkey ✅ done (window-focus). **Global** hotkey still needs platform code | no |
@@ -178,6 +178,46 @@ not assume the command worked, because an optimistic update lies whenever the ri
   enough, and two clients feeding the rig would interleave two voices into one carrier.
 
 ---
+
+## 4b. What the hardware window found (08/30/2026)
+
+The radio was moved to the build VM and the C++ host ran it for real. Everything below was
+invisible against the simulator.
+
+### Six bugs, all fixed
+| what | the bug |
+|---|---|
+| compressor | `PR0P2` is **1=OFF, 2=ON**, not a flag. The toggle would have sent "off" for on and an invalid code for off. |
+| AGC | codes **5 and 6 also mean AUTO**. The rig answered `GT06`; a switch knowing only 0-4 read AUTO by accident. |
+| lock | **`LK4` is not locked** — only `LK1` is. Any-non-zero reported a lock that was not there. |
+| reply slip | asking `ID;` returned **`VS0;ID0682;`** — a stale reply in front of the wanted one. Now the reply must start with the command's verb. |
+| probe | opening a named port proved a port existed, not that a radio was on it. It probes with `ID;` now either way. |
+| audio default | `alsa_*_device` defaulted to `"default"`, a **real device** on most systems. Empty now means synthetic. |
+
+### TX buffering took three attempts, and the failures are the lesson
+1. **Write each chunk on arrival** → 290 underruns in 6 s, stream stuck in `XRUN`.
+2. **Hand-rolled pre-roll** → *worse*, 1512 underruns in 18 s. Feeding one chunk per cycle is
+   exactly real time and never accumulates a cushion. **Pre-roll belongs to ALSA's
+   `start_threshold`.**
+3. **`start_threshold` set to the same 150 ms the feeder targets** → deadlock. The feeder
+   stopped at 140 ms because one more chunk would overshoot, so the device never reached the
+   150 ms it needed to start: a perfectly steady buffer, zero underruns, **total silence**,
+   923 chunks dropped behind it.
+
+Working: threshold at the 80 ms floor, adaptive target above it, feeder stops when the target
+is *reached* rather than when the next chunk would exceed it. **5 underruns in 18 s, nothing
+dropped, `RUNNING`.**
+
+⚠️ Two thresholds that must not be equal. If either is tuned, keep the gap.
+
+### Confirmed against the reference host
+All 18 status fields matched the .NET reading taken before the window, `/proc/asound` delay
+read **501 ms** exactly as CARRYOVER.md section 3 records, and RX audio was real receiver audio
+(crest factor 4.57 against 1.41 for a sine).
+
+### PTT tail-wait, tested on the air at 5 W
+149 ms queued on the device at unkey, `/api/ptt/off` reported `drained_ms: 149`, TX dropped
+cleanly. Tested with a **10 s watchdog** as a backstop and power at **QRP**, not 200 W.
 
 ## 5. The tools, and why each fails closed
 
