@@ -60,8 +60,8 @@ thin CAT wrappers, so this is not 141 hand-written handlers.
 2. **Status cache + 200 ms poller** ✅
 3. **Declarative route table** ✅ the rig-control surface is in — see below
 4. **Auth/session** ✅
-5. **WebSocket** — `/ws` ✅ done; `/ws/tx` still to do (it needs somewhere to put the audio,
-   so it lands with the ALSA work).
+5. **WebSocket** — `/ws` ✅ and `/ws/tx` ✅ (framing and gates done against a null sink; the
+   real ALSA sink lands in the hardware window)
 6. **systemd unit + CI that runs the binary** ✅
 
 ### Needs the radio.
@@ -438,6 +438,47 @@ route exists, not that anything is recording.
 So `/api/record/status` and `/api/tx-audio/status` report `available:false` **with a reason**,
 rather than a cheerful 200 that only proves the route was registered. The client greys the
 feature out instead of showing a button that silently does nothing.
+
+## TX audio — `/ws/tx`
+
+The path that puts a human voice on the air, so it carries two gates the RX stream does not.
+48000 Hz / 16-bit / mono (the codec's playback only supports 32000-48000, which is why TX is
+48k while RX is 22050 — the asymmetry is the device's, not a choice).
+
+| gate | why |
+|---|---|
+| **session** | refused at the upgrade, like `/ws` |
+| **`can_transmit`** | a session is not enough. The reference host carries a per-user transmit permission, and someone who can log in to *listen* must not be able to key the rig. |
+| **one transmitter** | two clients feeding the rig would interleave two voices into one carrier. `Claim()` refuses — it does not queue and does not evict. |
+
+All three verified over the network: no session → no handshake at all; `listener`
+(`can_transmit:false`) → `{"type":"error","message":"not permitted to transmit"}`; `joe` →
+config frame and 25 accepted frames.
+
+### ⚠️ Trim only between overs — the queue is deliberately unbounded while keyed
+Dropping TX audio mid-transmission removes a syllable from someone's sentence. So while the
+rig is **keyed** the queue is allowed to run past its bound (measured: 61 chunks against a
+bound of 25, **zero drops**); the moment the operator unkeys, the backlog is trimmed so the
+next over starts at the target depth however far the link drifted. Straight from
+CARRYOVER.md section 3.
+
+### Three real bugs the verification caught
+
+1. **A refused client's disconnect stole the active transmitter.** Releasing "whoever
+   currently holds it" on close meant a second client that was *rejected* still got a close
+   callback, and that callback handed away the first operator's transmitter mid-over. The
+   claim is now tracked **per connection**; only the connection that claimed it may release
+   it. Verified under exactly that sequence.
+2. **Nothing pumped the queue.** Audio arrived, was accepted, reported success — and moved
+   nowhere. A working-looking path connected to nothing, which is the `/api/record/start`
+   lie again. There is now a pump thread.
+3. **The pump thread had no destructor to join it**, so destroying the receiver called
+   `std::terminate`. That turned a clean "failed to bind, exit 1" into **SIGABRT** on every
+   early-return path. Caught only because the selftest's exit code was checked rather than
+   its output — `exit=134`, not `exit=1`.
+
+`available` stays **false** with the null sink and says why: it reflects whether audio can
+actually reach the rig, not whether the route exists.
 
 ## ⚠️ A test that cannot fail is not a test
 

@@ -5,6 +5,9 @@
 #include <iostream>
 #include <cstring>
 #include <functional>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <vector>
 #include <thread>
@@ -202,13 +205,21 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   });
 
   server.Get("/api/tx-audio/status", [&deps](const HttpRequest&, HttpResponse& res) {
-    // available is false until there is a real playback path to the rig. Saying
-    // true because the route exists is the exact bug above.
-    (void)deps;
+    // ⚠️ available reflects whether audio can actually REACH THE RIG, not
+    // whether the route exists. With the null sink the framing works end to end
+    // and nothing is transmitted, so available stays false and says why.
+    TxAudioReceiver* tx = deps.tx_audio;
+    const bool real_sink = tx && tx->Backend().find("null sink") == std::string::npos;
     WriteJson(res, 200,
-              R"({"status":"ok","available":false,"active":false,)"
-              R"("client_connected":false,)"
-              R"("reason":"TX audio needs the ALSA playback path"})");
+              std::format(
+                  R"({{"status":"ok","available":{},"active":{},"client_connected":{},)"
+                  R"("backend":"{}","accepted":{},"dropped":{},"queue":{}}})",
+                  JsonBool(real_sink),
+                  JsonBool(tx && !tx->Holder().empty()),
+                  JsonBool(tx && !tx->Holder().empty()),
+                  tx ? tx->Backend() : "none",
+                  tx ? tx->Accepted() : 0, tx ? tx->Dropped() : 0,
+                  tx ? tx->QueueDepth() : 0));
   });
 
   server.Get("/api/backend", [&deps](const HttpRequest&, HttpResponse& res) {
@@ -616,6 +627,72 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
           rx->AddClient(std::move(c));
         },
         [rx](std::shared_ptr<WsConnection> c) { rx->RemoveClient(c); });
+  }
+
+  // ── TX audio ───────────────────────────────────────────────────────────────
+  // ⚠️ THIS IS THE ROUTE THAT PUTS A VOICE ON THE AIR, so it has two gates the
+  // RX stream does not need.
+  if (deps.tx_audio) {
+    TxAudioReceiver* tx = deps.tx_audio;
+    RadioPoller* rigp = deps.poller;
+    AuthService* auth = deps.auth;
+
+    // ⚠️ Which connection holds the claim, tracked PER CONNECTION.
+    // Releasing "whoever currently holds it" on close is a real bug: a second
+    // client that was REFUSED still gets a close callback, and that close would
+    // hand away the first client's transmitter mid-over. Only the connection
+    // that actually claimed it may release it.
+    auto claims = std::make_shared<std::map<WsConnection*, std::string>>();
+    auto claims_mu = std::make_shared<std::mutex>();
+    server.WebSocketRoute(
+        "/ws/tx",
+        [tx, auth, trusted, claims, claims_mu](const HttpRequest& req,
+                                              std::shared_ptr<WsConnection> c) {
+          const std::string token = ExtractToken(req);
+          const std::string who = auth ? auth->Username(token).value_or("") : "";
+
+          // GATE 1: can_transmit. A session is not enough - the reference host
+          // carries a per-user transmit permission and a listener must not be
+          // able to key the rig just because they could log in.
+          const bool may_transmit = trusted || (auth && auth->CanTransmit(token));
+          if (!may_transmit) {
+            c->SendText(R"({"type":"error","message":"not permitted to transmit"})");
+            c->MarkClosed();
+            return;
+          }
+          // GATE 2: one transmitter. Two clients feeding the rig would
+          // interleave two voices into one carrier.
+          const std::string id = who.empty() ? "local" : who;
+          if (!tx->Claim(id)) {
+            c->SendText(R"({"type":"error","message":"another client is transmitting"})");
+            c->MarkClosed();
+            return;
+          }
+          {
+            std::lock_guard<std::mutex> lock(*claims_mu);
+            (*claims)[c.get()] = id;
+          }
+          c->SendText(std::format(
+              R"({{"type":"config","sample_rate":{},"channels":1,"bits_per_sample":16}})",
+              tx->SampleRate()));
+        },
+        [tx, claims, claims_mu](std::shared_ptr<WsConnection> c) {
+          std::string id;
+          {
+            std::lock_guard<std::mutex> lock(*claims_mu);
+            auto it = claims->find(c.get());
+            if (it == claims->end()) return;   // never claimed - nothing to release
+            id = it->second;
+            claims->erase(it);
+          }
+          tx->Release(id);
+        },
+        [tx, rigp](std::shared_ptr<WsConnection>, const char* data, size_t len,
+                   bool is_binary) {
+          if (!is_binary) return true;   // text frames are control, not audio
+          const bool keyed = rigp && rigp->Snapshot().tx;
+          return tx->Accept(data, len, keyed);
+        });
   }
 
   server.Post("/api/auth/logout", [&deps](const HttpRequest& req, HttpResponse& res) {

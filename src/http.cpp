@@ -95,7 +95,7 @@ struct HttpServer::Impl {
   mg_context* ctx = nullptr;
   std::map<std::string, HttpHandler> get_routes;
   std::map<std::string, HttpHandler> post_routes;
-  struct WsRoute { WsOpen on_open; WsClose on_close; };
+  struct WsRoute { WsOpen on_open; WsClose on_close; WsData on_data; };
   std::map<std::string, WsRoute> ws_routes;
   std::mutex conn_mu;
   std::map<const mg_connection*, std::shared_ptr<WsConnection>> ws_conns;
@@ -111,8 +111,9 @@ void HttpServer::Get(const std::string& path, HttpHandler h) {
 void HttpServer::Post(const std::string& path, HttpHandler h) {
   impl_->post_routes[path] = std::move(h);
 }
-void HttpServer::WebSocketRoute(const std::string& path, WsOpen on_open, WsClose on_close) {
-  impl_->ws_routes[path] = {std::move(on_open), std::move(on_close)};
+void HttpServer::WebSocketRoute(const std::string& path, WsOpen on_open, WsClose on_close,
+                               WsData on_data) {
+  impl_->ws_routes[path] = {std::move(on_open), std::move(on_close), std::move(on_data)};
 }
 
 // civetweb dispatches by exact URI when a handler is registered per path, so one
@@ -172,9 +173,28 @@ bool HttpServer::Listen(const std::string& listen_spec, int worker_threads) {
           }
           if (it->second.on_open) it->second.on_open(BuildRequest(c), conn);
         },
-        // DATA: inbound frames. /ws is send-only, so this just keeps the
-        // connection open; /ws/tx will consume here when TX audio lands.
-        [](mg_connection*, int, char*, size_t, void*) -> int { return 1; },
+        // DATA: inbound frames, on the connection's own thread. /ws is send-only
+        // and simply keeps the connection open; /ws/tx consumes here.
+        [](mg_connection* c, int bits, char* data, size_t len, void* cb) -> int {
+          auto* h = static_cast<HandlerCtx*>(cb);
+          const int opcode = bits & 0x0F;
+          if (opcode == MG_WEBSOCKET_OPCODE_CONNECTION_CLOSE) return 0;
+
+          const mg_request_info* ri = mg_get_request_info(c);
+          const std::string path = ri && ri->request_uri ? ri->request_uri : "";
+          auto it = h->impl->ws_routes.find(path);
+          if (it == h->impl->ws_routes.end() || !it->second.on_data) return 1;
+
+          std::shared_ptr<WsConnection> conn;
+          {
+            std::lock_guard<std::mutex> lock(h->impl->conn_mu);
+            auto cit = h->impl->ws_conns.find(c);
+            if (cit == h->impl->ws_conns.end()) return 1;
+            conn = cit->second;
+          }
+          return it->second.on_data(conn, data, len,
+                                    opcode == MG_WEBSOCKET_OPCODE_BINARY) ? 1 : 0;
+        },
         // CLOSE
         [](const mg_connection* c, void* cb) {
           auto* h = static_cast<HandlerCtx*>(cb);

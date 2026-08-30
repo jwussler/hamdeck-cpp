@@ -62,6 +62,9 @@ class WsConnection {
 
 using WsOpen  = std::function<void(const HttpRequest&, std::shared_ptr<WsConnection>)>;
 using WsClose = std::function<void(std::shared_ptr<WsConnection>)>;
+// Inbound frames. Return false to close the connection.
+using WsData  = std::function<bool(std::shared_ptr<WsConnection>, const char* data,
+                                   size_t len, bool is_binary)>;
 
 class HttpServer {
  public:
@@ -71,7 +74,8 @@ class HttpServer {
   void SetPreRouting(PreRouting pre) { pre_ = std::move(pre); }
   void Get(const std::string& path, HttpHandler h);
   void Post(const std::string& path, HttpHandler h);
-  void WebSocketRoute(const std::string& path, WsOpen on_open, WsClose on_close);
+  void WebSocketRoute(const std::string& path, WsOpen on_open, WsClose on_close,
+                      WsData on_data = nullptr);
 
   // listen_spec is a civetweb ports string, e.g. "127.0.0.1:5001". Binding an
   // explicit loopback address is what makes "local only" a kernel guarantee

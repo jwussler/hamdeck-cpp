@@ -19,6 +19,7 @@
 #include "config.h"
 #include "serial_cat.h"
 #include "radio.h"
+#include "tx_audio.h"
 #include "version.h"
 
 namespace {
@@ -150,10 +151,17 @@ int main(int argc, char** argv) {
   RxAudioStream rx_audio(std::make_unique<ToneSource>(config.record_sample_rate, 700.0));
   rx_audio.Start();
 
+  // TX audio. The null sink discards: the codec is on the reference host, so
+  // there is nowhere to play to. /api/tx-audio/status reports available:false
+  // because of it, rather than claiming a working path.
+  TxAudioReceiver tx_audio(std::make_unique<NullTxSink>(48000));
+  tx_audio.Start();
+
   ApiDeps deps;
   deps.poller = &poller;
   deps.auth = &auth;
   deps.rx_audio = &rx_audio;
+  deps.tx_audio = &tx_audio;
   deps.simulated = simulated;
   deps.allow_anonymous_status = config.allow_anonymous_status;
 
@@ -165,6 +173,7 @@ int main(int argc, char** argv) {
   std::cout << kServiceName << ' ' << kVersion << '\n'
             << "CAT backend: " << poller.Backend() << '\n'
             << "rx audio: " << rx_audio.Backend() << '\n'
+            << "tx audio: " << tx_audio.Backend() << '\n'
             << "watchdog: " << (config.ptt_timeout_seconds > 0
                    ? std::to_string(config.ptt_timeout_seconds) + "s" : "DISABLED") << '\n'
             << "auth: " << (auth.IsConfigured() ? "configured"
