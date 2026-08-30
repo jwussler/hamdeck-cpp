@@ -11,14 +11,21 @@
 #
 # No host or path is baked in: this repo is public.
 #   HAMDECK_BACKUP_HOST=<ssh target> HAMDECK_BACKUP_PATH=<dir on that host> tools/backup.sh
+#
+# Takes an optional path to ANOTHER repo, so a repo with no remote of its own can
+# be backed up by the same verified path rather than by a different, unproven one:
+#   tools/backup.sh ~/some-other-repo
 set -e
 : "${HAMDECK_BACKUP_HOST:?set HAMDECK_BACKUP_HOST to an ssh target (see SITE.md)}"
 : "${HAMDECK_BACKUP_PATH:?set HAMDECK_BACKUP_PATH to a directory on that host (see SITE.md)}"
 
-REPO=$(cd "$(dirname "$0")/.." && pwd)
+REPO=$(cd "${1:-$(dirname "$0")/..}" && pwd)
+git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || {
+  echo "not a git repo: $REPO" >&2; exit 1; }
+SLUG=$(basename "$REPO")
 STAMP=$(date +%m-%d-%Y-%H%M)
-LOCAL_DIR="$HOME/backups/hamdeck-cpp"
-NAME="hamdeck-cpp-$STAMP.bundle"
+LOCAL_DIR="$HOME/backups/$SLUG"
+NAME="$SLUG-$STAMP.bundle"
 mkdir -p "$LOCAL_DIR"
 
 git -C "$REPO" bundle create "$LOCAL_DIR/$NAME" --all
