@@ -15,7 +15,7 @@ set(CMAKE_AUTORCC ON)
 # Ubuntu 24.04 ships Qt 6.4, which is NOT an LTS. For something maintained for
 # years, build releases against a Qt LTS (6.8) rather than whatever the distro
 # happens to carry. 6.4 is fine to develop against.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network WebSockets Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network WebSockets Multimedia Quick QuickControls2 Qml)
 qt_standard_project_setup()
 
 qt_add_executable(hamdeck-client
@@ -45,4 +45,27 @@ set_tests_properties(hotkey PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 add_test(NAME client_selftest COMMAND hamdeck-client --selftest)
 set_tests_properties(client_selftest PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
+
+# ── Qt Quick client ─────────────────────────────────────────────────────────
+# QML rather than Widgets, per CLAUDE.md. The C++ core - api_client, rx_audio,
+# tx_audio, ptt_hotkey, settings - is shared with the Widgets build unchanged,
+# which is what made the port cheap: only the view was rewritten.
+qt_add_executable(hamdeck-qml
+    src/main_qml.cpp
+    src/backend.cpp
+    src/settings.cpp
+    src/api_client.cpp
+    src/rx_audio.cpp
+    src/tx_audio.cpp
+    src/ptt_hotkey.cpp
+    resources.qrc
+)
+target_link_libraries(hamdeck-qml PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets Qt6::Multimedia
+    Qt6::Quick Qt6::QuickControls2 Qt6::Qml)
+target_compile_options(hamdeck-qml PRIVATE -Wall -Wextra)
+
+add_test(NAME qml_selftest COMMAND hamdeck-qml --selftest)
+set_tests_properties(qml_selftest PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)

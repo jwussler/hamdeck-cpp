@@ -1,0 +1,17 @@
+<RCC>
+  <qresource prefix="/">
+    <file>qml/Main.qml</file>
+    <file>qml/HamDeck/qmldir</file>
+    <file>qml/HamDeck/Theme.qml</file>
+    <file>qml/HamDeck/SilkLabel.qml</file>
+    <file>qml/HamDeck/PanelKey.qml</file>
+    <file>qml/HamDeck/Group.qml</file>
+    <file>qml/HamDeck/SMeter.qml</file>
+    <file>qml/HamDeck/Readout.qml</file>
+    <file alias="fonts/BarlowCondensed-SemiBold.ttf">fonts/BarlowCondensed-SemiBold.ttf</file>
+    <file alias="fonts/BarlowCondensed-Bold.ttf">fonts/BarlowCondensed-Bold.ttf</file>
+    <file alias="fonts/IBMPlexSans.ttf">fonts/IBMPlexSans.ttf</file>
+    <file alias="fonts/IBMPlexMono-Regular.ttf">fonts/IBMPlexMono-Regular.ttf</file>
+    <file alias="fonts/IBMPlexMono-Medium.ttf">fonts/IBMPlexMono-Medium.ttf</file>
+  </qresource>
+</RCC>

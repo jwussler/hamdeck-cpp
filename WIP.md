@@ -438,6 +438,50 @@ why the host accepts that transport.
 
 ---
 
+## 8b. The QML front end — method, and what it cost
+
+**QML (Qt Quick), per CLAUDE.md**, replacing the Qt Widgets panel. Both build from the same
+CMake; the Widgets one is kept only until this is proven and is superseded.
+
+**The port was cheap because the C++ core was already separate.** `api_client`, `rx_audio`,
+`tx_audio`, `ptt_hotkey`, `settings` and the host-supplied meter scale are reused unchanged —
+only the view was rewritten, behind a `Backend` facade of `Q_PROPERTY`/`Q_INVOKABLE`. Every
+rule that matters (PTT reflects the RIG, RX mutes from the rig's tx, the host's watchdog is
+counted down, an uncalibrated meter stays unlabelled) lives in that shared core, so it could
+not be lost in the port. **A UI that reimplements those rules is a UI that can disagree with
+them.**
+
+### Brand, applied verbatim
+Tokens copied from `~/hamdeck-site/brand/BRAND.md` into `Theme.qml` and mirrored in
+`src/theme.h`. ⚠️ The previous palette was **invented**, including an amber two digits off the
+one the doc defines — which the doc calls out as a bug by name.
+
+⚠️ **An audit found seven more invented colours** in the QML (a lighter red, a mid-green, tick
+greys). All replaced with tokens. The audit is one line and worth keeping:
+
+```sh
+grep -ohE '"#[0-9A-Fa-f]{6}"' client/qml/HamDeck/*.qml client/qml/*.qml | sort -u
+```
+Anything outside `Theme.qml`'s twelve is an invention.
+
+### Fonts are bundled, not assumed
+Barlow Condensed (display), IBM Plex Sans (body), IBM Plex Mono (data) ship in the binary
+with their OFL licence. BRAND.md makes the point about a logo that names a font and falls back
+to whatever the viewer has; a panel rendered in a substitute face is not the panel designed.
+The selftest asserts both families are actually present.
+
+### Three bugs worth remembering
+- ⚠️ **Heap corruption on exit**, traced by backtrace to `~ApiClient` during Qt Network's
+  thread teardown. The Widgets build tore down explicitly in `closeEvent` and never saw it;
+  QML had no equivalent and relied on destructor ordering across Network, WebSockets and
+  Multimedia. Now `Backend::shutdown()` stops producing, then the transports, then the
+  session — wired to `aboutToQuit` so it runs however the app ends.
+- **A `Repeater` inside a `RowLayout` collapsed to zero width** and packed three columns
+  against the left edge. Explicit `ColumnLayout`s with `fillWidth` did the same. Positioning
+  by fraction of width fixed it. A three-item readout does not need a layout negotiation.
+- The QML module needs its own directory matching the module name, and **every** component
+  declared in `qmldir` — not just the singleton.
+
 ## 9. Adding radios nobody here owns
 
 The simulator makes this tractable: look up the CAT set, write a profile, run the walker
