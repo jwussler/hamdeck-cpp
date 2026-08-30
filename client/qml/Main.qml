@@ -274,15 +274,19 @@ ApplicationWindow {
 
                     // ⚠️ THE TGXL, not the rig's internal ATU. They are different
                     // tuners and this station uses this one; the button says which.
+                    // ⚠️ Lit from the HOST's tgxl_tuning, never from the click,
+                    // and it says STOP while a carrier is up: the route is a
+                    // toggle and the second press ends the transmission.
                     PanelKey {
-                        text: "TUNE TGXL"
+                        text: backend.tunerActive ? "STOP TUNE" : "TUNE TGXL"
                         enabledKey: backend.tunerAvailable
                         danger: true
-                        lit: backend.tunerStatus === "tuning…"
+                        lit: backend.tunerActive
                         onClicked: backend.tuneTgxl()
                     }
                     Text {
-                        text: backend.tunerStatus
+                        text: backend.tunerActive ? "transmitting 15 W CW"
+                                                  : backend.tunerStatus
                         height: Theme.keyH
                         verticalAlignment: Text.AlignVCenter
                         font.family: Theme.body; font.pixelSize: Theme.f(11)

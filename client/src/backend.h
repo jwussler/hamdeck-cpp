@@ -88,6 +88,12 @@ class Backend : public QObject {
   Q_PROPERTY(QString bandName READ bandName NOTIFY statusChanged)
   Q_PROPERTY(QString tunerStatus READ tunerStatus NOTIFY tunerChanged)
   Q_PROPERTY(bool tunerAvailable READ tunerAvailable NOTIFY tunerChanged)
+  // ⚠️ FROM THE HOST'S STATUS, NOT FROM THE CLICK. Same rule as the PTT button
+  // reflecting the rig's tx: the tune keys the transmitter, and a button that
+  // latches on click would show "tuning" for a tune that never started - or,
+  // worse, show idle while the carrier is still up. The host now returns
+  // immediately and reports progress in tgxl_tuning, so this follows that.
+  Q_PROPERTY(bool tunerActive READ tunerActive NOTIFY statusChanged)
 
   // ── Display ──
   // ⚠️ The panel is drawn at ONE scale, decided here rather than in the QML, so
@@ -163,6 +169,7 @@ class Backend : public QObject {
   QString bandName() const;
   QString tunerStatus() const { return tuner_status_; }
   bool tunerAvailable() const { return tuner_available_; }
+  bool tunerActive() const { return status_.value("tgxl_tuning").toBool(); }
 
   QString freqText() const;
   QString mode() const { return status_.value("mode").toString("—"); }

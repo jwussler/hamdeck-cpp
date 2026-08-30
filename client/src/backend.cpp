@@ -499,14 +499,20 @@ QString Backend::bandName() const {
 }
 
 void Backend::tuneTgxl() {
-  tuner_status_ = "tuning…";
-  emit tunerChanged();
+  // ⚠️ THIS IS A TOGGLE, because the host's route is one: pressing it while a
+  // tune is running STOPS it. That matters more than it sounds - the tune keys
+  // the transmitter, and an operator who wants the carrier to end needs one
+  // press, not a support call.
   api_.Get("/api/tune/tgxl", [this](QJsonObject r) {
-    // The host's own message, passed through: "not configured" and "no answer"
-    // are different problems with different fixes.
+    // The host's own message, passed through: "not configured", "no answer" and
+    // "stopping the tune" are different things with different fixes.
     tuner_status_ = r.value("message").toString(
-        r.value("status").toString() == "ok" ? "tuned" : "tuner error");
+        r.value("status").toString() == "ok" ? "tuning" : "tuner error");
     tuner_available_ = r.value("available").toBool();
     emit tunerChanged();
   });
+  // ⚠️ Deliberately no optimistic "tuning…" here. The host answers immediately
+  // now, and whether a carrier is actually up is reported by tgxl_tuning in the
+  // status poll. Showing "tuning" from the click would be the button lying
+  // about the transmitter, which is the one thing this panel must never do.
 }
