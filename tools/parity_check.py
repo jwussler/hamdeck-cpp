@@ -98,6 +98,14 @@ KNOWN_DIVERGENCES = {
         "route that only says tuning:false cannot distinguish 'idle' from 'not "
         "there at all'."
     ),
+    "/api/meters": (
+        "extra 's_meter_db', 's_unit', 'swr_ratio', 'alc_pct', 'power_pct'. The raw "
+        "four are untouched; these are calibrated readings derived from hamlib's "
+        "Yaesu tables, added because the raw values alone are unusable in a UI and "
+        "because the calibration belongs with the RIG rather than copy-pasted into "
+        "every client. Each field carries its unit in its name so nothing can "
+        "mistake a percentage for watts."
+    ),
     "/api/tune/amp/status": (
         "extra 'available'. Same reason as the TGXL status route."
     ),

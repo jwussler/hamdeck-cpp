@@ -9,6 +9,7 @@
 #include <QJsonArray>
 #include <QPair>
 #include <QScreen>
+#include <QScrollArea>
 #include <QStatusBar>
 #include <QVBoxLayout>
 
@@ -38,7 +39,20 @@ QString FormatHz(qint64 hz) {
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
   settings_.Load();
   setWindowTitle("HamDeck");
-  setCentralWidget(BuildPanel());
+  // ⚠️ The panel goes inside a SCROLL AREA so the window can always be made
+  // smaller than its content. Clamping the geometry is not enough on its own:
+  // Qt honours the layout's minimum size hint, so a panel taller than the work
+  // area forces the window bigger regardless of what setGeometry asked for -
+  // and then the title bar is off-screen and the app cannot be reached at all.
+  //
+  // The selftest caught this the moment the DSP row and keypad were added, which
+  // is exactly what it is for.
+  auto* scroll = new QScrollArea;
+  scroll->setWidget(BuildPanel());
+  scroll->setWidgetResizable(true);
+  scroll->setFrameShape(QFrame::NoFrame);
+  scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+  setCentralWidget(scroll);
   statusBar()->showMessage("not connected");
 
   connect(&api_, &ApiClient::StatusUpdated, this, &MainWindow::ApplyStatus);
@@ -409,6 +423,9 @@ void MainWindow::SetStale(bool stale, const QString& detail) {
 void MainWindow::RestoreGeometryClamped() {
   const QRect work = screen() ? screen()->availableGeometry()
                               : QApplication::primaryScreen()->availableGeometry();
+  // The window must be able to shrink to the work area. Without this, a minimum
+  // size hint from the layout wins and setGeometry silently does nothing.
+  setMinimumSize(360, 240);
   QRect g = settings_.window_geometry;
   if (!g.isValid() || g.width() < 200 || g.height() < 200) {
     g = QRect(0, 0, qMin(760, work.width()), qMin(620, work.height()));

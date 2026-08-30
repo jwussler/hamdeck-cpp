@@ -1,754 +1,334 @@
-# HamDeck C++ — WIP
+# HamDeck C++ — work in progress
 
-Live log. Folded into the real docs at the end. Started 08/30/2026.
+Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anything.
 
-> **This repo is public.** Nothing station-specific goes in it — no hostnames, no addresses,
-> no VM ids, no tunnel details. CARRYOVER.md section 6 already says it for hostnames: *a
-> hostname in a public repo points every install at that station.* The same applies to
-> everything that identifies the site. Site detail lives in the gitignored `SITE.md`.
-> This applies to **commit messages** too.
+> **THIS REPO IS PUBLIC.** Nothing station-specific goes in it — no hostnames, addresses, VM
+> ids, tunnel details, or live readings that say what the station was doing. That applies to
+> **commit messages** too. Site detail lives in the gitignored `SITE.md`.
+> CARRYOVER.md §6 states the narrow version: *a hostname in a public repo points every install
+> at that station.* It generalises.
 
-## 🛑 BLOCKER — do not push this repo yet
+---
 
-The working tree is clean of site detail, but **the git history is not.** Earlier commits of
-`WIP.md`, and several of my own commit messages, contain the site's WAN address, a VPN peer
-endpoint, internal addresses, VM ids and hostnames. Nothing has ever been pushed — there is
-no remote — so nothing has leaked, and the fix is cheap while that stays true.
-
-Two ways to clear it, both fine, Joe's call:
-
-- **Squash to a single initial commit** before adding a remote. Loses the granular history;
-  keeps it simple.
-- **Rewrite just the affected commits** (`git filter-repo` over `WIP.md` and the messages).
-  Keeps the history; more fiddly.
-
-Until one of those is done: **no `git remote add`, no push.**
-
-## Layout
-
-- Code is developed on shack and built and run on a **disposable build VM**, which is also
-  where the ALSA and serial work will run. `./sync.sh` rsyncs the tree there and builds it.
-  The VM is the build host on purpose: it is the only place a green build means anything.
-- A **reference host** runs the working .NET version against the real radio. It is read from
-  for contracts and never written to.
-
-## ⚠️ The rig hardware is single-instance
-
-There is exactly one CAT bridge and one USB codec, and the reference host holds both. **Only
-one machine can have the radio at a time**, so the build VM has no USB passthrough at all and
-cannot take them by accident. The CAT bridge is a *dual* UART: one device enumerates two
-serial ports, and passing it moves both together.
-
-**What this means for the port:** everything that does not touch hardware — the REST surface,
-WebSocket framing, auth, the build and CI — is built with the station on the air. Audio and
-CAT need a **booked hardware window** with the station off the air. Exact commands are in
-`SITE.md`.
-
-**The cutover gate:** do not book a window until the real serial backend is written and
-passing against the simulator, so the window is spent *measuring* rather than debugging
-parser bugs a radio-free test would have caught.
-
-## The road
-
-141 routes in the C# `ApiServer.cs` dictionary across 46 groups — captured to
-`reference/routes-csharp.txt`, with live JSON shapes in `reference/contracts.txt`. Most are
-thin CAT wrappers, so this is not 141 hand-written handlers.
-
-### Radio-free — the station stays on the air. Most of the work.
-
-1. **Simulated rig** ✅
-2. **Status cache + 200 ms poller** ✅
-3. **Declarative route table** ✅ the rig-control surface is in — see below
-4. **Auth/session** ✅
-5. **WebSocket** — `/ws` ✅ and `/ws/tx` ✅ (framing and gates done against a null sink; the
-   real ALSA sink lands in the hardware window)
-6. **systemd unit + CI that runs the binary** ✅
-
-### Needs the radio.
-
-7. **Real CAT serial** ✅ **written and tested without the radio** — see below. This is the
-   cutover gate, and it is now met.
-8. **ALSA via libasound** rather than `arecord`/`aplay` subprocesses — the actual point of
-   the port — plus `/proc/asound` delay, adaptive buffering, PTT tail-wait, RX mute on TX.
-
-## Findings from the live C# host — not in CARRYOVER.md
-
-### The port split is load-bearing
-
-The host listens on two ports and they are **not** interchangeable:
-
-| port | binding | behaviour |
-|---|---|---|
-| control | local only | a LAN caller is refused outright |
-| dashboard | LAN | `/api/health` and `/api/auth/status` anonymous; everything else 401 |
-
-This is what makes "local" mean something, and it is how `/api/tune/amp` refuses every remote
-caller (CARRYOVER.md section 2). **The C++ host binds the control server to the loopback
-address so the guarantee is enforced by the kernel, not by a check somebody can forget to
-write.** Locality is *which socket accepted the request* — never a header, which the caller
-controls.
-
-The first scaffold got this wrong and bound the control port to all interfaces. Caught by
-comparing against the running C# host instead of trusting the doc.
-
-### Deliberate divergence: `port` reports the real port
-The C# host hardcodes `"port":5001` and answers that on the dashboard port too. Ours reports
-the port actually bound, so the field can tell the listeners apart.
-
-### ⚠️ A signal handler that swallows SIGTERM makes the service unkillable
-The first scaffold's handler set an atomic flag nothing ever read, so the process caught the
-signal and kept serving. `pkill` looked like it worked and did nothing; a stale build then
-answered a probe and nearly passed as the new one. **A handler must actually stop the server,
-or not exist.** This would have broken every `systemctl restart`.
-
-## Design decision: API-first, no privileged client
-
-The host stays **100% API-driven so other clients can be stood up**. Testable rules, not
-aspirations:
-
-- **No capability reachable except through a documented route.** If the panel can do it, a
-  curl can do it. No hidden endpoint, no page that is the only way in.
-- **No client is privileged.** The only asymmetry allowed is local vs remote, enforced by the
-  socket.
-- **The host holds no per-client UI state.** Clients are disposable and may drop and
-  reconnect at will.
-- **Capabilities are discoverable.** Absent capabilities must say so in their own status
-  route — never a 200 that means "the route exists" (the `/api/record/start` lie).
-- **Audio is part of the API contract**, not a side channel: `/ws` RX 22050/16/mono, `/ws/tx`
-  TX 48000/16/mono.
-
-## Auth
-
-The hash format is a **compatibility contract**, not an implementation detail:
-
-```
-pbkdf2:<16-byte salt, lowercase hex>:<32-byte hash, lowercase hex>
-PBKDF2-HMAC-SHA256, 350000 iterations
-```
-
-Change any parameter and every stored credential silently stops working.
-
-**The test that matters is interop, not round-trip.** `tests/test_auth.cpp` verifies a hash
-produced by an *independent* PBKDF2 implementation. A round-trip of our own hasher against
-our own verifier would pass even if every parameter were wrong — it proves self-consistency,
-not compatibility. It is in the suite second, for what little it is worth.
-
-Matched to the C# host: anonymous set is `/api/health` + `/api/auth/status` only;
-`allow_anonymous_status` is off; token from cookie, then `Bearer`, then `?token=`, in that
-order; token in **Set-Cookie** never the body, `HttpOnly; SameSite=Strict`; 5 failures → 5
-minute lockout; 500 ms delay on every rejection so "no such user" and "wrong password" cost
-the same; 401 body byte-for-byte identical.
-
-**The gate defaults to DENY and runs before routing.** `/api/ptt/on` did not exist yet and
-already answered 401 rather than 404, so every route added from here is protected unless
-somebody deliberately lists it anonymous. Open-unless-remembered is the shape that leaks,
-because it fails open every time somebody forgets.
-
-**Deliberately NOT implemented:** the C# host's transparent upgrade of legacy bare-SHA256
-hashes on login. Whether any such hash still exists is unknown, and inventing a second
-accepted hash format on a guess widens the auth surface for no reason.
-
-**No Authelia, no SSO, no added login step** — Joe, 08/30/2026. The host's own session auth is
-the boundary. Settled; do not raise it again.
-
-## Route table, command queue, watchdog
-
-### ⚠️ Request threads NEVER touch the serial port
-The serial lock is not re-entrant across threads (CARRYOVER.md section 5), so exactly one
-thread — the poller — speaks to the port. Handlers `Enqueue()` a CAT command and return; the
-poller drains the queue at the top of each 200 ms cycle and reads state from the cache.
-Queueing also orders commands, which matters for pairs like "set VFO then set frequency"
-that are wrong if they interleave.
-
-### ⚠️ `/api/ptt/off` is deliberately NOT implemented — it 404s
-Unkeying must wait for the audio still queued in the ALSA buffer, or the tail of every
-transmission is lost (CARRYOVER.md section 4a), and that wait needs the real device depth
-from `/proc/asound`. An unkey that drops PTT immediately would *look* like it works and
-quietly cut the end off every over — the exact bug that took a report from a net to find. A
-404 is honest; a wrong unkey is not.
-
-### TX watchdog — default 180 s
-Lives next to the radio, on the poller thread (CARRYOVER.md section 4b). 0 disables. The test
-asserts the **radio actually stopped**, read back through `TX;`, not that a trip counter
-moved — a counter is a claim, `TX0;` is the outcome.
-
-### The power cap is intentional
-A local caller is capped lower than a remote one. It reads backwards; it is deliberate,
-confirmed 08/30/2026. **Do not "fix" it.**
-
-## The HTTP library had to change — cpp-httplib → civetweb
-
-**cpp-httplib has no WebSocket support at all** — it defines the 426 status constant and
-nothing else, and cannot hand off the socket. `/ws` therefore could never be served by it,
-and moving `/ws` to a port of its own is not an option: the client connects to
-`ws://host:<dashboard port>/ws`, so a separate port breaks every existing client.
-
-civetweb (MIT, pinned v1.16) serves HTTP and WebSocket on one port. **The swap was done now,
-at 5 routes, rather than later at 141.**
-
-`src/http.h` is a thin wrapper so the route table does not know what is underneath. That swap
-touched every route once; it should not happen twice.
-
-After the swap the whole security boundary was re-verified rather than assumed: anonymous
-`/api/health` and `/api/auth/status` still 200, `/api/status` and `/api/mode/lsb` still 401,
-an unknown path still 401 (gate still ahead of routing), the control port still refused from
-the LAN, all three token transports still work, and the 401 body is still byte-identical to
-the C# host.
-
-## RX audio — `/ws` done
-
-Contract matched to the C# `AudioStreamer`:
-
-- **config frame first**, as TEXT, before any binary frame:
-  `{"type":"config","sample_rate":22050,"channels":1,"bits_per_sample":16}`. Without it the
-  client cannot know how to interpret the bytes that follow.
-- binary PCM, 22050 Hz / 16-bit / mono.
-- **the auth gate runs on the WebSocket upgrade**, not just on REST. RX audio is somebody's
-  operating activity; an unauthenticated upgrade is refused before a single frame is sent.
-  Verified: no session → no handshake response at all.
-- **one writer thread.** Every frame for every client goes out from a single thread, so
-  frames can never interleave on a socket, and writes are locked per connection.
-- **bounded queue, drop the OLDEST**, trimmed to 10 before each push — the same policy as
-  the C# streamer.
-
-Measured over the network with a dependency-free RFC6455 probe: **43.2 KiB/s, implied 22101
-Hz** — against the 43.1 KiB/s CARRYOVER.md section 3 records from the live station.
-
-### ⚠️ "Bounded" is easy to get backwards
-Dropping the *newest* also bounds the queue and also passes a size check, while leaving the
-listener permanently behind, playing an ever-later recording of the band. So the policy is
-pulled out of the producer loop into `BoundedChunkQueue` and tested by identity, not size:
-push 15 identifiable chunks, assert the survivors are chunks **5..14**. A size-only assertion
-would pass either way.
-
-### ⚠️ The first probe run "failed" and the server was innocent
-The first `/ws` probe reported a BINARY first frame instead of the config frame. The bug was
-in the probe: the handshake `recv` can pull the first WebSocket frame in with the headers,
-and it was discarding the leftover. **Before believing a server is wrong, check the
-instrument** — a broken measurement and a broken server look identical from the outside.
-
-## Walking it again — the parity harness (`tools/parity_check.py`)
-
-Answering "when we have a workable version, do we walk it again?": yes, and it is three
-separate walks, only one of which needs the radio.
-
-1. **API parity** — automated, radio-free, runs forever. `tools/parity_check.py` logs into
-   both hosts (or tunnels to both local control ports, which need no session) and compares
-   **keys and types**, not values. Currently 8/8 read-only routes match, with one listed
-   deliberate divergence.
-2. **Client compatibility** — point the real WPF client at the C++ host and check nothing
-   greys out. The client probes at connect, so a missing capability shows up as a dead
-   button rather than an error (CARRYOVER.md section 1).
-3. **On-air** — the only one that needs the radio, and it needs *another operator*.
-   CARRYOVER.md section 7 is explicit: **MONI cannot be captured from the host**, so there
-   is no way to hear your own transmission from the host side. Audio quality and the PTT
-   tail can only be confirmed by a second receiver or a net report.
-
-### ⚠️ A parity walker that GETs every route would key the transmitter
-Most of this API is state-changing and many of those routes are **GETs** — `/api/ptt/on`,
-`/api/mode/cw`, `/api/tune/amp`. Walking all 141 against the live station would key the rig,
-change the operating mode and retune the amp. CARRYOVER.md section 9 records that probing
-with a control route once changed the operating mode mid-session with a human at the radio.
-
-So the safety is **structural, not remembered**:
-
-- an **allowlist**, copied from the reference host's own `ReadOnlyRoutes`;
-- a second check of the final URL against state-changing patterns, so a future edit that adds
-  a dangerous route to the allowlist still cannot fire one;
-- **no `--all-routes` flag.** Adding one would defeat both checks. State-changing routes get
-  compared against a *simulated* rig, never the station.
-
-Proven before the tool was trusted: `/api/ptt/on`, `/api/mode/cw`, `/api/tune/amp` and
-`/api/power/max` are all refused.
-
-## Closed by the parity run
-
-`/api/status/full` (18 fields) and `/api/meters` (5 fields) were 404 and are now implemented,
-and the 404 body itself now matches the reference host, which names the path it could not
-route.
-
-⚠️ **The full set is polled every 5th cycle (~1s), not every 200 ms.** Reading ~16 extra CAT
-commands five times a second would spend most of the serial budget on values that barely
-move, and the serial port is single-threaded and shared with every command a request thread
-queues. Meters *do* move fast, so they ride the fast loop. Fields not re-read on a cycle are
-carried forward, so `/api/status/full` never flickers between real values and defaults.
-
-## CI runs the binary, and a hang is a failure
-
-`--selftest` walks the whole startup path — poller, audio, auth, both listeners — proves the
-process actually answers a request, and exits. CI runs it **under `timeout 60`**: a selftest
-that blocks forever looks exactly like one that is still working.
-
-CI also asserts that an **unknown flag aborts**. Silently accepting a misspelled flag is how
-a safety option gets quietly disabled.
-
-`deploy/hamdeck-cpp.service` carries no hostname or credential; the admin hash comes from an
-environment file outside the repo. `KillSignal=SIGTERM` with a 10 s stop timeout is
-deliberate given the earlier unkillable-process bug.
-
-## Serial CAT — written and proven with no radio attached
-
-`SerialCat` is done and tested through a **pty with a fake rig on the far end**, which is the
-whole reason it was written before the hardware window: every failure below is far cheaper to
-find here than with the station off the air.
-
-Proven (`tests/test_serial.cpp`, in ctest):
+## 1. Status at a glance
 
 | | |
 |---|---|
-| probe | finds the CAT port by **asking with `ID;`**, skipping a dead candidate first |
-| read | fixed-width reply parsed correctly |
-| chunked | a reply dribbled out byte by byte is reassembled, not truncated at the first `read()` |
-| trailing | returns only the first `;`-terminated reply, ignoring what follows |
-| **no-slip** | a stale reply is never returned as the answer to a later command |
-| timeout | an unanswered command returns `nullopt` in ~249 ms and **does not hang** |
-| exclusive | a second opener is refused |
-| baud | an unsupported rate is refused, not silently substituted |
+| **Host** | complete except what needs the radio attached |
+| **Client** | Qt panel: connects, live status, rig control, RX audio. No TX audio, no PTT-off, no hotkey |
+| **Route coverage** | **131 of 141** exact routes + all **18** prefix families |
+| **Tests** | 8 host (ctest) + client selftest, all green |
+| **Parity** | 25/25 with 5 listed deliberate divergences |
+| **Verification** | 50/50 driven routes read back from the rig, 46/46 smoke, 25/25 parity, keypad and VFO-lock walked |
+| **Radio** | never attached yet — everything below was built and proven against a simulator |
 
-### ⚠️ The reply-slip bug is the one that would have been nasty
-Without flushing input before each command, a leftover reply from a previous timed-out
-command comes back as the answer to *this* one — and then every subsequent reply is off by
-one, **each individually plausible**. A frequency that is really the mode, a mode that is
-really the power. It would look like a flaky radio.
+### 🛑 BLOCKER — do not push this repo yet
+The working tree is clean of site detail. **The git history is not.** Earlier commits of this
+file, and several commit messages, contain the site's WAN address, a VPN peer endpoint,
+internal addresses, VM ids and hostnames. Nothing has ever been pushed — there is no remote —
+so nothing has leaked, and the fix is cheap while that stays true.
 
-### ⚠️ Exclusive access, failing closed
-The .NET host and this one both want the same port. Two processes interleaving commands on
-one CAT link produce replies attributed to the wrong command — a fault that looks like the
-radio and is nearly impossible to diagnose from either side. `flock(LOCK_EX|LOCK_NB)`, and a
-refusal to share.
+Two ways to clear it, Joe's call: **squash to a single initial commit** before adding a
+remote, or **rewrite the affected commits** with `git filter-repo`. Until then: no
+`git remote add`, no push.
 
-### ⚠️ The default is the SIMULATOR, and there is no fallback to it
-Talking to the radio must be asked for: `HAMDECK_CAT_DEVICE=<path>|auto`. A host that hunted
-for a serial port on startup would grab the CAT link the moment it ran anywhere near the
-station — on a laptop, in CI, on a box meant only for building.
+### What is left, and what it needs
 
-And when a device **is** named and cannot be opened, the host **exits 1**. It does not fall
-back to the simulator. A host that comes up looking healthy while reporting a rig it cannot
-reach is worse than one that refuses to start — that is the `/api/record/start` lie in a
-more dangerous place.
+| work | needs the radio? |
+|---|---|
+| Real ALSA capture and playback (replacing the tone source and null sink) | **yes** |
+| `/proc/asound` delay measurement + adaptive buffering | **yes** |
+| PTT tail-wait → `/api/ptt/{off,toggle,unkey}` | **yes** |
+| RX mute on TX is done client-side; host-side recording is not | **yes** |
+| Client TX audio (`/ws/tx` framing exists and is tested) | no |
+| Global PTT hotkey (F13) — platform code, Qt has no API for it | no |
+| 19 `/api/admin/*` routes — user management is config-file-only today | no |
+| `/audio` HTTP endpoint, `/wsflexknob`, the CAT proxy, the static web UI | no |
 
-## 🎯 THE CUTOVER GATE IS MET
+`/api/cluster/spots` and `/api/session` are **absent on the reference host too** — matching
+that is correct, not a gap.
 
-Everything that can be built without the radio is built. The next step is the hardware
-window, and it should be spent on what only the radio can show: `/proc/asound` delay,
-adaptive buffering, the PTT tail, and RX mute on TX.
+---
 
-Order for the window, so the risky part comes last:
-1. `HAMDECK_CAT_DEVICE=auto ./hamdeck-host --selftest` — proves the port, the probe and the
-   identity in seconds, keying nothing.
-2. `/api/status` against the real rig; compare with the reference host's last known values.
+## 2. Where the work happens
+
+- Code lives on the workstation; it is **built and run on a disposable build VM**, which is
+  also where the ALSA and serial work will run. That VM is the only place a green build means
+  anything.
+- A **reference host** runs the working .NET version against the real radio. It is **read
+  from** for contracts and **never written to**.
+- Site specifics — hostnames, addresses, VM ids, the hardware-window commands — are in the
+  gitignored `SITE.md`.
+
+```sh
+HAMDECK_BUILD_HOST=<ssh target> ./sync.sh     # rsync + build on the VM
+ssh <vm> 'cd ~/hamdeck-cpp/build && ctest'    # host tests
+cmake -S client -B client/build -G Ninja      # the Qt client
+QT_QPA_PLATFORM=offscreen ./hamdeck-client --selftest
+```
+
+`sync.sh` **ships no default host** and refuses to run without `HAMDECK_BUILD_HOST`.
+
+### ⚠️ The rig hardware is single-instance
+There is exactly one CAT bridge and one USB codec, and the **reference host holds both**. Only
+one machine can have the radio at a time, so the build VM has **no USB passthrough at all** and
+cannot take them by accident. The CAT bridge is a *dual* UART: one device enumerates two serial
+ports and passing it moves both.
+
+**The cutover gate is met** — the serial backend is written and passing against a pty. A
+hardware window should now be spent on what only the radio can show. Order, so the risky part
+is last:
+
+1. `HAMDECK_CAT_DEVICE=auto ./hamdeck-host --selftest` — proves port, probe and identity in
+   seconds, keying nothing.
+2. `/api/status` against the real rig, compared with the reference host.
 3. Only then the audio work.
 
-## The rig-control route surface — generated, then walked
+Exact commands for taking and returning the radio are in `SITE.md`. **Never leave the radio
+detached from the reference host unattended.**
 
-Most of the remaining routes were three near-identical handlers over a different CAT verb, so
-they are **generated from a spec table** rather than hand-written. Sixty pasted handlers is
-sixty chances to paste the wrong key; a spec table makes a mismatch visible on one line.
+---
 
-⚠️ `on`/`off` answer with `1`/`0` and `toggle` answers with `true`/`false`. That is not a
-tidy-up opportunity — it is what the reference host emits and what the existing client parses.
+## 3. Decisions already made — do not relitigate
 
-### ⚠️ Five CAT verbs I guessed were WRONG — read the driver, do not infer
+- **No Authelia, no SSO, no added login step.** The host is reachable only over the VPN and has
+  its own session auth. A remote IdP would add a failure mode, not a boundary.
+- **The power cap is intentional**: a local caller is capped lower than a remote one. It reads
+  backwards. It is deliberate. **Do not "fix" it.**
+- **API-first, no privileged client.** Every capability reachable through a documented route;
+  the browser UI would be just another consumer. The only asymmetry allowed is local vs
+  remote, enforced by *which socket accepted the request*.
+- **Qt + CMake for the desktop client.** The hard part is the audio path, which needs native
+  audio; WPF cannot cross-compile, which is why the .NET client is Windows-only. A browser
+  client cannot be the primary panel: `getUserMedia` needs a secure context, so the mic is
+  blocked over plain HTTP on a LAN address, and a browser cannot hold a global PTT hotkey when
+  unfocused. A browser PWA is still right for a *phone monitor*, once the hostname has TLS.
+  ⚠️ Qt is LGPLv3 here: link it dynamically and ship the licence texts. Build releases against
+  a Qt **LTS**, not whatever the distro carries.
 
-Guessing a plausible verb from the pattern of its neighbours produced five that do not exist.
-The reference `RadioController.cs` has the real ones:
+---
 
-| what | I guessed | actually |
+## 4. Architecture
+
+### Two listeners, and the split is load-bearing
+| port | binding | behaviour |
 |---|---|---|
-| notch | `BP0<0\|1>;` | **`BC01;` / `BC00;`** — two digits |
-| filter width | `SH0<nn>;` | **`SH00<nn>;`** |
-| RX antenna | `AR<0\|1>;` | **`EX030103<0\|1>;`** — a *menu* item, not a CAT flag |
-| RIT nudge | `RU;` / `RD;` | **`RU<nnnn>;` / `RD<nnnn>;`** — a bare `RU;` is not a command |
-| monitor | `ML0<0\|1>;` | **`ML0000;` / `ML0001;`**, and switching on also restores a level |
+| control | **loopback only** | no session required; a LAN caller is refused by the kernel |
+| dashboard | LAN | only `/api/health` and `/api/auth/status` anonymous; everything else 401 |
 
-Every one would have compiled, shipped, and failed only with the radio attached — the most
-expensive place to find it. **The upstream source is the authority on the protocol.**
+This is what makes "local" mean something, and how `/api/tune/amp` refuses every remote caller.
+Locality is **which socket accepted the request** — never a header, which the caller controls.
 
-`/api/vfo-copy/{a2b,b2a}` are deliberately **not** implemented and 404: there is no CAT verb
-for them. The reference host does a read-modify-write sequence — select source VFO, read
-frequency, select target, write, restore selection — which needs a compound operation on the
-poller thread, not a queued one-liner. A route that silently retuned the wrong VFO would be
-worse than a 404.
+### Two gates, both before routing
+1. **Auth**, defaulting to **DENY**. `/api/ptt/on` answered 401 before it existed, so every
+   route added later is protected unless deliberately listed anonymous. Open-unless-remembered
+   is the shape that fails open.
+2. **The software VFO lock**, which *blocks* frequency-changing routes for every caller. An
+   operator who locks the VFO has said *do not move my frequency*. It applies on both
+   listeners — a local caller is trusted for auth, but the lock is not a permission level.
 
-## The full-route walker (`tools/walk_all_routes.py`) — and how it fails closed
+### One thread owns the serial port
+The serial lock is not re-entrant across threads. **Request threads never touch it.** Handlers
+`Enqueue()` a CAT command; the poller drains the queue at the top of each 200 ms cycle and
+serves `/api/status` entirely from cache. Compound read-modify-write sequences (quick-split,
+vfo-copy, remote-tx, step) go through `EnqueueTask()` and run *on* the poller thread, so a
+status poll cannot land mid-sequence and cache a half-applied state.
 
-The read-only parity check cannot cover routes that key the transmitter. Those are walked
-against the **simulator**, and the tool refuses to run anywhere else:
+Queueing a command marks the slow-polled set dirty so the next cycle **re-reads** it — it does
+not assume the command worked, because an optimistic update lies whenever the rig rejects it.
 
-    GET /api/backend  ->  {"simulated": true}
+### Safety that lives next to the radio
+- **Transmit watchdog**, default 180 s. A client-side timeout protects nothing: close the tab
+  or lose the link while keyed and the rig stays keyed.
+- **Unkey on shutdown.** The watchdog lives *in this process*; if it exits while keyed nothing
+  is left to drop PTT. Shutdown stops the listeners, stops the poller, then drops PTT and
+  **confirms by reading `TX;` back**. Measured 2.3 s idle / 3.3 s keyed, inside the unit's
+  10 s stop timeout — overrunning it would mean SIGKILL and no unkey.
+- **Exclusive serial access**, failing closed. Two processes interleaving commands on one CAT
+  link produce replies attributed to the wrong command.
 
-`/api/backend` exists for exactly this. The reference host does not serve it, so it 404s there
-and the walker refuses. Anything that is not an explicit `simulated:true` — a 404, a
-connection error, a missing field — is a refusal. **There is deliberately no `--force`:** an
-override makes the check advisory, and an advisory check on something that keys a transmitter
-is not a check. Proven against the live host: it refused.
+### Audio
+`/ws` RX 22050/16/mono, `/ws/tx` TX 48000/16/mono — the asymmetry is the codec's: capture does
+8000–48000, playback only 32000–48000.
 
-⚠️ **The walker checks the RIG, not the route's own reply.** A route's response is produced by
-the handler under test, so it proves nothing. Every drive case reads the state back out of
+- **One writer thread**, per-connection locking, so frames cannot interleave on a socket.
+- **RX queue bounded at 10, drop the OLDEST** — keeps a listener on live audio instead of an
+  ever-later recording.
+- **TX queue deliberately runs past its bound while keyed** — dropping mid-transmission removes
+  a syllable from someone's sentence. It trims on unkey, so every over starts at the target
+  depth however far the link drifted.
+- **The auth gate runs on the WebSocket upgrade**, so audio is refused before a single frame.
+- `/ws/tx` also requires **`can_transmit`** and a **single-transmitter claim**: a session is not
+  enough, and two clients feeding the rig would interleave two voices into one carrier.
+
+---
+
+## 5. The tools, and why each fails closed
+
+| tool | what it does | how it refuses to hurt the station |
+|---|---|---|
+| `tools/parity_check.py` | compares route **keys and types** against the reference host | allowlist **plus** a rule that any route whose final segment is not a read is refused. `on`/`toggle`/`tune` are not reads |
+| `tools/walk_all_routes.py` | fires **state-changing** routes, including PTT | requires `/api/backend` to prove `simulated:true`. A 404 — which is what the reference host returns — is a refusal. **No `--force`** |
+| `tools/coverage.py` | probes every reference route to measure what is implemented | same `/api/backend` guard |
+| `--selftest` (host and client) | walks the startup path and exits | CI runs it under an external **timeout**: a hang is a failure |
+| `--screenshot` (client) | renders the live window to a PNG | the only way to inspect a UI on a headless box |
+
+**A scope lock the operator must remember is not a lock.** Most of this API is state-changing
+and many of those routes are GETs; a walker that simply fetched all 141 would key the
+transmitter, change mode and retune the amp. So the guarantee is structural. Proven, not
+assumed: the walker refuses the live host, and `/api/ptt/on`, `/api/mode/cw`, `/api/tune/amp`
+and `/api/power/max` are all rejected by the parity guard.
+
+⚠️ **The walker asserts against the RIG, not the route's own reply.** A route's response comes
+from the handler under test, so it proves nothing. Every drive case reads state back out of
 `/api/status` or `/api/status/full`.
 
-Result: **12/12 read-only, 39/39 driven and verified by reading back, 38/38 smoke.**
-
-### The walk found a real defect, not just test flake
-Fourteen cases failed, all of them fields on `/api/status/full` — which was polled only every
-fifth cycle. Toggling the noise blanker left the panel showing the old value for up to a
-second, so an operator would press it again and genuinely turn it back off.
-
-Fixed by marking the slow set dirty whenever a command is queued, so the next cycle re-reads
-it. **It re-reads the rig; it does not assume the command worked** — an optimistic local
-update would be a lie whenever the radio rejected the command.
-
-## Config — and it ships no station
-
-`src/config.h`, keys matching the reference host so one file describes either implementation.
-Example at `deploy/config.example.json`.
-
-⚠️ **No default names a host or an address.** `radio_port` empty means use the simulator;
-`tgxl_host`/`kmtronic_host` empty means that feature is off. This is a test, not a convention
-(`tests/test_config.cpp` asserts the defaults are empty).
-
-> **Worth telling Joe:** the reference host's `Models/Config.cs` carries station LAN addresses
-> as compiled-in defaults (`tgxl_host`, `kmtronic_host`) and a default `web_username`. That
-> source is public.
-
-### A bad config is FATAL, not ignored
-A missing file is fine — defaults are usable. A file that **exists and is malformed** exits 1.
-Starting on defaults would run the station on settings the operator did not choose and
-believes they changed, **including the transmit watchdog**.
-
-Refusals, each tested: malformed JSON, non-object top level, wrong value types, a `web_users`
-entry with no `password_hash` (an account that cannot authenticate is a mistake, not a
-disabled account), and `api_port == dashboard_port`. A **negative** `ptt_timeout_seconds` is
-refused because it is a typo; **zero** is accepted because it means deliberately disabled.
-
-### ⚠️ A test passed for the wrong reason, and it found a real defect
-The port-collision case passed — while reporting the *watchdog* error, because the test reused
-one `Config` across cases and a rejected value from an earlier case was still in it. That was
-possible only because `Load()` wrote into its output as it parsed. So **a rejected config left
-the caller holding a half-applied one**: some keys from the file, the rest defaults. Now it
-parses into a local and assigns only on success, and the test asserts a rejected load changes
-nothing and fails for the *named* reason.
-
-## Capability honesty
-
-CARRYOVER.md section 1: the reference Linux build's `/api/record/start` answers
-`{"status":"ok","recording":true}` while `Start()` sets `IsRecording = false`. A 200 means the
-route exists, not that anything is recording.
-
-So `/api/record/status` and `/api/tx-audio/status` report `available:false` **with a reason**,
-rather than a cheerful 200 that only proves the route was registered. The client greys the
-feature out instead of showing a button that silently does nothing.
-
-## TX audio — `/ws/tx`
-
-The path that puts a human voice on the air, so it carries two gates the RX stream does not.
-48000 Hz / 16-bit / mono (the codec's playback only supports 32000-48000, which is why TX is
-48k while RX is 22050 — the asymmetry is the device's, not a choice).
-
-| gate | why |
-|---|---|
-| **session** | refused at the upgrade, like `/ws` |
-| **`can_transmit`** | a session is not enough. The reference host carries a per-user transmit permission, and someone who can log in to *listen* must not be able to key the rig. |
-| **one transmitter** | two clients feeding the rig would interleave two voices into one carrier. `Claim()` refuses — it does not queue and does not evict. |
-
-All three verified over the network: no session → no handshake at all; `listener`
-(`can_transmit:false`) → `{"type":"error","message":"not permitted to transmit"}`; `joe` →
-config frame and 25 accepted frames.
-
-### ⚠️ Trim only between overs — the queue is deliberately unbounded while keyed
-Dropping TX audio mid-transmission removes a syllable from someone's sentence. So while the
-rig is **keyed** the queue is allowed to run past its bound (measured: 61 chunks against a
-bound of 25, **zero drops**); the moment the operator unkeys, the backlog is trimmed so the
-next over starts at the target depth however far the link drifted. Straight from
-CARRYOVER.md section 3.
-
-### Three real bugs the verification caught
-
-1. **A refused client's disconnect stole the active transmitter.** Releasing "whoever
-   currently holds it" on close meant a second client that was *rejected* still got a close
-   callback, and that callback handed away the first operator's transmitter mid-over. The
-   claim is now tracked **per connection**; only the connection that claimed it may release
-   it. Verified under exactly that sequence.
-2. **Nothing pumped the queue.** Audio arrived, was accepted, reported success — and moved
-   nowhere. A working-looking path connected to nothing, which is the `/api/record/start`
-   lie again. There is now a pump thread.
-3. **The pump thread had no destructor to join it**, so destroying the receiver called
-   `std::terminate`. That turned a clean "failed to bind, exit 1" into **SIGABRT** on every
-   early-return path. Caught only because the selftest's exit code was checked rather than
-   its output — `exit=134`, not `exit=1`.
-
-`available` stays **false** with the null sink and says why: it reflects whether audio can
-actually reach the rig, not whether the route exists.
-
-## Route coverage — measured, not asserted (`tools/coverage.py`)
-
-`tools/coverage.py` probes every route in the reference host's own dispatch table against the
-simulator (same fail-closed `/api/backend` guard as the walker). It went **88 → 131 of 141**.
-
-The remaining 10, all accounted for:
-
-| routes | why |
-|---|---|
-| `/api/record/{start,stop,toggle,toggle/stereo,replay}` | needs ALSA capture and file writing — hardware window. `/api/record/status` already reports `available:false` honestly. |
-| `/api/ptt/{off,toggle,unkey}` | needs the tail-wait against `/proc/asound` — hardware window |
-| `/api/cluster/spots`, `/api/session` | **absent on the reference host too** — it answers "Unknown route". Matching it is correct. |
-
-So the backend is complete except for what genuinely needs the radio.
-
-### ⚠️ More invented shapes, caught by reading the reference
-A first pass guessed these and every one was wrong:
-
-- `/api/volume/get` returns a **percentage plus raw** (`volume: v*100/255, raw: v`), not the
-  raw value. A client would have shown 0-255 in a 0-100 control.
-- `/api/rf-gain/get` — same percent+raw shape.
-- `/api/volume/{up,down}` step by **13**, not 16, and answer a bare `{"status":"ok"}` with no
-  level in it.
-- The frequency-entry buffer: `<=3` digits is whole MHz, otherwise the last three are kHz,
-  and the mode follows the **band plan** — 60m is USB and 30m is CW, so the naive
-  "below 10 MHz is LSB" rule gets both wrong.
-
-### ⚠️ TWO DIFFERENT LOCKS
-`/api/lock/*` is the **rig's** lock (CAT `LK`), reported as `lock` in `/api/status/full`.
-`/api/vfo-lock/*` is a **software** lock the host keeps, reported as `vfo_locked` in
-`/api/status`. Confirmed by reading `BuildApiStatus`, which takes `vfo_locked` from config,
-not from the radio. The walker asserted the wrong one and "found a regression" that was not
-one — the fix was to the test.
-
-### `tx_timeout_in` is real now
-It reports seconds until the watchdog drops PTT, so **a client counts down the host's
-watchdog instead of inventing its own timeout** — which is the entire point of the watchdog
-living next to the radio. Verified counting 110 → 109 → 106 while keyed.
-
-### Compound operations run on the poller thread
-`quick-split`, `vfo-copy` and `remote-tx` are read-modify-write sequences, not single verbs.
-`RadioPoller::EnqueueTask()` runs a closure with direct CAT access on the poller thread.
-Doing it from a request thread would need the serial port from two threads; doing it as
-separate queued commands would let a status poll land mid-sequence and cache a half-applied
-state.
-
-### The tuners are three different things
-`/api/tune` is the **rig's internal ATU** (`AC002;`) and CARRYOVER.md section 2 says it is the
-wrong tuner for this station; `/api/tune/tgxl` is the right one. Each names itself in its
-reply so a confirmation cannot just say "tuning". **`/api/tune/amp` refuses every remote
-caller**, and the check is which listener accepted the request — the control port is bound to
-loopback, so "local" is a kernel guarantee.
-
-### Parity guard, restructured
-The substring blocklist grew brittle as read-only routes like `/api/volume/get` and
-`/api/record/status` kept colliding with it. It now refuses any route whose **final segment
-is not a read** (`get`, `status`, `meters`, …). Stronger: a state-changing route added to the
-allowlist by mistake still cannot fire, because `on`/`toggle`/`tune` are not reads.
-
-Parity is **25/25** with 4 listed deliberate divergences — three of them extra `available`
-fields on capabilities that are not implemented, which is the honest-capability rule winning
-over strict shape matching. Extra keys are additive and clients ignore unknown fields.
-
-## ⚠️ The coverage number was measuring the wrong thing
-
-"131 of 141" counted only the reference host's **exact** routes. It also has **18 prefix
-route families** in a separate table, and they are the parameterised half of the surface —
-the half a panel actually uses:
-
-`/api/band/<band>`, `/api/freq/digit/<n>` (the keypad), `/api/freq/set/<hz>`,
-`/api/step/<hz>/<up|down>`, `/api/mode/<name>`, `/api/volume/set/<pct>`,
-`/api/power/set/<w>`, `/api/rf-gain/set/<pct>`, `/api/cw-speed/set/<wpm>`,
-`/api/memory/recall/<n>`, `/api/preset/<name>`, `/api/rxant/<n>`,
-`/api/remote-tx/gain/<n>`, `/api/ssb-out-level/set/<n>`, `/api/tune/amp/*`,
-`/api/cw/{memory,send}/*`, `/api/voice/play/<n>`.
-
-All implemented now, with prefix dispatch matching **longest prefix first** so `/api/freq/`
-cannot shadow `/api/freq/set/`.
-
-**A measurement that only counts what you thought to look for is not coverage.** The number
-was right and the question was wrong.
-
-## ⚠️ The software VFO lock BLOCKS routes — it is not a UI hint
-
-An operator who locks the VFO has said *do not move my frequency*, and the host enforces it
-for **every** client, including one that has never heard of the lock. Blocked:
-`/api/freq/{send,clear,backspace}`, `/api/vfo/swap`, `/api/quick-split`, and the
-`/api/freq/set/`, `/api/freq/digit/`, `/api/band/`, `/api/preset/`, `/api/step/` prefixes —
-all answering `{"status":"error","message":"VFO is locked","vfo_locked":true}`.
-
-It runs as a **second gate** beside the auth gate, before dispatch, so a frequency-moving
-route added later is covered without anyone remembering. It applies on both listeners: a
-local caller is trusted for *auth*, but the lock is not a permission level. Walked: 9 routes
-blocked, `/api/mode/usb` still allowed, released cleanly.
-
-### ⚠️ Digits only on the keypad
-A non-digit in the buffer parses to 0 later and tunes the rig to the bottom of its range. The
-reference host carries the same comment, learned the same way.
-
-## Two more test bugs worth naming
-
-- **`/api/volume/set/50` reads back 49, and that is correct.** Percent → raw → percent is
-  lossy in integer maths: `50*255/100 = 127`, `127*100/255 = 49`. The reference does the same
-  arithmetic. A client with a slider should send percent and **trust the readback**, not
-  assume it gets its own number returned. The test was wrong, not the code.
-- A refusal can arrive as 4xx with no parsed body. Checking only the body reported a **pass**
-  for a route that had correctly refused. Check the status.
-
-### ⚠️ And a silent no-op edit
-One patch to the dispatcher did not apply — its anchor text no longer matched after an
-earlier edit — and the string replace reported nothing. Prefix routing was simply absent, and
-`/api/mode/cw` still worked because it is *also* an exact route, which nearly hid it. Edits
-now assert their anchor exists before writing.
-
-## ⚠️ THE SWEEP FOUND AN OPEN-CARRIER BUG — in both implementations
-
-**There was no unkey on shutdown.** The transmit watchdog lives in the host process. Stop the
-host, restart it, or let it crash while the rig is keyed, and the watchdog dies with it —
-nothing is left to drop PTT. The station sits on an **open carrier with nothing watching at
-all**, which is strictly worse than the stuck-PTT case the watchdog was written for.
-
-The reference host has the same gap: its `ProcessExit` handler only sets a stop event.
-**Worth telling Joe** — it applies to the .NET host running the station today.
-
-Shutdown now, in an order that leaves the RADIO safe rather than the process tidy:
-
-1. stop both listeners, so nothing can key the rig while we are unkeying
-2. stop the poller, so exactly one thread owns the serial port
-3. **drop PTT and confirm the rig stopped**, by reading `TX;` back — not by assuming the
-   command landed
-4. stop the audio threads
-
-Measured: **2.3 s idle, 3.3 s keyed**, comfortably inside the unit's `TimeoutStopSec=10`. That
-margin matters: if shutdown overran the timeout systemd would `SIGKILL`, and the unkey would
-never happen.
-
-⚠️ The signal handler sets an atomic and notifies — nothing else. An earlier version set a
-flag nothing read, which made the process unkillable. **The rule: act, or do not install a
-handler.**
-
-⚠️ And I called this a hang before measuring it. The idle case printed "shutting down" and I
-checked for the process 2 s later, saw it, and reported a deadlock. It was simply still
-shutting down. *Measure the duration; do not infer a hang from one early look.*
-
-## Still not implemented, and now known rather than assumed
-
-- **19 `/api/admin/*` routes** — user add/remove/password, transmit permission, sessions,
-  kick, lockdown, presets, flexknob buttons, mic release, rport gain, tx devices. Adding a
-  user currently means editing the config file by hand. Wanted before this is a product; not
-  blocking a first client.
-- **`/audio`** (an HTTP audio endpoint alongside `/ws`) and **`/wsflexknob`** (the FlexKnob
-  controller) — no FlexKnob hardware here.
-- The **CAT proxy** (`cat_proxy_enabled`, rigctld-style TCP passthrough).
-- The static web UI the reference host serves from `wwwroot`.
-
-## The Qt client
-
-`client/`, Qt 6 + CMake, building alongside the host. Chosen because the hard part of this
-project is the audio path — latency, buffer depth, the PTT tail — which needs native audio,
-and because WPF cannot cross-compile (CARRYOVER.md section 7), which is why the .NET client is
-Windows-only and needs a Windows CI runner. Qt gives one source for Windows, Linux and macOS
-in the same language as the host.
-
-**Rejected, with reasons:** a browser client cannot be the primary panel — `getUserMedia`
-requires a secure context, so the microphone is blocked over plain HTTP on a LAN address, and
-a browser cannot hold a global PTT hotkey when unfocused. Tauri/Electron would add a second
-toolchain for a UI whose hard part is audio, where native wins. A browser PWA is still the
-right answer for a *phone monitor*, once the hostname has TLS.
-
-### Section 6 traps, designed in rather than discovered
-- **Audio devices by NAME, never index** — indices shift when USB devices come and go.
-  A remembered device that has gone falls back to the **system default**, never to "the first
-  in the list", which is arbitrary.
-- **Settings outside the install directory** (`QSettings`, user scope) so updates cannot
-  overwrite them, and **no password is ever stored** — if an older build wrote one, `Load()`
-  removes it.
-- **No default host.** Verified by grep: no address appears anywhere in `client/src`.
-- **Window geometry clamped to the work area and re-centred** if it would land off-screen. A
-  window taller than the display puts its title bar out of reach and the app cannot be closed.
-- **Unknown flags abort.**
-
-### Things the panel does that a naive client would not
-- **The PTT button reflects the RIG's `tx` state**, never its own checked state. A button that
-  looks keyed while the rig is not is worse than no indicator.
-- **RX is muted from the rig's `tx`**, so every PTT source behaves alike, and the queue is
-  dropped on unmute so the operator returns to LIVE audio rather than a replay of themselves
-  (CARRYOVER.md section 4c, delayed auditory feedback).
-- **It counts down the HOST's watchdog** using `tx_timeout_in` instead of inventing its own.
-- **`stale` is shown, not hidden** — the readout greys and says so. The host reports
-  `cache_age_ms` precisely because a stale frequency once looked live for hours.
-- **"arriving" and "playing" are reported separately.** A stream that arrives but is not
-  audible is a *device* problem; one that does not arrive is a *link or auth* problem.
-  Collapsing both into "no audio" sends people to the wrong fix.
-
-### ⚠️ QWebSocket does not share the REST cookie jar
-The audio stream was refused at the upgrade and the panel simply had no receiver. The session
-token is now pulled from the cookie jar and passed as `?token=` — which is exactly why the
-host accepts that transport, since a browser cannot set headers on a WebSocket handshake
-either.
-
-### Verified by LOOKING at it
-`--screenshot` connects, waits for real poll data, renders the window to a PNG and exits. On a
-headless build box that is the only way to inspect what the panel actually draws, and claiming
-a UI works without looking at it is guessing. Captured: **7.200.000 / LSB / VFO A / 100 W**
-driven through the API, `cache 176 ms`, and **`audio: 43.1 KiB/s in (no playable device)`** —
-the exact rate CARRYOVER.md section 3 records from the live station, arriving in the client,
-with an honest note that this VM has no sound card.
-
-`--selftest` runs under `QT_QPA_PLATFORM=offscreen` in ctest, because CI must run the binary.
-
-## Meter calibration — looked up, not invented
-
-The meters were showing raw 0-255 and saying `uncalibrated`, which was honest but not useful.
-The numbers now come from **Hamlib's Yaesu calibration tables**, which are contributed by
-people with the actual radios. Better than an assumption; still not a measurement of this
-station, and every reading says which it is.
-
-**The calibration lives in the HOST**, and `/api/meters/scale` serves the table and the tick
-positions. Rig-specific knowledge belongs with the rig, not copy-pasted into every client:
-swap the radio and every client's scale follows without shipping a new client. The client
-draws **unlabelled** ticks when the host does not supply a scale, rather than inventing one.
-
-### ⚠️ Three assumptions that would each have been wrong
+---
+
+## 6. Rules learned the hard way
+
+These are the expensive lessons. Each cost real debugging, on this project or the last.
+
+### Measurement
+- **A test that cannot fail is not a test.** The obvious staleness check — `SIGSTOP` the
+  process, re-query — freezes the HTTP server too, so the cache refreshes the instant the
+  process resumes. It looks like a pass and measures nothing. Same shape as CARRYOVER.md §3's
+  byte-count latency estimate, which read ~0 while 435 ms sat in the ALSA buffer: **an estimate
+  whose failure mode is zero looks exactly like a working measurement.**
+- **A measurement that counts only what you thought to look for is not coverage.** "131 of 141"
+  counted only *exact* routes; 18 prefix families — the keypad, band select, every numeric
+  setter — were not in the number at all.
+- **Check the instrument before blaming the subject.** The first `/ws` probe reported a wrong
+  first frame; the bug was in the probe, which discarded bytes the handshake `recv` had already
+  pulled in.
+- **Do not infer a hang from one early look.** Shutdown was reported as a deadlock; it was
+  simply still shutting down. Measure the duration.
+- **Look at the actual output.** A UI is not verified until someone has seen it render.
+
+### Truth in what the software says
+- **If a capability is absent, its status route must say so.** The reference
+  `/api/record/start` answers `{"status":"ok","recording":true}` while `Start()` sets
+  `IsRecording = false`. A 200 means the route exists, not that anything happened.
+- **Never fall back to a plausible value.** A failed CAT exchange reports *disconnected*, never
+  the previous reading — that fallback is the 3.6-hour-stale-frequency bug. A named CAT device
+  that cannot be opened **exits 1** rather than quietly using the simulator.
+- **Report "arriving" and "playing" separately.** A stream that arrives but is inaudible is a
+  device problem; one that does not arrive is a link or auth problem.
+- **Do not invent a scale.** See §7.
+
+### Protocol and porting
+- **Read the driver; do not infer the verb.** Five CAT verbs guessed from the pattern of their
+  neighbours were wrong: notch is `BC01`/`BC00` not `BP0`, width is `SH00<nn>` not `SH0<nn>`,
+  RX antenna is the `EX030103` *menu item* not a CAT flag, RIT nudges carry a four-digit offset
+  so a bare `RU;` is not a command, and monitor is `ML0000`/`ML0001` with a level restore.
+  All five would have compiled, shipped, and failed only with the radio attached.
+- **Match shapes exactly, and read them off the wire.** `/api/volume/get` returns a *percentage
+  plus raw*; volume steps by **13**; `/api/volume/set/50` reads back **49** because
+  percent→raw→percent is lossy in integer maths — and the reference does the same, so 49 is
+  correct. A client with a slider should send percent and **trust the readback**.
+- **Two locks that are not interchangeable**: `/api/lock/*` is the rig's CAT lock (`lock` in
+  `/api/status/full`); `/api/vfo-lock/*` is a software lock (`vfo_locked` in `/api/status`).
+- **`/api/tune` is the rig's internal ATU and is the wrong tuner for this station.** Each tuner
+  names itself in its reply so a confirmation cannot just say "tuning".
+- **Flush serial input before each command.** Otherwise a leftover reply from a timed-out
+  command answers the *next* one, and every reply after that is off by one — each individually
+  plausible. A frequency that is really the mode.
+
+### Process
+- **A signal handler must act, or not exist.** One that set a flag nothing read made the
+  process unkillable and would have broken every `systemctl restart`.
+- **Join your threads.** A pump thread with no destructor turned a clean "failed to bind,
+  exit 1" into SIGABRT on every early-return path.
+- **A string edit that does not match fails silently.** One dispatcher patch simply did not
+  apply; prefix routing was absent entirely, and it nearly hid because `/api/mode/cw` is *also*
+  an exact route. Edits now assert their anchor exists before writing.
+- **Reject a bad config; do not fall back to defaults.** Starting on defaults runs the station
+  on settings the operator did not choose and believes they changed — including the watchdog.
+  And parse into a local, assigning only on success: writing as you go leaves a caller holding
+  a half-applied config, which also made one test pass for the wrong reason.
+- **Isolate test cases.** A shared object carried a rejected value into the next case, which
+  then passed while reporting the wrong error.
+
+---
+
+## 7. Meter calibration — looked up, not invented
+
+Numbers come from **Hamlib's Yaesu tables**, contributed by people with the actual radios.
+Better than an assumption; still not a measurement of this station, and every reading says so.
+The calibration lives in the **host** and is served by `/api/meters/scale`, so swapping the rig
+moves every client's scale without shipping a new client. A client given no scale draws
+**unlabelled** ticks rather than inventing one.
+
+⚠️ **Three assumptions that would each have been wrong:**
 
 | meter | the obvious guess | what the table says |
 |---|---|---|
-| **S-meter** | S9 at the middle of the range, raw 128 | **S9 is raw 160.** Raw 128 is about **S7** — the guess is ~1.5 S-units high, the difference between "5 by 9" and "5 by 7" in a report passed to another operator |
-| **ALC** | full scale at raw 255 | **full scale is raw 64.** A `raw/255` bar reads **25%** when ALC is actually at 100% — under-reading the meter that says the transmit audio is over-driven |
-| **Power** | raw 255 = 100 W, per the table | that table is for a **100 W** radio. This station's rig is **200 W**, so watts would read **half** |
+| S-meter | S9 at midpoint, raw 128 | **S9 is raw 160**; raw 128 is about **S7** — 1.5 S-units high, the difference between "5 by 9" and "5 by 7" in a report passed to another operator |
+| ALC | full scale at raw 255 | **full scale is raw 64**; a `raw/255` bar reads **25%** when ALC is at 100% |
+| Power | raw 255 = 100 W per the table | that table is for a **100 W** radio; this rig is **200 W**, so watts would read **half** |
 
-Power is therefore reported as **percent of rated output**, never watts — which is what the
-curve actually describes. Watts belong to whoever knows the rig's rating, and the host is not
-told it.
+Power is reported as **percent of rated output**, never watts. SWR is a ratio, turns red at
+2:1, and comes from a hamlib *default tested on an FT-991* — curve shape right, breakpoints
+unconfirmed, so one decimal not three.
 
-SWR is a ratio and turns red at 2:1, where an operator wants to stop and look at the antenna.
-Its table is a hamlib *default* tested on an **FT-991**, not this rig: the curve shape is
-right, the exact breakpoints are unconfirmed, so it is reported to one decimal rather than
-three.
+⚠️ Hamlib defines the S-table for the FTDX-101**D**; its source says the code is shared with
+the **MP**. Treated as applying to both. **If a reading looks wrong on the real radio, this is
+the first assumption to check** — and the fix is to measure against a known source, not to
+nudge the table until it looks nicer.
 
-Added fields are **additive** — `s_meter_db`, `s_unit`, `swr_ratio`, `alc_pct`, `power_pct` —
-and each carries its unit in its name, so no client can mistake a percentage for watts. The
-original raw four are untouched.
-
-Sources: Hamlib `rigs/yaesu/ftdx101.h` (`FTDX101D_STR_CAL`) and `rigs/yaesu/newcat.c`
+Sources: hamlib `rigs/yaesu/ftdx101.h` (`FTDX101D_STR_CAL`) and `rigs/yaesu/newcat.c`
 (`yaesu_default_swr_cal`, `yaesu_default_alc_cal`, `yaesu_default_rfpower_meter_cal`).
 
-⚠️ Hamlib defines the S-meter table for the FTDX-101**D**; its source states the code is
-shared with the **MP**, which has the same receiver and a bigger PA. Treated as applying to
-both. **If a reading ever looks wrong on the real radio, this is the first assumption to
-check** — and the fix is to measure against a known source, not to nudge the table until it
-looks nicer.
+---
 
-## ⚠️ A test that cannot fail is not a test
+## 8. The client
 
-The obvious staleness check — `SIGSTOP` the process, re-query — is worthless. It freezes the
-HTTP server too, so the poller refreshes the cache the instant the process resumes and the
-answer comes back fresh. It looks like a pass and measures nothing. Same shape as the
-byte-count latency estimate in CARRYOVER.md section 3, which read ~0 in steady state while
-435 ms sat in the ALSA buffer: **an estimate whose failure mode is zero looks exactly like a
-working measurement.**
+Qt 6 + CMake. Section-6 traps designed in rather than discovered: audio devices by **name**
+with fallback to the **system default** (never index 0), settings outside the install directory
+with **no password ever stored**, **no default host** anywhere in the source, window geometry
+**clamped to the work area** and re-centred, unknown flags abort.
 
-The real test stops the poller and watches the cache age: `99ms` → `2200ms stale=true`
-against a 1500 ms threshold.
+Things it does that a naive client would not:
+- the **PTT button reflects the rig's `tx`**, never its own checked state;
+- **DSP toggles reflect the rig**, so another client or the radio's front panel is followed;
+- **RX mutes from the rig's `tx`** and drops the queue on unmute, so the operator returns to
+  live audio rather than a replay of themselves (delayed auditory feedback, CARRYOVER.md §4c);
+- it **counts down the host's watchdog** via `tx_timeout_in`;
+- it **shows `stale`** instead of hiding it — the readout greys out.
 
-## Done
+⚠️ **The panel lives in a `QScrollArea`, and that is load-bearing.** Clamping the window
+geometry is not enough on its own: Qt honours the layout's minimum size hint, so a panel taller
+than the work area forces the window bigger regardless of what `setGeometry` asked for — and
+then the title bar is off-screen and the app cannot be reached at all. The selftest caught this
+the moment the DSP row and keypad were added, which is exactly what it is for.
 
-- CMake + Ninja, C++23, cpp-httplib pinned, OpenSSL for PBKDF2.
-- `/api/health`, `/api/status`, `/api/auth/{login,logout,status}`, and the core operating
-  routes: mode, vfo, split, lock, power, freq reads.
-- 3 tests under ctest: staleness, auth, watchdog.
-- Verified by driving the simulated rig through the API over the network and reading state
-  back — not from localhost.
+⚠️ **`QWebSocket` does not share the REST cookie jar.** The audio stream was refused at the
+upgrade and the panel silently had no receiver. The token goes as `?token=`, which is exactly
+why the host accepts that transport.
+
+---
+
+## 9. Adding radios nobody here owns
+
+The simulator makes this tractable: look up the CAT set, write a profile, run the walker
+against it. Two things to plan for.
+
+- The verbs are currently **hardcoded for the FTDX-101**. A second radio wants a **rig-driver
+  abstraction** — a per-model verb table that both the real transport and the simulator read
+  from. Worth doing before the second radio, not the third.
+- ⚠️ **A simulator written from the manual tests your reading of the manual, not the radio.**
+  It catches parser bugs, field offsets and wrong widths — most of them — but not a manual that
+  is wrong or a rig that deviates. A new model ships as *believed working, untested on
+  hardware* until someone with that radio confirms. Cross-check verbs against hamlib, which is
+  validated against real rigs rather than PDFs.
+
+---
+
+## 10. Next session: start here
+
+1. Read §1 and §2. Check the push blocker is still standing.
+2. `HAMDECK_BUILD_HOST=<target> ./sync.sh`, then `ctest` — 8 tests should pass.
+3. Start the host, run `tools/coverage.py`, `tools/walk_all_routes.py` and
+   `tools/parity_check.py` against it. All three should be clean.
+4. Then pick up: **client TX audio + F13 hotkey** (no radio needed), or **book a hardware
+   window** for ALSA, the PTT tail-wait and `/api/ptt/off`.
