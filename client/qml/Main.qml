@@ -35,10 +35,21 @@ ApplicationWindow {
         Keys.onReleased: (e) => backend.keyReleased(e.key, e.isAutoRepeat)
     }
 
+    // ⚠️ Shown until a SESSION EXISTS, not until a host is configured. A
+    // remembered host proves nothing about whether the credentials still work
+    // or the host is reachable.
+    ConnectPanel {
+        anchors.fill: parent
+        visible: !backend.sessionActive
+        onConnectRequested: (host, port, user, password) =>
+            backend.connectTo(host, port, user, password)
+    }
+
     ScrollView {
         anchors.fill: parent
         contentWidth: availableWidth
         clip: true
+        visible: backend.sessionActive
 
         ColumnLayout {
             width: win.width
@@ -303,11 +314,13 @@ ApplicationWindow {
             }
             Item { Layout.fillWidth: true }
             Text {
+                visible: backend.sessionActive
                 text: "tx: " + backend.txStatus.replace("tx: ", "")
                 font.family: Theme.body; font.pixelSize: 11
                 color: backend.testTone && backend.armed ? Theme.txRed : Theme.dim
             }
             Text {
+                visible: backend.sessionActive
                 text: "· audio: " + backend.audioStatus
                 font.family: Theme.body; font.pixelSize: 11
                 color: Theme.dim
@@ -316,9 +329,27 @@ ApplicationWindow {
                 // Say plainly that the hotkey is focus-only. Calling it global
                 // when it is not is the same lie as a status route reporting ok
                 // for something it never did.
+                visible: backend.sessionActive
                 text: "· PTT key: window focus only"
                 font.family: Theme.body; font.pixelSize: 11
                 color: Theme.dim
+            }
+            Text {
+                // Nothing to disconnect from until there is a session.
+                visible: backend.sessionActive
+                text: "· disconnect"
+                font.family: Theme.body; font.pixelSize: 11
+                font.underline: discMouse.containsMouse
+                color: discMouse.containsMouse ? Theme.cyan : Theme.dim
+                MouseArea {
+                    id: discMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    // Returns to the connect screen and drops the session, so
+                    // the panel cannot sit there showing a rig it no longer has.
+                    onClicked: backend.disconnectSession()
+                }
             }
         }
     }

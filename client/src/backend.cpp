@@ -122,9 +122,20 @@ void Backend::setHotkeyHold(bool hold) {
 
 bool Backend::connectTo(const QString& host, int port, const QString& user,
                         const QString& password) {
-  settings_.host = host;
+  // ⚠️ Refuse an empty host here rather than letting it become a request to
+  // "http://:5002". There is deliberately no default host to fall back on.
+  if (host.trimmed().isEmpty() || user.trimmed().isEmpty()) {
+    last_error_ = "host and username are required";
+    emit sessionChanged();
+    return false;
+  }
+  connecting_ = true;
+  last_error_.clear();
+  emit sessionChanged();
+
+  settings_.host = host.trimmed();
   settings_.port = port;
-  settings_.username = user;
+  settings_.username = user.trimmed();
   api_.SetBaseUrl(settings_.BaseUrl());
 
   bool ok = false;
@@ -135,10 +146,21 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
     loop.quit();
   });
   loop.exec();
+  connecting_ = false;
   if (!ok) {
+    // The host distinguishes bad credentials (401) from the lockout (429), and
+    // that difference is passed straight through. A client that flattens both
+    // to "login failed" leaves the operator retrying into a five-minute lockout.
+    last_error_ = connection_text_;
+    session_active_ = false;
+    emit sessionChanged();
     emit statusChanged();
     return false;
   }
+  session_active_ = true;
+  emit sessionChanged();
+  // ⚠️ The host and username are remembered; the PASSWORD never is. Losing it
+  // costs a login; storing it costs a credential on disk.
   settings_.Save();
 
   // The meter scale comes from the HOST, so the face follows the rig. Without
@@ -168,6 +190,22 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
 }
 
 void Backend::send(const QString& path) { api_.Get(path); }
+
+void Backend::disconnectSession() {
+  tx_audio_.Disarm();
+  rx_.Stop();
+  api_.StopPolling();
+  api_.Logout();
+  session_active_ = false;
+  status_ = QJsonObject();
+  full_ = QJsonObject();
+  meters_ = QJsonObject();
+  connection_text_ = "not connected";
+  emit sessionChanged();
+  emit statusChanged();
+  emit statusFullChanged();
+  emit metersChanged();
+}
 
 void Backend::shutdown() {
   static bool done = false;

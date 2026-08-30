@@ -58,6 +58,17 @@ class Backend : public QObject {
   Q_PROPERTY(bool testTone READ testTone CONSTANT)
   Q_PROPERTY(QString connectionText READ connectionText NOTIFY statusChanged)
 
+  // ── Session ──
+  // ⚠️ sessionActive is about having LOGGED IN, which is not the same as the
+  // rig being reachable. A host can answer perfectly while the radio is off, and
+  // the panel must be able to say which of those is wrong.
+  Q_PROPERTY(bool sessionActive READ sessionActive NOTIFY sessionChanged)
+  Q_PROPERTY(bool connecting READ connecting NOTIFY sessionChanged)
+  Q_PROPERTY(QString lastError READ lastError NOTIFY sessionChanged)
+  Q_PROPERTY(QString savedHost READ savedHost CONSTANT)
+  Q_PROPERTY(int savedPort READ savedPort CONSTANT)
+  Q_PROPERTY(QString savedUser READ savedUser CONSTANT)
+
   // ── Hotkey ──
   Q_PROPERTY(QVariantList hotkeyChoices READ hotkeyChoices CONSTANT)
   Q_PROPERTY(int hotkeyIndex READ hotkeyIndex WRITE setHotkeyIndex NOTIFY hotkeyChanged)
@@ -84,6 +95,7 @@ class Backend : public QObject {
   // in ~ApiClient. The Widgets front end did this in closeEvent and never saw
   // it; the QML one had no equivalent until now.
   Q_INVOKABLE void shutdown();
+  Q_INVOKABLE void disconnectSession();
 
   QString freqText() const;
   QString mode() const { return status_.value("mode").toString("—"); }
@@ -112,6 +124,13 @@ class Backend : public QObject {
   bool testTone() const { return tx_audio_.using_test_tone(); }
   QString connectionText() const { return connection_text_; }
 
+  bool sessionActive() const { return session_active_; }
+  bool connecting() const { return connecting_; }
+  QString lastError() const { return last_error_; }
+  QString savedHost() const { return settings_.host; }
+  int savedPort() const { return settings_.port; }
+  QString savedUser() const { return settings_.username; }
+
   QVariantList hotkeyChoices() const;
   int hotkeyIndex() const { return hotkey_index_; }
   void setHotkeyIndex(int i);
@@ -126,6 +145,7 @@ class Backend : public QObject {
   void audioChanged();
   void txChanged();
   void hotkeyChanged();
+  void sessionChanged();
 
  private:
   Settings settings_;
@@ -140,4 +160,7 @@ class Backend : public QObject {
   QString connection_text_ = "not connected";
   int hotkey_index_ = 0;
   bool was_tx_ = false;
+  bool session_active_ = false;
+  bool connecting_ = false;
+  QString last_error_;
 };

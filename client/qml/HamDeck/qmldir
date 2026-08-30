@@ -5,3 +5,5 @@ PanelKey 1.0 PanelKey.qml
 Group 1.0 Group.qml
 SMeter 1.0 SMeter.qml
 Readout 1.0 Readout.qml
+ConnectPanel 1.0 ConnectPanel.qml
+Field 1.0 Field.qml

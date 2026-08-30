@@ -8,6 +8,8 @@
     <file>qml/HamDeck/Group.qml</file>
     <file>qml/HamDeck/SMeter.qml</file>
     <file>qml/HamDeck/Readout.qml</file>
+    <file>qml/HamDeck/ConnectPanel.qml</file>
+    <file>qml/HamDeck/Field.qml</file>
     <file alias="fonts/BarlowCondensed-SemiBold.ttf">fonts/BarlowCondensed-SemiBold.ttf</file>
     <file alias="fonts/BarlowCondensed-Bold.ttf">fonts/BarlowCondensed-Bold.ttf</file>
     <file alias="fonts/IBMPlexSans.ttf">fonts/IBMPlexSans.ttf</file>
