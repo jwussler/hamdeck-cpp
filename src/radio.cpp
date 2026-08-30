@@ -47,7 +47,27 @@ void RadioPoller::Enqueue(const std::string& cat_command) {
   full_dirty_.store(true);
 }
 
+void RadioPoller::EnqueueTask(std::function<void(CatTransport&)> task) {
+  {
+    std::lock_guard<std::mutex> lock(queue_mu_);
+    tasks_.push_back(std::move(task));
+  }
+  full_dirty_.store(true);
+}
+
 void RadioPoller::DrainQueue() {
+  // Tasks first: a compound sequence should not have a loose command land in
+  // the middle of it.
+  for (;;) {
+    std::function<void(CatTransport&)> task;
+    {
+      std::lock_guard<std::mutex> lock(queue_mu_);
+      if (tasks_.empty()) break;
+      task = std::move(tasks_.front());
+      tasks_.pop_front();
+    }
+    task(*cat_);
+  }
   for (;;) {
     std::string cmd;
     {
@@ -128,6 +148,7 @@ void RadioPoller::PollOnce() {
     s.agc = snap_.agc; s.vox = snap_.vox; s.comp = snap_.comp; s.mon = snap_.mon;
     s.rit = snap_.rit; s.rit_offset = snap_.rit_offset; s.xit = snap_.xit;
     s.rf_gain = snap_.rf_gain; s.cw_speed = snap_.cw_speed; s.width_idx = snap_.width_idx;
+    s.af_gain = snap_.af_gain; s.sub_af_gain = snap_.sub_af_gain;
   }
   ++cycle_;
 
@@ -135,6 +156,17 @@ void RadioPoller::PollOnce() {
   CheckWatchdog(s.tx);
   std::lock_guard<std::mutex> lock(mu_);
   snap_ = s;
+}
+
+int RadioPoller::TransmitSecondsRemaining() const {
+  const int limit = ptt_timeout_s_.load();
+  if (limit <= 0) return 0;
+  std::lock_guard<std::mutex> lock(mu_);
+  if (!snap_.tx) return 0;
+  const auto held = std::chrono::duration_cast<std::chrono::seconds>(
+      std::chrono::steady_clock::now() - keyed_since_).count();
+  const long long left = limit - held;
+  return left > 0 ? static_cast<int>(left) : 0;
 }
 
 RigSnapshot RadioPoller::Snapshot() const {
@@ -193,6 +225,8 @@ void RadioPoller::PollFull(RigSnapshot& s) {
   if (Flag(cat_->Exchange("XT;"),  2, b))  s.xit = b;
   if (Digits(cat_->Exchange("RG0;"), 3, 3, v)) s.rf_gain = v;
   if (Digits(cat_->Exchange("KS;"),  2, 3, v)) s.cw_speed = v;
+  if (Digits(cat_->Exchange("AG0;"), 3, 3, v)) s.af_gain = v;
+  if (Digits(cat_->Exchange("AG1;"), 3, 3, v)) s.sub_af_gain = v;
   if (Flag(cat_->Exchange("EX030103;"), 8, b)) s.rxant = b;   // ANT3 SELECT menu item
   if (Digits(cat_->Exchange("SH0;"), 4, 2, v)) s.width_idx = v;   // SH00<nn>
   if (auto r = cat_->Exchange("GT0;"); r && r->size() >= 5) {

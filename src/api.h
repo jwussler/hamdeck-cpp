@@ -2,6 +2,7 @@
 
 #include "http.h"
 
+#include <mutex>
 #include <string>
 
 #include "audio.h"
@@ -16,11 +17,29 @@ enum class Listener {
   kDashboard,  // LAN. Session required except for the always-anonymous routes.
 };
 
+// Host-side state that is NOT in the radio: the frequency entry buffer, the
+// pre-mute levels to restore, and the software locks the reference host keeps in
+// its config.
+//
+// ⚠️ It lives here, owned once, because InstallRoutes() runs TWICE - once per
+// listener. Anything declared inside it would exist as two independent copies,
+// so a buffer typed on the dashboard would be invisible to the control port and
+// unmuting on one would restore a level the other never saw.
+struct HostState {
+  std::mutex mu;
+  std::string freq_buffer;
+  int pre_mute_af = 128;
+  int pre_mute_sub_af = 128;
+  bool vfo_locked = false;      // software lock, not the rig's LK
+  bool diversity = false;
+};
+
 struct ApiDeps {
   RadioPoller* poller = nullptr;
   AuthService* auth = nullptr;
   RxAudioStream* rx_audio = nullptr;
   TxAudioReceiver* tx_audio = nullptr;
+  HostState* host = nullptr;
   // True when the CAT backend is the simulator. Surfaced on /api/backend so a
   // test tool can PROVE it is not pointed at the station.
   bool simulated = false;

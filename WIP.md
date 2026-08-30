@@ -480,6 +480,69 @@ CARRYOVER.md section 3.
 `available` stays **false** with the null sink and says why: it reflects whether audio can
 actually reach the rig, not whether the route exists.
 
+## Route coverage — measured, not asserted (`tools/coverage.py`)
+
+`tools/coverage.py` probes every route in the reference host's own dispatch table against the
+simulator (same fail-closed `/api/backend` guard as the walker). It went **88 → 131 of 141**.
+
+The remaining 10, all accounted for:
+
+| routes | why |
+|---|---|
+| `/api/record/{start,stop,toggle,toggle/stereo,replay}` | needs ALSA capture and file writing — hardware window. `/api/record/status` already reports `available:false` honestly. |
+| `/api/ptt/{off,toggle,unkey}` | needs the tail-wait against `/proc/asound` — hardware window |
+| `/api/cluster/spots`, `/api/session` | **absent on the reference host too** — it answers "Unknown route". Matching it is correct. |
+
+So the backend is complete except for what genuinely needs the radio.
+
+### ⚠️ More invented shapes, caught by reading the reference
+A first pass guessed these and every one was wrong:
+
+- `/api/volume/get` returns a **percentage plus raw** (`volume: v*100/255, raw: v`), not the
+  raw value. A client would have shown 0-255 in a 0-100 control.
+- `/api/rf-gain/get` — same percent+raw shape.
+- `/api/volume/{up,down}` step by **13**, not 16, and answer a bare `{"status":"ok"}` with no
+  level in it.
+- The frequency-entry buffer: `<=3` digits is whole MHz, otherwise the last three are kHz,
+  and the mode follows the **band plan** — 60m is USB and 30m is CW, so the naive
+  "below 10 MHz is LSB" rule gets both wrong.
+
+### ⚠️ TWO DIFFERENT LOCKS
+`/api/lock/*` is the **rig's** lock (CAT `LK`), reported as `lock` in `/api/status/full`.
+`/api/vfo-lock/*` is a **software** lock the host keeps, reported as `vfo_locked` in
+`/api/status`. Confirmed by reading `BuildApiStatus`, which takes `vfo_locked` from config,
+not from the radio. The walker asserted the wrong one and "found a regression" that was not
+one — the fix was to the test.
+
+### `tx_timeout_in` is real now
+It reports seconds until the watchdog drops PTT, so **a client counts down the host's
+watchdog instead of inventing its own timeout** — which is the entire point of the watchdog
+living next to the radio. Verified counting 110 → 109 → 106 while keyed.
+
+### Compound operations run on the poller thread
+`quick-split`, `vfo-copy` and `remote-tx` are read-modify-write sequences, not single verbs.
+`RadioPoller::EnqueueTask()` runs a closure with direct CAT access on the poller thread.
+Doing it from a request thread would need the serial port from two threads; doing it as
+separate queued commands would let a status poll land mid-sequence and cache a half-applied
+state.
+
+### The tuners are three different things
+`/api/tune` is the **rig's internal ATU** (`AC002;`) and CARRYOVER.md section 2 says it is the
+wrong tuner for this station; `/api/tune/tgxl` is the right one. Each names itself in its
+reply so a confirmation cannot just say "tuning". **`/api/tune/amp` refuses every remote
+caller**, and the check is which listener accepted the request — the control port is bound to
+loopback, so "local" is a kernel guarantee.
+
+### Parity guard, restructured
+The substring blocklist grew brittle as read-only routes like `/api/volume/get` and
+`/api/record/status` kept colliding with it. It now refuses any route whose **final segment
+is not a read** (`get`, `status`, `meters`, …). Stronger: a state-changing route added to the
+allowlist by mistake still cannot fire, because `on`/`toggle`/`tune` are not reads.
+
+Parity is **25/25** with 4 listed deliberate divergences — three of them extra `available`
+fields on capabilities that are not implemented, which is the honest-capability rule winning
+over strict shape matching. Extra keys are additive and clients ignore unknown fields.
+
 ## ⚠️ A test that cannot fail is not a test
 
 The obvious staleness check — `SIGSTOP` the process, re-query — is worthless. It freezes the

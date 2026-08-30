@@ -44,6 +44,12 @@ std::optional<std::string> SimulatedRig::Exchange(const std::string& cmd) {
   if (cmd == "XT;")  return std::string("XT") + (xit_ ? "1" : "0") + ";";
   if (cmd == "RG0;") return "RG0" + Pad(rf_gain_, 3) + ";";
   if (cmd == "KS;")  return "KS" + Pad(cw_speed_, 3) + ";";
+  if (cmd == "AG0;") return "AG0" + Pad(af_gain_, 3) + ";";
+  if (cmd == "AG1;") return "AG1" + Pad(sub_af_gain_, 3) + ";";
+  if (cmd == "EX010109;") return "EX010109" + Pad(ssb_out_, 3) + ";";
+  if (cmd == "EX010113;") return "EX010113" + Pad(rport_gain_, 3) + ";";
+  if (cmd == "EX010111;") return std::string("EX010111") + (mod_rear_ ? "1" : "0") + ";";
+  if (cmd == "EX010112;") return std::string("EX010112") + (rear_usb_ ? "1" : "0") + ";";
   if (cmd == "SH0;")      return "SH00" + Pad(width_, 2) + ";";
   if (cmd == "EX030103;") return std::string("EX030103") + (rxant_ ? "1" : "0") + ";";
   if (cmd == "RT;")       return std::string("RT") + (rit_ ? "1" : "0") + ";";
@@ -115,6 +121,13 @@ bool SimulatedRig::Send(const std::string& cmd) {
   if (cmd.rfind("RD", 0) == 0 && cmd.size() == 7) { rit_offset_ = -std::stoi(cmd.substr(2, 4)); return true; }
   if (cmd.rfind("SH00", 0) == 0 && cmd.size() == 7) { width_ = std::stoi(cmd.substr(4, 2)); return true; }
   if (cmd == "SV;") { std::swap(freq_a_, freq_b_); return true; }
+  if (cmd.rfind("AG0", 0) == 0 && cmd.size() == 7) { af_gain_     = std::stoi(cmd.substr(3, 3)); return true; }
+  if (cmd.rfind("AG1", 0) == 0 && cmd.size() == 7) { sub_af_gain_ = std::stoi(cmd.substr(3, 3)); return true; }
+  if (cmd.rfind("EX010113", 0) == 0 && cmd.size() == 12) { rport_gain_ = std::stoi(cmd.substr(8, 3)); return true; }
+  if (cmd == "EX0101111;") { mod_rear_ = true;  return true; }
+  if (cmd == "EX0101110;") { mod_rear_ = false; return true; }
+  if (cmd == "EX0101121;") { rear_usb_ = true;  return true; }
+  if (cmd == "EX0101120;") { rear_usb_ = false; return true; }
   if (cmd.rfind("PA0", 0) == 0 && cmd.size() == 5) { preamp_ = cmd[3] - '0'; return true; }
   if (cmd.rfind("GT0", 0) == 0 && cmd.size() == 5) { agc_    = cmd[3] - '0'; return true; }
   if (cmd.rfind("AN0", 0) == 0 && cmd.size() == 5) { ant_    = cmd[3] - '0'; return true; }

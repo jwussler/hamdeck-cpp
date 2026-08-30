@@ -157,11 +157,14 @@ int main(int argc, char** argv) {
   TxAudioReceiver tx_audio(std::make_unique<NullTxSink>(48000));
   tx_audio.Start();
 
+  HostState host_state;
+
   ApiDeps deps;
   deps.poller = &poller;
   deps.auth = &auth;
   deps.rx_audio = &rx_audio;
   deps.tx_audio = &tx_audio;
+  deps.host = &host_state;
   deps.simulated = simulated;
   deps.allow_anonymous_status = config.allow_anonymous_status;
 

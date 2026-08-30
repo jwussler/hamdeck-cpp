@@ -42,16 +42,37 @@ SAFE_ROUTES = [
     "/api/meters",
     "/api/freq",
     "/api/freq-b",
+    "/api/freq/get",
     "/api/power/limit",
+    "/api/volume/get",
+    "/api/rf-gain/get",
+    "/api/cw-speed/get",
+    "/api/ant/get",
+    "/api/ant/rx/get",
+    "/api/vfo-lock/status",
+    "/api/diversity/status",
+    "/api/record/status",
+    "/api/tx-audio/status",
+    "/api/tx-audio/devices",
+    "/api/voice/status",
+    "/api/cw/status",
+    "/api/tune/tgxl/status",
+    "/api/tune/amp/status",
+    "/api/remote-tx/status",
+    "/api/ssb-out-level/get",
 ]
 
-# Belt and braces. Checked against the final URL, not the route name.
-DANGEROUS_PATTERNS = [
-    "ptt", "tx", "tune", "mode/", "power/qrp", "power/low", "power/mid",
-    "power/high", "power/max", "split", "vfo", "record", "keyer", "cw",
-    "ant", "amp", "tgxl", "lock", "mute", "volume", "preamp", "att", "agc",
-    "nb", "nr", "notch", "rit", "xit", "vox", "comp", "mon", "diversity",
-]
+# Belt and braces, restructured: rather than blocklisting substrings - which
+# grew brittle as read-only routes like /api/volume/get and /api/record/status
+# were added and kept colliding with it - a route is refused unless its FINAL
+# SEGMENT is a read. Everything that acts on the radio ends in a verb.
+#
+# This is the stronger form: a new state-changing route added to SAFE_ROUTES by
+# mistake still cannot fire, because "on"/"toggle"/"tune" are not reads.
+READ_SUFFIXES = {
+    "health", "status", "full", "meters", "freq", "freq-b", "get", "limit",
+    "devices", "spots", "session",
+}
 
 
 # Divergences that are deliberate, with the reason. Listed rather than hidden:
@@ -65,17 +86,31 @@ KNOWN_DIVERGENCES = {
         "route on every listener. Both hosts agree on the dashboard port, which "
         "is the one clients use."
     ),
+    "/api/cw/status": (
+        "extra 'available' and 'reason'. The CW keyer is not ported yet. "
+        "CARRYOVER section 1: if a capability is absent its status route must SAY "
+        "so - the reference /api/record/start answers ok/recording:true while "
+        "Start() sets IsRecording=false. Extra fields are additive and clients "
+        "ignore unknown keys, so this is honest without breaking the shape."
+    ),
+    "/api/tune/tgxl/status": (
+        "extra 'available'. TGXL is not configured on this host, and a status "
+        "route that only says tuning:false cannot distinguish 'idle' from 'not "
+        "there at all'."
+    ),
+    "/api/tune/amp/status": (
+        "extra 'available'. Same reason as the TGXL status route."
+    ),
 }
 
 
 def assert_safe(path):
     """Refuse anything that could change the radio. Fails closed."""
-    low = path.lower()
     if path not in SAFE_ROUTES:
         sys.exit(f"REFUSING {path}: not on the read-only allowlist")
-    for bad in DANGEROUS_PATTERNS:
-        if bad in low and path not in ("/api/power/limit",):
-            sys.exit(f"REFUSING {path}: matches state-changing pattern {bad!r}")
+    tail = path.rstrip("/").split("/")[-1]
+    if tail not in READ_SUFFIXES:
+        sys.exit(f"REFUSING {path}: final segment {tail!r} is not a read")
 
 
 def login(base, user, password):

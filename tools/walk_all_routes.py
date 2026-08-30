@@ -45,8 +45,17 @@ DRIVE = [
     ("/api/split/off",   "split",  False),
     ("/api/vfo/b",       "vfo",    "B"),
     ("/api/vfo/a",       "vfo",    "A"),
-    ("/api/lock/on",     "vfo_locked", True),
-    ("/api/lock/off",    "vfo_locked", False),
+    # ⚠️ TWO DIFFERENT LOCKS, and they are not interchangeable.
+    # /api/lock/* is the RIG's own lock (CAT "LK"), reported as `lock` in
+    # /api/status/full. /api/vfo-lock/* is a SOFTWARE lock the host keeps,
+    # reported as `vfo_locked` in /api/status. Confirmed against the reference
+    # host's BuildApiStatus, which reads vfo_locked from its config, not the rig.
+    ("/api/lock/on",       "lock",       True),
+    ("/api/lock/off",      "lock",       False),
+    ("/api/vfo-lock/on",   "vfo_locked", True),
+    ("/api/vfo-lock/off",  "vfo_locked", False),
+    ("/api/diversity/on",  "diversity",  True),
+    ("/api/diversity/off", "diversity",  False),
     ("/api/nb/on",       "nb",     True),
     ("/api/nb/off",      "nb",     False),
     ("/api/nr/on",       "nr",     True),
@@ -155,7 +164,8 @@ def main():
         # fixed sleep either flakes or wastes time. A bounded wait still fails
         # if the command never lands.
         src = "/api/status" if field in (
-            "mode", "power", "split", "vfo", "vfo_locked", "tx", "freq") else "/api/status/full"
+            "mode", "power", "split", "vfo", "vfo_locked", "diversity", "tx",
+            "freq") else "/api/status/full"
         actual, waited = wait_for(base, src, field, expect)
         if actual != expect:
             print(f"  FAIL  {path}: {field} is {actual!r}, expected {expect!r}")

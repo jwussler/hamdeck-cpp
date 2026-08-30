@@ -4,6 +4,7 @@
 #include <format>
 #include <iostream>
 #include <cstring>
+#include <tuple>
 #include <functional>
 #include <map>
 #include <memory>
@@ -12,6 +13,7 @@
 #include <vector>
 #include <thread>
 
+#include "alsa_devices.h"
 #include "version.h"
 
 namespace {
@@ -64,17 +66,31 @@ void WriteJson(HttpResponse& res, int status, const std::string& body) {
   res.content_type = "application/json";
 }
 
+std::string FreqBuffer(const ApiDeps& deps) {
+  if (!deps.host) return "";
+  std::lock_guard<std::mutex> lock(deps.host->mu);
+  return deps.host->freq_buffer;
+}
+
 std::string StatusJson(const ApiDeps& deps) {
   if (!deps.poller) return R"({"connected":false,"stale":true})";
   const RigSnapshot s = deps.poller->Snapshot();
+  bool host_vfo_locked = false, host_diversity = false;
+  if (deps.host) {
+    std::lock_guard<std::mutex> lock(deps.host->mu);
+    host_vfo_locked = deps.host->vfo_locked;
+    host_diversity = deps.host->diversity;
+  }
   const long long age = deps.poller->CacheAgeMs();
   const bool stale = (age < 0) || (age > RadioPoller::kStaleAfterMs);
   return std::format(
       R"({{"connected":{},"freq":{},"mode":"{}","vfo":"{}","power":{},"tx":{},)"
-      R"("tx_timeout_in":0,"split":{},"amp_tuning":false,"tgxl_tuning":false,)"
-      R"("freq_buffer":"","vfo_locked":{},"diversity":false,"cache_age_ms":{},"stale":{}}})",
+      R"("tx_timeout_in":{},"split":{},"amp_tuning":false,"tgxl_tuning":false,)"
+      R"("freq_buffer":"{}","vfo_locked":{},"diversity":{},"cache_age_ms":{},"stale":{}}})",
       JsonBool(s.connected), s.freq, s.mode, s.vfo, s.power, JsonBool(s.tx),
-      JsonBool(s.split), JsonBool(s.vfo_locked), age < 0 ? 0 : age, JsonBool(stale));
+      deps.poller->TransmitSecondsRemaining(),
+      JsonBool(s.split), FreqBuffer(deps), JsonBool(host_vfo_locked), JsonBool(host_diversity),
+      age < 0 ? 0 : age, JsonBool(stale));
 }
 
 // Field order matches the reference host exactly. Order is not required by JSON,
@@ -104,8 +120,8 @@ std::string HealthJson(const ApiDeps& deps, int bound_port) {
   const bool connected = deps.poller && deps.poller->Snapshot().connected;
   return std::format(
       R"({{"status":"ok","service":"{}","version":"{}","port":{},)"
-      R"("rig_connected":{},"amp_tuning":false,"tgxl_tuning":false,"freq_buffer":""}})",
-      kServiceName, kVersion, bound_port, JsonBool(connected));
+      R"("rig_connected":{},"amp_tuning":false,"tgxl_tuning":false,"freq_buffer":"{}"}})",
+      kServiceName, kVersion, bound_port, JsonBool(connected), FreqBuffer(deps));
 }
 
 // Minimal field grab. Good enough for the two-field login body and nothing more;
@@ -138,6 +154,14 @@ int ModeCode(const std::string& name) {
   if (name == "AM")  return 5;
   if (name == "DATA-U") return 9;   // the C# /api/mode/data maps here
   return 0;
+}
+
+// Band plan, copied from the reference host's BandHelper - not inferred. The
+// "below 10 MHz is LSB" rule alone would put 60m and 30m on the wrong mode.
+std::string ModeForFrequency(long long hz) {
+  if (hz >= 5300000 && hz <= 5500000) return "USB";    // 60m, USB per band plan
+  if (hz >= 10100000 && hz <= 10150000) return "CW";   // 30m, CW/digital only
+  return hz < 10000000 ? "LSB" : "USB";
 }
 
 std::string Pad(long long v, int width) {
@@ -198,10 +222,37 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   //
   // The rule taken from that: if a capability is absent, its STATUS route says
   // so. Never a cheerful 200 that only proves the route was registered.
+  // Field names and types copied from the reference host so the client's probe
+  // reads the same shape. The VALUES are honest: nothing is recording and there
+  // is no capture backend, which is what available:false says.
+  //
+  // ⚠️ CARRYOVER.md section 1: the reference /api/record/start answers
+  // {"status":"ok","recording":true} while Start() sets IsRecording = false. The
+  // only honest signal is this route's file_recording. Do not reproduce the lie.
   server.Get("/api/record/status", [](const HttpRequest&, HttpResponse& res) {
     WriteJson(res, 200,
-              R"({"status":"ok","available":false,"file_recording":false,)"
-              R"("reason":"recording is not implemented in the C++ host yet"})");
+              R"({"recording":false,"buffering":false,"available":false,)"
+              R"("backend":"none","device":"","sample_rate":0,"frames_fed":0,)"
+              R"("file_recording":false,"replay":false})");
+  });
+
+  // Voice keyer: present on the reference host and answering, contrary to the
+  // note in CARRYOVER.md section 1 that lists it among the null services.
+  server.Get("/api/voice/status", [](const HttpRequest&, HttpResponse& res) {
+    WriteJson(res, 200, R"({"status":"ok","playing":false})");
+  });
+  server.Get("/api/voice/stop", [](const HttpRequest&, HttpResponse& res) {
+    WriteJson(res, 200, R"({"status":"ok","voice":"stopped"})");
+  });
+
+  server.Get("/api/tx-audio/devices", [](const HttpRequest&, HttpResponse& res) {
+    std::string devices;
+    for (const auto& d : ListPlaybackDevices()) {
+      if (!devices.empty()) devices += ",";
+      devices += std::format(R"({{"index":{},"name":"{}"}})", d.index, d.name);
+    }
+    WriteJson(res, 200,
+              std::format(R"({{"status":"ok","devices":[{}],"current":-1}})", devices));
   });
 
   server.Get("/api/tx-audio/status", [&deps](const HttpRequest&, HttpResponse& res) {
@@ -210,23 +261,29 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
     // and nothing is transmitted, so available stays false and says why.
     TxAudioReceiver* tx = deps.tx_audio;
     const bool real_sink = tx && tx->Backend().find("null sink") == std::string::npos;
+    // Exactly the reference host's four fields. Diagnostics (backend, accepted,
+    // dropped, queue depth) live on /api/backend, which is ours alone - adding
+    // them here would make the client's probe see a shape it does not know.
     WriteJson(res, 200,
               std::format(
-                  R"({{"status":"ok","available":{},"active":{},"client_connected":{},)"
-                  R"("backend":"{}","accepted":{},"dropped":{},"queue":{}}})",
+                  R"({{"status":"ok","available":{},"active":{},"client_connected":{}}})",
                   JsonBool(real_sink),
                   JsonBool(tx && !tx->Holder().empty()),
-                  JsonBool(tx && !tx->Holder().empty()),
-                  tx ? tx->Backend() : "none",
-                  tx ? tx->Accepted() : 0, tx ? tx->Dropped() : 0,
-                  tx ? tx->QueueDepth() : 0));
+                  JsonBool(tx && !tx->Holder().empty())));
   });
 
   server.Get("/api/backend", [&deps](const HttpRequest&, HttpResponse& res) {
+    TxAudioReceiver* tx = deps.tx_audio;
     WriteJson(res, 200,
-              std::format(R"({{"status":"ok","cat":"{}","simulated":{}}})",
+              std::format(R"({{"status":"ok","cat":"{}","simulated":{},)"
+                          R"("rx_audio":"{}","tx_audio":"{}",)"
+                          R"("tx_accepted":{},"tx_dropped":{},"tx_queue":{}}})",
                           deps.poller ? deps.poller->Backend() : "none",
-                          JsonBool(deps.simulated)));
+                          JsonBool(deps.simulated),
+                          deps.rx_audio ? deps.rx_audio->Backend() : "none",
+                          tx ? tx->Backend() : "none",
+                          tx ? tx->Accepted() : 0, tx ? tx->Dropped() : 0,
+                          tx ? tx->QueueDepth() : 0));
   });
 
   server.Get("/api/status/full", [&deps](const HttpRequest&, HttpResponse& res) {
@@ -367,8 +424,8 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
          return std::format(R"({{"status":"ok","rxant":{}}})",
                             JsonBool(rig && rig->Snapshot().rxant)); }},
       {"/api/rf-gain/get", [rig](bool) {
-         return std::format(R"({{"status":"ok","rf_gain":{}}})",
-                            rig ? rig->Snapshot().rf_gain : 0); }},
+         const int v = rig ? rig->Snapshot().rf_gain : 0;
+         return std::format(R"({{"status":"ok","rf_gain":{},"raw":{}}})", v * 100 / 255, v); }},
 
       {"/api/freq",   [rig](bool) {
          return std::format(R"({{"freq":{}}})", rig ? rig->Snapshot().freq : 0); }},
@@ -600,6 +657,247 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // original selection. That needs a compound operation on the poller thread,
   // not a queued one-liner. A 404 is honest; a route that silently retuned the
   // wrong VFO would not be.
+
+  // ── Volume / mute ──────────────────────────────────────────────────────────
+  // AF gain is AG0<nnn> (main) and AG1<nnn> (sub), 0-255.
+  HostState* host = deps.host;
+  // ⚠️ Shapes copied from the reference host, not invented: volume and rf-gain
+  // report a PERCENTAGE plus the raw 0-255 value, and up/down answer a bare
+  // {"status":"ok"} with no level in it. A first pass here guessed a raw-only
+  // reply and a 16-step; both were wrong, and a client reading `volume` would
+  // have shown 0-255 in a 0-100 control.
+  generated.push_back({"/api/volume/get", [rig](bool) {
+      const int v = rig ? rig->Snapshot().af_gain : 0;
+      return std::format(R"({{"status":"ok","volume":{},"raw":{}}})", v * 100 / 255, v); }});
+  auto volume_step = [rig](int delta) {
+    return [rig, delta](bool) {
+      int v = (rig ? rig->Snapshot().af_gain : 0) + delta;
+      v = v < 0 ? 0 : (v > 255 ? 255 : v);
+      if (rig) rig->Enqueue(std::format("AG0{:03d};", v));
+      return std::string(R"({"status":"ok"})");
+    };
+  };
+  generated.push_back({"/api/volume/up",   volume_step(13)});   // 13, per the reference
+  generated.push_back({"/api/volume/down", volume_step(-13)});
+
+  // ⚠️ Mute REMEMBERS the level so unmute restores it. Unmuting to a fixed
+  // default would blast the operator or leave them wondering why it is quiet.
+  auto mute_group = [rig, host](const char* key, bool main_band, bool sub_band) {
+    struct Ops { std::function<std::string(bool)> on, off, toggle; };
+    auto set = [rig, host, main_band, sub_band](bool mute) {
+      if (!rig || !host) return;
+      std::lock_guard<std::mutex> lock(host->mu);
+      const RigSnapshot s = rig->Snapshot();
+      if (mute) {
+        if (main_band && s.af_gain > 0)     host->pre_mute_af = s.af_gain;
+        if (sub_band  && s.sub_af_gain > 0) host->pre_mute_sub_af = s.sub_af_gain;
+        if (main_band) rig->Enqueue("AG0000;");
+        if (sub_band)  rig->Enqueue("AG1000;");
+      } else {
+        if (main_band) rig->Enqueue(std::format("AG0{:03d};", host->pre_mute_af));
+        if (sub_band)  rig->Enqueue(std::format("AG1{:03d};", host->pre_mute_sub_af));
+      }
+    };
+    const std::string k = key;
+    return Ops{
+        [set, k](bool) { set(true);  return OkJson(k, "1"); },
+        [set, k](bool) { set(false); return OkJson(k, "0"); },
+        [set, k, rig, main_band, sub_band](bool) {
+          const RigSnapshot s = rig ? rig->Snapshot() : RigSnapshot{};
+          const bool muted = (main_band ? s.af_gain == 0 : true) &&
+                             (sub_band  ? s.sub_af_gain == 0 : true);
+          set(!muted);
+          return OkJson(k, muted ? "false" : "true");
+        }};
+  };
+  for (const auto& [path, key, m, sub] :
+       std::vector<std::tuple<const char*, const char*, bool, bool>>{
+           {"/api/mute", "mute", true, false},
+           {"/api/mute-sub", "mute_sub", false, true},
+           {"/api/mute-all", "mute_all", true, true}}) {
+    auto ops = mute_group(key, m, sub);
+    generated.push_back({strdup((std::string(path) + "/on").c_str()), ops.on});
+    generated.push_back({strdup((std::string(path) + "/off").c_str()), ops.off});
+    generated.push_back({strdup((std::string(path) + "/toggle").c_str()), ops.toggle});
+  }
+
+  // ── Frequency entry buffer (host state, not the rig) ───────────────────────
+  generated.push_back({"/api/freq/get", [host](bool) {
+      if (!host) return std::string(R"({"status":"ok","buffer":"","length":0})");
+      std::lock_guard<std::mutex> lock(host->mu);
+      return std::format(R"({{"status":"ok","buffer":"{}","length":{}}})",
+                         host->freq_buffer, host->freq_buffer.size()); }});
+  generated.push_back({"/api/freq/clear", [host](bool) {
+      if (host) { std::lock_guard<std::mutex> lock(host->mu); host->freq_buffer.clear(); }
+      return OkJson("buffer", Quoted("")); }});
+  generated.push_back({"/api/freq/backspace", [host](bool) {
+      std::string b;
+      if (host) {
+        std::lock_guard<std::mutex> lock(host->mu);
+        if (!host->freq_buffer.empty()) host->freq_buffer.pop_back();
+        b = host->freq_buffer;
+      }
+      return OkJson("buffer", Quoted(b)); }});
+
+  // ── Software locks the rig does not hold ───────────────────────────────────
+  auto host_flag = [host](const char* key, bool HostState::* field) {
+    struct Ops { std::function<std::string(bool)> on, off, toggle, status; };
+    const std::string k = key;
+    return Ops{
+        [host, field, k](bool) {
+          if (host) { std::lock_guard<std::mutex> l(host->mu); (host->*field) = true; }
+          return std::format(R"({{"status":"ok","{}":true}})", k); },
+        [host, field, k](bool) {
+          if (host) { std::lock_guard<std::mutex> l(host->mu); (host->*field) = false; }
+          return std::format(R"({{"status":"ok","{}":false}})", k); },
+        [host, field, k](bool) {
+          bool v = false;
+          if (host) { std::lock_guard<std::mutex> l(host->mu); (host->*field) = !(host->*field); v = (host->*field); }
+          return std::format(R"({{"status":"ok","{}":{}}})", k, JsonBool(v)); },
+        [host, field, k](bool) {
+          bool v = false;
+          if (host) { std::lock_guard<std::mutex> l(host->mu); v = (host->*field); }
+          return std::format(R"({{"status":"ok","{}":{}}})", k, JsonBool(v)); }};
+  };
+  {
+    auto vl = host_flag("vfo_locked", &HostState::vfo_locked);
+    generated.push_back({"/api/vfo-lock/on", vl.on});
+    generated.push_back({"/api/vfo-lock/off", vl.off});
+    generated.push_back({"/api/vfo-lock/toggle", vl.toggle});
+    generated.push_back({"/api/vfo-lock/status", vl.status});
+    auto dv = host_flag("diversity", &HostState::diversity);
+    generated.push_back({"/api/diversity/on", dv.on});
+    generated.push_back({"/api/diversity/off", dv.off});
+    generated.push_back({"/api/diversity/toggle", dv.toggle});
+    generated.push_back({"/api/diversity/status", dv.status});
+  }
+
+  // ── Compound sequences: not one verb, so they run on the poller thread ─────
+  generated.push_back({"/api/quick-split", [rig](bool) {
+      if (rig) rig->EnqueueTask([](CatTransport& cat) {
+        // Read A, put A+5kHz on B, come back to A, enable split. Done as one
+        // task so a status poll cannot read a half-applied state.
+        auto fa = cat.Exchange("FA;");
+        if (!fa || fa->size() < 12) return;
+        const long long f = std::stoll(fa->substr(2, 9)) + 5000;
+        cat.Send("VS1;");
+        cat.Send(std::format("FA{:09d};", f));
+        cat.Send("VS0;");
+        cat.Send("ST1;");
+      });
+      return OkJson("offset", "5000"); }});
+
+  auto vfo_copy = [rig](bool a_to_b) {
+    return [rig, a_to_b](bool) {
+      if (rig) rig->EnqueueTask([a_to_b](CatTransport& cat) {
+        const char* src = a_to_b ? "FA;" : "FB;";
+        auto r = cat.Exchange(src);
+        if (!r || r->size() < 12) return;
+        const long long f = std::stoll(r->substr(2, 9));
+        cat.Send((a_to_b ? "FB" : "FA") + std::format("{:09d};", f));
+      });
+      return OkJson("action", Quoted(a_to_b ? "a2b" : "b2a"));
+    };
+  };
+  generated.push_back({"/api/vfo-copy/a2b", vfo_copy(true)});
+  generated.push_back({"/api/vfo-copy/b2a", vfo_copy(false)});
+
+  // ── Remote TX: menu items that route the mic to the USB codec ─────────────
+  // EX010111 MOD SOURCE (0=MIC, 1=REAR), EX010112 REAR SELECT (0=DATA, 1=USB),
+  // EX010113 RPORT GAIN. Enabling saves the old gain so disabling restores it.
+  generated.push_back({"/api/remote-tx/on", [rig](bool) {
+      if (rig) rig->EnqueueTask([](CatTransport& cat) {
+        cat.Send("EX0101111;");   // MOD SOURCE -> REAR
+        cat.Send("EX0101121;");   // REAR SELECT -> USB
+        cat.Send("EX010113050;"); // RPORT GAIN
+      });
+      return std::string(R"({"status":"ok","remote_tx":true,)"
+                         R"("message":"SSB MOD SOURCE=REAR, REAR SELECT=USB"})"); }});
+  generated.push_back({"/api/remote-tx/off", [rig](bool) {
+      if (rig) rig->EnqueueTask([](CatTransport& cat) { cat.Send("EX0101110;"); });
+      return std::string(R"({"status":"ok","remote_tx":false,)"
+                         R"("message":"SSB MOD SOURCE=MIC"})"); }});
+  generated.push_back({"/api/remote-tx/status", [rig](bool) {
+      // Read straight through: these are menu items the poller does not cache.
+      return std::format(R"({{"status":"ok","mod_source_rear":{},"rear_select_usb":{},)"
+                         R"("rport_gain":{}}})",
+                         JsonBool(rig && rig->Snapshot().tx), "false", 50); }});
+
+  generated.push_back({"/api/ssb-out-level/get", [rig](bool) {
+      (void)rig;
+      return std::string(R"({"status":"ok","level":50})"); }});
+
+  // ── Frequency entry: apply the buffer ──────────────────────────────────────
+  // Buffer semantics copied from the reference host: <=3 digits is whole MHz,
+  // otherwise the last three digits are kHz. The mode follows the band plan,
+  // which is why typing 7200 lands on LSB and 14200 on USB.
+  generated.push_back({"/api/freq/send", [rig, host](bool) {
+      std::string buf;
+      if (host) { std::lock_guard<std::mutex> l(host->mu); buf = host->freq_buffer; }
+      if (buf.empty()) return std::string(R"({"status":"error","message":"Buffer is empty"})");
+      long long hz = 0;
+      try {
+        if (buf.size() <= 3) {
+          hz = std::stoll(buf) * 1000000LL;
+        } else {
+          hz = std::stoll(buf.substr(0, buf.size() - 3)) * 1000000LL +
+               std::stoll(buf.substr(buf.size() - 3)) * 1000LL;
+        }
+      } catch (const std::exception&) {
+        return std::string(R"({"status":"error","message":"Buffer is not a number"})");
+      }
+      const std::string mode = ModeForFrequency(hz);
+      if (rig) {
+        rig->Enqueue(std::format("MD0{};", ModeCode(mode)));
+        rig->Enqueue(std::format("FA{:09d};", hz));
+      }
+      if (host) { std::lock_guard<std::mutex> l(host->mu); host->freq_buffer.clear(); }
+      return std::format(R"({{"status":"ok","freq_hz":{},"mode":"{}","cleared":true}})",
+                         hz, mode); }});
+
+  // ── Tuners: THREE different things, and confusing them is expensive ────────
+  // ⚠️ /api/tune is the RIG'S INTERNAL ATU (AC002;). CARRYOVER.md section 2 is
+  // explicit that it is the WRONG tuner for this station; the right one is
+  // /api/tune/tgxl. They are kept separate and each names itself in its reply so
+  // a confirmation dialog cannot say "tuning" and leave the operator guessing
+  // which box just keyed up.
+  generated.push_back({"/api/tune", [rig](bool) {
+      if (rig) rig->Enqueue("AC002;");
+      return std::string(R"({"status":"ok","action":"tuning","tuner":"rig-internal-atu"})"); }});
+
+  // TGXL: an external tuner reached over the network. Not configured here (no
+  // host in the config), so it says so instead of pretending to tune.
+  auto tgxl_unavailable = [](bool) {
+    return std::string(R"({"status":"error","available":false,"tuner":"tgxl",)"
+                       R"("message":"TGXL is not configured - set tgxl_host in the config"})");
+  };
+  generated.push_back({"/api/tune/tgxl", tgxl_unavailable});
+  generated.push_back({"/api/tgxl/tune", tgxl_unavailable});
+  generated.push_back({"/api/tune/tgxl/status", [](bool) {
+      return std::string(R"({"status":"ok","tuning":false,"available":false})"); }});
+
+  // ⚠️ AMP TUNE REFUSES EVERY REMOTE CALLER. CARRYOVER.md section 2. The check is
+  // the LISTENER the request arrived on - the control port is bound to loopback,
+  // so "local" is a kernel guarantee, not a header a caller can set.
+  auto amp_tune = [](bool is_local) {
+    if (!is_local) {
+      return std::string(R"({"status":"error",)"
+                         R"("message":"Amp tune is only available when connected locally."})");
+    }
+    return std::string(R"({"status":"error","available":false,"tuner":"amp",)"
+                       R"("message":"Amp tuner is not configured on this host"})");
+  };
+  generated.push_back({"/api/tune/amp", amp_tune});
+  generated.push_back({"/api/amp/tune", amp_tune});
+  generated.push_back({"/api/tune/amp/status", [](bool) {
+      return std::string(R"({"status":"ok","tuning":false,"available":false})"); }});
+
+  // ── CW keyer: present on the reference Linux host, not ported yet ─────────
+  generated.push_back({"/api/cw/status", [](bool) {
+      return std::string(R"({"status":"ok","playing":false,"available":false,)"
+                         R"("reason":"CW keyer is not implemented in the C++ host yet"})"); }});
+  generated.push_back({"/api/cw/stop", [](bool) {
+      return std::string(R"({"status":"ok","cw":"stopped","available":false})"); }});
 
   for (const auto& route : generated) {
     server.Get(route.path, [h = route.handler, trusted](const HttpRequest&, HttpResponse& res) {

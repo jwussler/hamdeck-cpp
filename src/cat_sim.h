@@ -60,4 +60,10 @@ class SimulatedRig : public CatTransport {
   int  width_   = 10;
   int  rit_offset_ = 0;
   bool rxant_ = false;
+  int  af_gain_ = 128;
+  int  sub_af_gain_ = 128;
+  int  ssb_out_ = 50;
+  int  rport_gain_ = 50;
+  bool mod_rear_ = false;
+  bool rear_usb_ = false;
 };

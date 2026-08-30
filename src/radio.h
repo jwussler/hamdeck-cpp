@@ -53,6 +53,8 @@ struct RigSnapshot {
   bool        xit       = false;
   int         rf_gain   = 0;
   int         cw_speed  = 0;
+  int         af_gain   = 0;
+  int         sub_af_gain = 0;
   int         width_idx = 0;
 
   // /api/meters. These DO move fast, so they ride the fast loop.
@@ -83,6 +85,14 @@ class RadioPoller {
   // like "set VFO then set frequency" that are wrong if they interleave.
   void Enqueue(const std::string& cat_command);
 
+  // A compound read-modify-write, run ON THE POLLER THREAD with direct CAT
+  // access. Some operations are not one verb: quick-split reads the frequency,
+  // selects VFO B, writes freq+offset, selects A and sets split. Doing that from
+  // a request thread would need the serial port from two threads, which the lock
+  // does not allow; doing it as separate queued commands would let a poll read
+  // land in the middle and cache a half-applied state.
+  void EnqueueTask(std::function<void(CatTransport&)> task);
+
   // Transmit watchdog. Zero disables it.
   //
   // ⚠️ THIS MUST LIVE NEXT TO THE RADIO (CARRYOVER.md section 4b). A timeout in
@@ -96,6 +106,11 @@ class RadioPoller {
   // Fired when the watchdog drops PTT, with the seconds held. For logging.
   void OnWatchdogTrip(std::function<void(double)> cb) { watchdog_cb_ = std::move(cb); }
   int  WatchdogTrips() const { return watchdog_trips_.load(); }
+
+  // Seconds before the watchdog drops PTT. 0 when receiving or disabled.
+  // A client counts this down instead of inventing its own timeout - which is
+  // the whole point of the watchdog living next to the radio.
+  int TransmitSecondsRemaining() const;
 
   // Default from the C# Config: ptt_timeout_seconds = 180.
   static constexpr int kDefaultPttTimeoutSeconds = 180;
@@ -131,6 +146,7 @@ class RadioPoller {
   std::atomic<bool> full_dirty_{true};
   std::mutex queue_mu_;
   std::deque<std::string> queue_;
+  std::deque<std::function<void(CatTransport&)>> tasks_;
 
   std::atomic<int> ptt_timeout_s_{kDefaultPttTimeoutSeconds};
   std::atomic<int> watchdog_trips_{0};
