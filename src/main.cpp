@@ -20,6 +20,7 @@
 #include "auth.h"
 #include "alsa_audio.h"
 #include "cat_sim.h"
+#include "tgxl.h"
 #include "config.h"
 #include "serial_cat.h"
 #include "radio.h"
@@ -222,6 +223,11 @@ int main(int argc, char** argv) {
   TxAudioReceiver tx_audio(std::move(tx_sink));
   tx_audio.Start();
 
+  // The external tuner. Not configured by default - it is a network device at an
+  // address only the operator knows, and this repo ships no addresses.
+  TgxlTuner tgxl(config.tgxl_host, config.tgxl_port);
+  if (tgxl.configured()) std::cout << "TGXL: " << tgxl.Describe() << '\n' << std::flush;
+
   HostState host_state;
 
   ApiDeps deps;
@@ -231,6 +237,7 @@ int main(int argc, char** argv) {
   deps.tx_audio = &tx_audio;
   deps.host = &host_state;
   deps.config = &config;
+  deps.tgxl = &tgxl;
   // Where the config actually came from, so admin changes go back to the same
   // file rather than to a path that merely happens to be first in the search.
   deps.save_config = [&config, &config_path](std::string& err) {

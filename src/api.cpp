@@ -1023,14 +1023,27 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
 
   // TGXL: an external tuner reached over the network. Not configured here (no
   // host in the config), so it says so instead of pretending to tune.
-  auto tgxl_unavailable = [](bool) {
-    return std::string(R"({"status":"error","available":false,"tuner":"tgxl",)"
-                       R"("message":"TGXL is not configured - set tgxl_host in the config"})");
+  // ⚠️ This is the RIGHT tuner for this station; /api/tune above is the rig's
+  // internal ATU and is the wrong one. Each names itself in its reply so a
+  // confirmation cannot just say "tuning".
+  TgxlTuner* tgxl = deps.tgxl;
+  auto tgxl_tune = [tgxl](bool) {
+    if (!tgxl || !tgxl->configured()) {
+      return std::string(R"({"status":"error","available":false,"tuner":"tgxl",)"
+                         R"("message":"TGXL is not configured - set tgxl_host in the config"})");
+    }
+    const auto r = tgxl->Tune();
+    return std::format(
+        R"({{"status":"{}","tuner":"tgxl","available":true,"tuning":{},)"
+        R"("action":"{}","message":"{}"}})",
+        r.ok ? "ok" : "error", JsonBool(r.tuning), r.action, r.message);
   };
-  generated.push_back({"/api/tune/tgxl", tgxl_unavailable});
-  generated.push_back({"/api/tgxl/tune", tgxl_unavailable});
-  generated.push_back({"/api/tune/tgxl/status", [](bool) {
-      return std::string(R"({"status":"ok","tuning":false,"available":false})"); }});
+  generated.push_back({"/api/tune/tgxl", tgxl_tune});
+  generated.push_back({"/api/tgxl/tune", tgxl_tune});
+  generated.push_back({"/api/tune/tgxl/status", [tgxl](bool) {
+      return std::format(R"({{"status":"ok","tuning":{},"available":{}}})",
+                         JsonBool(tgxl && tgxl->IsActive()),
+                         JsonBool(tgxl && tgxl->configured())); }});
 
   // ⚠️ AMP TUNE REFUSES EVERY REMOTE CALLER. CARRYOVER.md section 2. The check is
   // the LISTENER the request arrived on - the control port is bound to loopback,
