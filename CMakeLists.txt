@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 project(hamdeck-cpp VERSION 0.1.0 LANGUAGES CXX)
+add_compile_definitions(HAMDECK_VERSION="${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,21 +38,22 @@ FetchContent_Declare(nlohmann_json
   GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(nlohmann_json)
 
-add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp src/tx_audio.cpp src/alsa_devices.cpp src/rig_cal.cpp src/alsa_audio.cpp src/tgxl.cpp src/recorder.cpp)
+add_executable(hamdeck-host src/main.cpp src/api.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp src/tx_audio.cpp src/alsa_devices.cpp src/rig_cal.cpp src/alsa_audio.cpp src/tgxl.cpp src/recorder.cpp
+    src/session_stats.cpp)
 target_link_libraries(hamdeck-host PRIVATE civetweb-c-library OpenSSL::Crypto nlohmann_json::nlohmann_json asound)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
 
 # CI must RUN things, not just build them (CARRYOVER.md section 8): the .NET
 # client shipped a release that could not launch while every test passed.
 enable_testing()
-add_executable(test_staleness tests/test_staleness.cpp src/cat_sim.cpp src/radio.cpp)
+add_executable(test_staleness tests/test_staleness.cpp src/cat_sim.cpp src/radio.cpp src/session_stats.cpp)
 add_test(NAME staleness COMMAND test_staleness)
 
 add_executable(test_auth tests/test_auth.cpp src/auth.cpp)
 target_link_libraries(test_auth PRIVATE OpenSSL::Crypto)
 add_test(NAME auth COMMAND test_auth)
 
-add_executable(test_watchdog tests/test_watchdog.cpp src/cat_sim.cpp src/radio.cpp)
+add_executable(test_watchdog tests/test_watchdog.cpp src/cat_sim.cpp src/radio.cpp src/session_stats.cpp)
 add_test(NAME watchdog COMMAND test_watchdog)
 
 add_executable(test_audio_queue tests/test_audio_queue.cpp src/audio.cpp src/http.cpp src/recorder.cpp)
@@ -60,6 +62,9 @@ add_test(NAME audio_queue COMMAND test_audio_queue)
 
 add_executable(test_recorder tests/test_recorder.cpp src/recorder.cpp)
 add_test(NAME recorder COMMAND test_recorder)
+
+add_executable(test_session_stats tests/test_session_stats.cpp src/session_stats.cpp)
+add_test(NAME session_stats COMMAND test_session_stats)
 
 # Drives the REAL serial code through a pty with a fake rig on the far end, so
 # every serial failure mode is found without the station off the air.

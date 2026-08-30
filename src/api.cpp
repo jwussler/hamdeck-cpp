@@ -1,5 +1,7 @@
 #include "api.h"
 
+#include <fstream>
+
 #include <chrono>
 #include <format>
 #include <iostream>
@@ -24,8 +26,38 @@ namespace {
 // enough to learn the service is alive and to log in. Everything else -
 // including the frequency, the meters and the receiver audio - is somebody's
 // operating activity. Mirrors AlwaysAnonymousRoutes in the C# ApiServer.
+namespace {
+
+// A short, stable fingerprint of the binary that is answering. Not a build
+// timestamp: two builds of identical source must compare equal, or a deploy
+// check that says "changed" every time teaches people to ignore it.
+std::string SelfBuildId() {
+  std::ifstream f("/proc/self/exe", std::ios::binary);
+  if (!f) return "unknown";
+  // FNV-1a over the file. Cheap, no crypto dependency, and only ever compared
+  // against itself - this is a change detector, not a signature.
+  uint64_t h = 1469598103934665603ULL;
+  char buf[64 * 1024];
+  while (f.read(buf, sizeof(buf)) || f.gcount()) {
+    const auto n = f.gcount();
+    for (std::streamsize i = 0; i < n; ++i) {
+      h ^= static_cast<unsigned char>(buf[i]);
+      h *= 1099511628211ULL;
+    }
+  }
+  char out[17];
+  std::snprintf(out, sizeof(out), "%016llx", static_cast<unsigned long long>(h));
+  return std::string(out).substr(0, 12);
+}
+
+}  // namespace
+
 const std::set<std::string> kAlwaysAnonymous = {
-    "/api/health", "/api/auth/status",
+    // ⚠️ /api/build reveals a hash of the binary and nothing else - no rig
+    // state, no config, no user. It is anonymous because a deploy has to be
+    // able to prove which binary answered BEFORE it has a session, and a
+    // deploy check that needs a credential is a deploy check that gets skipped.
+    "/api/health", "/api/auth/status", "/api/build",
 };
 
 // Read rig state without changing it. Anonymous ONLY when allow_anonymous_status
@@ -336,9 +368,12 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       if (!rec) { WriteJson(res, 409, R"({"status":"error","message":"no recorder"})"); return; }
       report(res, rec->Start(), "started");
     });
-    server.Get("/api/record/stop", [rec, report](const HttpRequest&, HttpResponse& res) {
+    SessionStats* st = deps.stats;
+    server.Get("/api/record/stop", [rec, report, st](const HttpRequest&, HttpResponse& res) {
       if (!rec) { WriteJson(res, 409, R"({"status":"error","message":"no recorder"})"); return; }
-      report(res, rec->Stop(), "stopped");
+      auto r = rec->Stop();
+      if (r.ok && st) st->CountRecording();
+      report(res, r, "stopped");
     });
     server.Get("/api/record/toggle", [rec, report](const HttpRequest&, HttpResponse& res) {
       if (!rec) { WriteJson(res, 409, R"({"status":"error","message":"no recorder"})"); return; }
@@ -356,6 +391,41 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
     server.Get("/api/record/replay", [rec, report](const HttpRequest&, HttpResponse& res) {
       if (!rec) { WriteJson(res, 409, R"({"status":"error","message":"no recorder"})"); return; }
       report(res, rec->SaveReplay(), "replay");
+    });
+  }
+
+  // Session stats. Counted on the HOST from what the rig reports, so every
+  // client sees the same numbers and closing a window does not reset them.
+  {
+    SessionStats* st = deps.stats;
+    auto emit = [](HttpResponse& res, const SessionStats::Snapshot& s) {
+      std::string bands, modes;
+      for (const auto& [k, v] : s.band_changes)
+        bands += std::format(R"({}"{}":{})", bands.empty() ? "" : ",", k, v);
+      for (const auto& [k, v] : s.mode_changes)
+        modes += std::format(R"({}"{}":{})", modes.empty() ? "" : ",", k, v);
+      WriteJson(res, 200,
+                std::format(
+                    R"({{"status":"ok","session_duration":"{}","session_seconds":{},)"
+                    R"("qsy_count":{},"tx_count":{},"tx_time":"{}","tx_seconds":{},)"
+                    R"("qso_count":{},"recordings":{},)"
+                    R"("band_changes":{{{}}},"mode_changes":{{{}}}}})",
+                    SessionStats::Hms(s.session_seconds), s.session_seconds,
+                    s.qsy_count, s.tx_count, SessionStats::Hms(s.tx_seconds),
+                    s.tx_seconds,
+                    // ⚠️ qso_count is kept for the reference clients, and it
+                    // means what it meant there: finished recordings. It is not
+                    // a logbook and is not presented as one.
+                    s.recordings, s.recordings, bands, modes));
+    };
+    server.Get("/api/session", [st, emit](const HttpRequest&, HttpResponse& res) {
+      if (!st) { WriteJson(res, 503, R"({"status":"error","message":"no session stats"})"); return; }
+      emit(res, st->Get());
+    });
+    server.Get("/api/session/reset", [st, emit](const HttpRequest&, HttpResponse& res) {
+      if (!st) { WriteJson(res, 503, R"({"status":"error","message":"no session stats"})"); return; }
+      st->Reset();
+      emit(res, st->Get());
     });
   }
 
@@ -421,6 +491,16 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                   R"(yaesu_default_rfpower_meter_cal, read as percent of rated output. )"
                   R"(NOT watts: that table is for a 100 W radio and this is a 200 W rig"}}}})",
                   points, ticks));
+  });
+
+  // The running binary's own identity, so a deploy can prove the service came
+  // back on the binary that was just installed. Computed ONCE at startup from
+  // /proc/self/exe: reading it per request would hash a multi-megabyte file on
+  // the same box that is servicing a transmitter.
+  server.Get("/api/build", [](const HttpRequest&, HttpResponse& res) {
+    static const std::string id = SelfBuildId();
+    WriteJson(res, 200, std::format(R"({{"status":"ok","build":"{}","version":"{}"}})",
+                                    id, HAMDECK_VERSION));
   });
 
   server.Get("/api/backend", [&deps](const HttpRequest&, HttpResponse& res) {

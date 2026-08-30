@@ -11,6 +11,7 @@
 #include "auth.h"
 #include "config.h"
 #include "recorder.h"
+#include "session_stats.h"
 #include "tgxl.h"
 #include "radio.h"
 
@@ -58,6 +59,7 @@ struct ApiDeps {
   Config* config = nullptr;
   TgxlTuner* tgxl = nullptr;
   Recorder* recorder = nullptr;
+  SessionStats* stats = nullptr;
   std::function<bool(std::string&)> save_config;
   // True when the CAT backend is the simulator. Surfaced on /api/backend so a
   // test tool can PROVE it is not pointed at the station.

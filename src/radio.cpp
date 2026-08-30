@@ -119,6 +119,7 @@ void RadioPoller::PollOnce() {
   // current is exactly the 3.6-hour-frequency bug.
   auto id = cat_->Exchange("ID;");
   if (!id.has_value()) {
+    if (stats_) stats_->Observe(false, 0, "", false);
     std::lock_guard<std::mutex> lock(mu_);
     snap_ = s;                                  // connected = false
     snap_.taken = std::chrono::steady_clock::now();
@@ -157,6 +158,7 @@ void RadioPoller::PollOnce() {
   ++cycle_;
 
   s.taken = std::chrono::steady_clock::now();
+  if (stats_) stats_->Observe(true, s.freq, s.mode, s.tx);
   CheckWatchdog(s.tx);
   std::lock_guard<std::mutex> lock(mu_);
   snap_ = s;

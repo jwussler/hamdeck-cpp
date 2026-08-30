@@ -21,6 +21,7 @@
 #include "alsa_audio.h"
 #include "cat_sim.h"
 #include "recorder.h"
+#include "session_stats.h"
 #include "tgxl.h"
 #include "config.h"
 #include "serial_cat.h"
@@ -159,7 +160,9 @@ int main(int argc, char** argv) {
     cat = std::make_unique<SimulatedRig>();
     simulated = true;
   }
+  SessionStats session_stats;
   RadioPoller poller(std::move(cat));
+  poller.SetSessionStats(&session_stats);
   poller.SetPttTimeoutSeconds(config.ptt_timeout_seconds);
   poller.Start();
 
@@ -253,6 +256,7 @@ int main(int argc, char** argv) {
   deps.config = &config;
   deps.tgxl = &tgxl;
   deps.recorder = &recorder;
+  deps.stats = &session_stats;
   // Where the config actually came from, so admin changes go back to the same
   // file rather than to a path that merely happens to be first in the search.
   deps.save_config = [&config, &config_path](std::string& err) {

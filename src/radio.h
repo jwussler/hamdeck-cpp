@@ -22,6 +22,7 @@
 #include <thread>
 
 #include "cat.h"
+#include "session_stats.h"
 
 struct RigSnapshot {
   bool        connected = false;
@@ -100,6 +101,10 @@ class RadioPoller {
   // or lose the link while keyed and the rig stays keyed with nobody watching.
   // The Linux host shipped without this for months because it existed only in
   // the WPF host's window class.
+  // Optional. When set, every poll cycle feeds it what the rig reports, so
+  // the counts follow the RADIO rather than any one client.
+  void SetSessionStats(SessionStats* stats) { stats_ = stats; }
+
   void SetPttTimeoutSeconds(int seconds) { ptt_timeout_s_.store(seconds); }
   int  PttTimeoutSeconds() const { return ptt_timeout_s_.load(); }
 
@@ -160,6 +165,7 @@ class RadioPoller {
   std::deque<std::function<void(CatTransport&)>> tasks_;
 
   std::atomic<int> ptt_timeout_s_{kDefaultPttTimeoutSeconds};
+  SessionStats* stats_ = nullptr;
   std::atomic<int> watchdog_trips_{0};
   std::function<void(double)> watchdog_cb_;
   std::chrono::steady_clock::time_point keyed_since_{};
