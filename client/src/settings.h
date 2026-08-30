@@ -46,6 +46,12 @@ class Settings {
   // move every existing operator to a different scale.
   QString ui_scale_mode = "Auto";
 
+  // The SYSTEM-WIDE PTT key, by label ("Off", "Ctrl+Alt+Space", ...). Stored as
+  // the label rather than an index so inserting a choice later cannot silently
+  // move an operator onto a different key - which, for a transmit control, is
+  // not a cosmetic problem.
+  QString global_ptt_key = "Off";
+
   // Geometry, clamped on restore - never trusted as written.
   QRect window_geometry;
 

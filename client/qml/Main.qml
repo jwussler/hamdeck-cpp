@@ -128,6 +128,10 @@ ApplicationWindow {
                 stale: backend.stale
                 band: backend.bandName
                 freqB: backend.freqB
+                // Typing a frequency: the parser and the range check live in
+                // C++ so they are shared and tested (ctest -R freq).
+                seedText: () => backend.freqEditText()
+                onCommit: (text) => backend.setFreqText(text)
             }
 
             SMeter {
@@ -402,10 +406,48 @@ ApplicationWindow {
                         }
                     }
 
+                    // ⚠️ TWO PTT KEYS, AND THE DIFFERENCE IS STATED. The first
+                    // works only while this window has focus and offers
+                    // hold-to-talk. The second works anywhere - including with
+                    // the logging program in front - but is press-to-TOGGLE,
+                    // because Windows' RegisterHotKey has no key-up message.
+                    ColumnLayout {
+                        width: Theme.u(230)
+                        spacing: Theme.u(2)
+                        SilkLabel { text: "Global PTT key (works anywhere)" }
+                        RowLayout {
+                            spacing: Theme.u(6)
+                            PanelCombo {
+                                Layout.preferredWidth: Theme.u(150)
+                                model: backend.globalHotkeyChoices
+                                currentIndex: backend.globalHotkeyIndex
+                                onActivated: backend.globalHotkeyIndex = currentIndex
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Press to key, press again to unkey. " +
+                                              "Works while another program is in front. " +
+                                              "The host watchdog is what stops a toggle " +
+                                              "left on."
+                                ToolTip.delay: 400
+                            }
+                        }
+                        // Armed, or exactly why not. A PTT key that silently
+                        // does nothing is worse than no PTT key, and the usual
+                        // cause - another program already holds the key - is
+                        // not a fault in this app.
+                        Text {
+                            Layout.preferredWidth: Theme.u(230)
+                            text: backend.globalHotkeyStatus
+                            wrapMode: Text.WordWrap
+                            font.family: Theme.body; font.pixelSize: Theme.f(10)
+                            color: backend.globalHotkeyStatus.indexOf("armed") === 0
+                                   ? Theme.okGreen : Theme.dim
+                        }
+                    }
+
                     ColumnLayout {
                         width: Theme.u(210)
                         spacing: Theme.u(2)
-                        SilkLabel { text: "PTT key" }
+                        SilkLabel { text: "PTT key (this window only)" }
                         RowLayout {
                             spacing: Theme.u(6)
                             PanelCombo {
@@ -600,7 +642,9 @@ ApplicationWindow {
                 // when it is not is the same lie as a status route reporting ok
                 // for something it never did.
                 visible: backend.sessionActive && win.width > Theme.u(1040)
-                text: "· PTT key: window focus only"
+                text: backend.globalHotkeyStatus.indexOf("armed") === 0
+                      ? "· PTT key: " + backend.globalHotkeyStatus.replace("armed: ", "")
+                      : "· PTT key: window focus only"
                 font.family: Theme.body; font.pixelSize: Theme.f(11)
                 color: Theme.dim
             }

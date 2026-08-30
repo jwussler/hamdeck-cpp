@@ -14,11 +14,13 @@
 #include <QString>
 #include <QEvent>
 #include <QKeyEvent>
+#include <QWindow>
 #include <QVariantList>
 #include <QStringList>
 #include <QVariantMap>
 
 #include "api_client.h"
+#include "global_hotkey.h"
 #include "ptt_hotkey.h"
 #include "rx_audio.h"
 #include "settings.h"
@@ -109,6 +111,17 @@ class Backend : public QObject {
   Q_PROPERTY(int hotkeyIndex READ hotkeyIndex WRITE setHotkeyIndex NOTIFY hotkeyChanged)
   Q_PROPERTY(bool hotkeyHold READ hotkeyHold WRITE setHotkeyHold NOTIFY hotkeyChanged)
 
+  // ── System-wide PTT key ──
+  // ⚠️ SEPARATE FROM THE WINDOW-FOCUS KEY, because they are not the same
+  // capability. This one works while the logging program is in front; it is
+  // press-to-TOGGLE only, because Windows' RegisterHotKey has no key-up. The
+  // status says ARMED or exactly why it is not - a PTT key that silently does
+  // nothing is worse than no PTT key.
+  Q_PROPERTY(QStringList globalHotkeyChoices READ globalHotkeyChoices CONSTANT)
+  Q_PROPERTY(int globalHotkeyIndex READ globalHotkeyIndex WRITE setGlobalHotkeyIndex
+                 NOTIFY hotkeyChanged)
+  Q_PROPERTY(QString globalHotkeyStatus READ globalHotkeyStatus NOTIFY hotkeyChanged)
+
  public:
   explicit Backend(QObject* parent = nullptr);
 
@@ -149,6 +162,14 @@ class Backend : public QObject {
   Q_INVOKABLE void shutdown();
   Q_INVOKABLE void disconnectSession();
   Q_INVOKABLE void tuneTgxl();
+
+  // ⚠️ TYPING A FREQUENCY. Returns "" on success, or the reason it refused -
+  // and it DOES refuse rather than send something plausible: /api/freq/set
+  // moves the MODE as well, so a misread number can take the rig out of the
+  // mode it was working. See client/src/freq_input.h for the accepted forms.
+  Q_INVOKABLE QString setFreqText(const QString& text);
+  // Seeds the edit box with a value that parses back to the same frequency.
+  Q_INVOKABLE QString freqEditText() const;
 
   int volume() const { return settings_.volume; }
   void setVolume(int v);
@@ -220,6 +241,13 @@ class Backend : public QObject {
   bool hotkeyHold() const { return settings_.ptt_hold; }
   void setHotkeyHold(bool hold);
 
+  QStringList globalHotkeyChoices() const { return GlobalHotkey::Choices(); }
+  int globalHotkeyIndex() const;
+  void setGlobalHotkeyIndex(int i);
+  QString globalHotkeyStatus() const { return global_hotkey_status_; }
+  // Called once the window exists: RegisterHotKey needs a window handle.
+  void attachWindow(QWindow* w);
+
  signals:
   void statusChanged();
   void statusFullChanged();
@@ -233,11 +261,16 @@ class Backend : public QObject {
   void uiScaleChanged();
 
  private:
+  void ApplyGlobalHotkey();
+
   Settings settings_;
   ApiClient api_;
   RxAudio rx_;
   TxAudio tx_audio_;
   PttHotkey hotkey_;
+  GlobalHotkey global_hotkey_;
+  QString global_hotkey_status_ = "off";
+  QWindow* window_ = nullptr;
 
   QJsonObject status_, full_, meters_;
   QVariantList ticks_;

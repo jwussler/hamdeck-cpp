@@ -44,6 +44,15 @@ qt_add_executable(test_place tests_place.cpp src/place.cpp)
 target_include_directories(test_place PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test_place PRIVATE Qt6::Core)
 add_test(NAME place COMMAND test_place)
+
+# ⚠️ The frequency parser, run against the REFERENCE implementation's own test
+# cases (HamDeck.Tests/FreqInputTests.cs). A port that gives different answers
+# to the same input is not a port, and the grouped "7.185.000" form the readout
+# displays is exactly what a fresh implementation gets wrong.
+qt_add_executable(test_freq tests_freq.cpp src/freq_input.cpp)
+target_include_directories(test_freq PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_freq PRIVATE Qt6::Core)
+add_test(NAME freq COMMAND test_freq)
 set_tests_properties(hotkey PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
 # The selftest that CI runs is qml_selftest, below.
@@ -56,6 +65,8 @@ qt_add_executable(hamdeck-qml
     src/main_qml.cpp
     src/backend.cpp
     src/place.cpp
+    src/freq_input.cpp
+    src/global_hotkey.cpp
     src/settings.cpp
     src/api_client.cpp
     src/rx_audio.cpp

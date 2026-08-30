@@ -305,6 +305,12 @@ int main(int argc, char** argv) {
         return rc;
     }
 
+    // ⚠️ AFTER the QML has loaded, because RegisterHotKey needs a real window
+    // handle - there is nothing to register against before the window exists.
+    if (auto* w = qobject_cast<QQuickWindow*>(engine.rootObjects().first())) {
+        backend.attachWindow(w);
+    }
+
     // Stop cleanly however the app ends, not just on the paths we remembered.
     QObject::connect(&app, &QGuiApplication::aboutToQuit, &backend, &Backend::shutdown);
 

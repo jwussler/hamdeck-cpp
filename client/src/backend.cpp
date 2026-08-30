@@ -1,5 +1,7 @@
 #include "backend.h"
 
+#include "freq_input.h"
+
 #include <QEventLoop>
 #include <QJsonArray>
 #include <QAudioDevice>
@@ -37,6 +39,14 @@ Backend::Backend(QObject* parent) : QObject(parent) {
   connect(&api_, &ApiClient::ConnectionProblem, this, [this](QString why) {
     connection_text_ = "⚠ " + why;
     emit statusChanged();
+  });
+
+  // ⚠️ PRESS-TO-TOGGLE, and it asks the RIG what to do next rather than keeping
+  // a flag of its own. If the rig is keyed - by this panel, another client, the
+  // mic button or the tuner - the press unkeys it. A local "is it on" flag goes
+  // out of step the first time anything else keys the radio.
+  connect(&global_hotkey_, &GlobalHotkey::Pressed, this, [this] {
+    send(tx() ? "/api/ptt/off" : "/api/ptt/on");
   });
 
   connect(&rx_, &RxAudio::ConnectionChanged, this, [this](bool up, QString d) {
@@ -117,6 +127,42 @@ void Backend::setHotkeyIndex(int i) {
   hotkey_.SetKey(settings_.ptt_key);
   settings_.Save();
   emit hotkeyChanged();
+}
+
+int Backend::globalHotkeyIndex() const {
+  const QStringList choices = GlobalHotkey::Choices();
+  const int i = choices.indexOf(settings_.global_ptt_key);
+  return i < 0 ? 0 : i;      // an unknown stored label falls back to "Off"
+}
+
+void Backend::setGlobalHotkeyIndex(int i) {
+  const QStringList choices = GlobalHotkey::Choices();
+  if (i < 0 || i >= choices.size()) return;
+  settings_.global_ptt_key = choices.at(i);
+  settings_.Save();
+  ApplyGlobalHotkey();
+  emit hotkeyChanged();
+}
+
+void Backend::attachWindow(QWindow* w) {
+  window_ = w;
+  ApplyGlobalHotkey();
+  emit hotkeyChanged();
+}
+
+void Backend::ApplyGlobalHotkey() {
+  if (settings_.global_ptt_key == "Off") {
+    global_hotkey_.Apply("Off", window_);
+    global_hotkey_status_ = "off";
+    return;
+  }
+  // ⚠️ THE FAILURE IS THE STATUS. The commonest one - another program already
+  // holds the combination - is not a fault in this app, and an operator staring
+  // at a key that does nothing has no way to know that unless it is said.
+  const QString err = global_hotkey_.Apply(settings_.global_ptt_key, window_);
+  global_hotkey_status_ =
+      err.isEmpty() ? QString("armed: %1 works anywhere").arg(settings_.global_ptt_key)
+                    : err;
 }
 
 void Backend::setHotkeyHold(bool hold) {
@@ -496,6 +542,24 @@ QString Backend::bandName() const {
     if (hz >= b.lo && hz <= b.hi) return b.name;
   }
   return "—";
+}
+
+QString Backend::setFreqText(const QString& text) {
+  const long long hz = FreqInput::Parse(text);
+  // ⚠️ 0 IS A REFUSAL, NOT A FREQUENCY. Sending "the closest thing we could make
+  // of it" is how a rig ends up somewhere nobody asked for - and because
+  // /api/freq/set also sets the mode, a bad parse is not a harmless miss.
+  if (hz == 0) return QString("cannot read \"%1\" as a frequency").arg(text.trimmed());
+  if (!FreqInput::InRange(hz)) {
+    return QString("%1 MHz is outside the rig's 0.030-75 MHz range")
+        .arg(hz / 1000000.0, 0, 'f', 3);
+  }
+  send(QString("/api/freq/set/%1").arg(hz));
+  return {};
+}
+
+QString Backend::freqEditText() const {
+  return FreqInput::ToEditText(status_.value("freq").toVariant().toLongLong());
 }
 
 void Backend::tuneTgxl() {
