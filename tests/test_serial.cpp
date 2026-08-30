@@ -44,7 +44,7 @@ void FakeRig() {
       std::string reply;
       if (cmd == "ID;")       reply = "ID0682;";
       else if (cmd == "FA;")  reply = "FA014074000;";
-      else if (cmd == "SPLIT;") {
+      else if (cmd == "ST;") {
         // Deliberately dribbled out in pieces to prove reassembly.
         const std::string parts = "ST0;";
         for (char c : parts) {
@@ -52,7 +52,7 @@ void FakeRig() {
           std::this_thread::sleep_for(std::chrono::milliseconds(8));
         }
         continue;
-      } else if (cmd == "TRAIL;") {
+      } else if (cmd == "MD0;") {
         // A reply plus the beginning of another message. Only the first
         // terminated reply may be returned.
         reply = "MD02;GARBAGE-AFTER";
@@ -94,21 +94,38 @@ int main() {
   std::printf("read:     FA; -> %s\n", fa->c_str());
 
   // Chunked reply must be reassembled, not truncated at the first read().
-  auto st = cat.Exchange("SPLIT;");
+  auto st = cat.Exchange("ST;");
   assert(st && *st == "ST0;");
   std::printf("chunked:  reassembled -> %s\n", st->c_str());
 
   // Only the first terminated reply is returned; trailing bytes are not leaked.
-  auto md = cat.Exchange("TRAIL;");
+  auto md = cat.Exchange("MD0;");
   assert(md && *md == "MD02;");
   std::printf("trailing: returned only %s, ignored the rest\n", md->c_str());
 
   // ⚠️ The critical one: a stale reply must NEVER be returned as the answer to a
-  // later command. Without the input flush this comes back as the leftover
-  // "GARBAGE" and every subsequent reply is off by one, each plausible on its own.
+  // later command. Two things guard it - flushing input before the write, and
+  // checking the reply starts with the command's verb.
+  //
+  // This is not hypothetical. On the real radio, asking ID; came back
+  // "VS0;ID0682;" - a leftover VS reply queued in front of the one we wanted.
+  // Without the verb check that returns VS0; as the model identity, and every
+  // reply after it is off by one, each individually plausible.
   auto next = cat.Exchange("FA;");
   assert(next && *next == "FA014074000;");
   std::printf("no-slip:  next command still got its own reply\n");
+
+  // The exact shape observed on the real radio: a stale reply sitting in front
+  // of the wanted one, in a single read.
+  {
+    const std::string leftover = "VS0;ID0682;";
+    ::write(g_master, leftover.data(), leftover.size());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    auto id2 = cat.Exchange("ID;");
+    assert(id2 && *id2 == "ID0682;");
+    std::printf("stale:    'VS0;ID0682;' -> returned %s, discarded the leftover\n",
+                id2->c_str());
+  }
 
   // An unanswered command must time out, not hang. A wedged read would stall the
   // poller while the API kept serving a cache nobody was refreshing.

@@ -38,7 +38,7 @@ std::optional<std::string> SimulatedRig::Exchange(const std::string& cmd) {
   if (cmd == "RA0;") return std::string("RA0") + (att_ ? "1" : "0") + ";";
   if (cmd == "GT0;") return "GT0" + Pad(agc_, 1) + ";";
   if (cmd == "VX;")  return std::string("VX") + (vox_ ? "1" : "0") + ";";
-  if (cmd == "PR0;") return std::string("PR0") + (comp_ ? "1" : "0") + ";";
+  if (cmd == "PR0;") return std::string("PR0") + (comp_ ? "2" : "1") + ";";   // 1=OFF, 2=ON
   if (cmd == "ML0;") return std::string("ML0") + (mon_ ? "001" : "000") + ";";
   if (cmd == "RT;")  return std::string("RT") + (rit_ ? "1" : "0") + ";";
   if (cmd == "XT;")  return std::string("XT") + (xit_ ? "1" : "0") + ";";
@@ -106,7 +106,8 @@ bool SimulatedRig::Send(const std::string& cmd) {
 
   if (flag("RA0", att_))   return true;
   if (flag("VX",  vox_))   return true;
-  if (flag("PR0", comp_))  return true;
+  if (cmd == "PR02;") { comp_ = true;  return true; }
+  if (cmd == "PR01;") { comp_ = false; return true; }
 
   if (flag("RT",  rit_))   return true;
   if (flag("XT",  xit_))   return true;

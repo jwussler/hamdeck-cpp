@@ -2,6 +2,7 @@
 
 #include "http.h"
 
+#include <functional>
 #include <mutex>
 #include <string>
 
@@ -40,6 +41,13 @@ struct ApiDeps {
   RxAudioStream* rx_audio = nullptr;
   TxAudioReceiver* tx_audio = nullptr;
   HostState* host = nullptr;
+
+  // ⚠️ HOW MUCH AUDIO IS STILL ON THE DEVICE, in milliseconds, or -1 if it
+  // cannot be measured. Supplied as a callback so this file needs no ALSA
+  // headers, and so a host with no real playback simply reports -1.
+  //
+  // This is what /api/ptt/off waits for. See the comment on that route.
+  std::function<int()> queued_audio_ms;
   // True when the CAT backend is the simulator. Surfaced on /api/backend so a
   // test tool can PROVE it is not pointed at the station.
   bool simulated = false;

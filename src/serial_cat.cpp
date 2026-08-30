@@ -84,6 +84,27 @@ bool SerialCat::Open(const std::string& device, int baud) {
   }
   tcflush(fd_, TCIOFLUSH);   // discard anything stale from a previous session
   device_ = device;
+
+  // ⚠️ PROBE EVEN WHEN THE DEVICE WAS NAMED EXPLICITLY.
+  // Opening a serial port proves a port exists, not that a radio is on the end
+  // of it. Without this, a host pointed at the wrong port of a dual-UART bridge
+  // comes up reporting success and then reads nothing, and the operator is left
+  // wondering why the panel is empty.
+  //
+  // ID; is the only safe probe - it reads the model and changes nothing.
+  // A silent port is REPORTED, not fatal: the rig may simply be switched off,
+  // and the poller already reports rig_connected=false for that.
+  if (const auto id = Exchange("ID;"); id && id->rfind("ID", 0) == 0) {
+    id_ = *id;
+    if (*id != kExpectedId) {
+      std::cerr << "serial: " << device << " answered " << *id << ", expected "
+                << kExpectedId << " - check the rig model\n";
+    }
+  } else {
+    std::cerr << "serial: " << device
+              << " opened but nothing answered ID; - is the radio on, and is "
+                 "this the CAT port of the bridge?\n";
+  }
   return true;
 }
 
@@ -102,6 +123,12 @@ std::optional<std::string> SerialCat::Exchange(const std::string& cmd) {
   tcflush(fd_, TCIFLUSH);
 
   if (!Send(cmd)) return std::nullopt;
+
+  // The command's leading letters, used to recognise its reply.
+  std::string verb;
+  for (char c : cmd) {
+    if (c >= 'A' && c <= 'Z') verb += c; else break;
+  }
 
   std::string reply;
   const auto deadline =
@@ -123,10 +150,25 @@ std::optional<std::string> SerialCat::Exchange(const std::string& cmd) {
     if (n <= 0) continue;
     reply.append(buf, n);
 
-    // CAT replies are terminated by ';'. Return at the FIRST one: anything after
-    // it belongs to another message.
-    if (const auto pos = reply.find(';'); pos != std::string::npos) {
-      return reply.substr(0, pos + 1);
+    // CAT replies are terminated by ';'.
+    //
+    // ⚠️ VERIFY THE REPLY BELONGS TO THE COMMAND. Observed on the real radio:
+    // asking ID; came back "VS0;ID0682;" - a leftover reply from an earlier
+    // command sitting in front of the one we wanted. Flushing before the write
+    // helps but cannot win a race against a reply already in flight.
+    //
+    // Returning the first terminated reply blindly would hand back VS0; as the
+    // answer to ID;, and then every later reply is off by one - each one
+    // individually plausible. A frequency that is really the mode.
+    //
+    // The verb is the leading letters of the command, so a reply that does not
+    // start with them is somebody else's and gets discarded.
+    while (true) {
+      const auto pos = reply.find(';');
+      if (pos == std::string::npos) break;
+      const std::string candidate = reply.substr(0, pos + 1);
+      if (candidate.rfind(verb, 0) == 0) return candidate;
+      reply.erase(0, pos + 1);   // stale reply - drop it and keep reading
     }
     if (reply.size() > 4096) return std::nullopt;   // runaway peer
   }

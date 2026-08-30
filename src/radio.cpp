@@ -133,7 +133,11 @@ void RadioPoller::PollOnce() {
   if (auto r = cat_->Exchange("TX;");  r && r->size() >= 4)  s.tx     = r->at(2) != '0';
   if (auto r = cat_->Exchange("ST;");  r && r->size() >= 4)  s.split  = r->at(2) != '0';
   if (auto r = cat_->Exchange("VS;");  r && r->size() >= 4)  s.vfo    = (r->at(2) != '0') ? "B" : "A";
-  if (auto r = cat_->Exchange("LK;");  r && r->size() >= 4)  s.vfo_locked = r->at(2) != '0';
+  // ⚠️ ONLY '1' MEANS LOCKED. The real radio answered LK4; with the dial
+  // unlocked, so a "anything but 0 is locked" test reports a lock that is not
+  // there. The reference host tests for LK1 specifically; whatever 4 means, it
+  // is not "locked".
+  if (auto r = cat_->Exchange("LK;");  r && r->size() >= 4)  s.vfo_locked = (r->at(2) == '1');
 
   PollMeters(s);
 
@@ -236,7 +240,10 @@ void RadioPoller::PollFull(RigSnapshot& s) {
   if (Digits(cat_->Exchange("PA0;"), 3, 1, v)) s.preamp = v;
   if (Flag(cat_->Exchange("RA0;"), 3, b))  s.att = b;
   if (Flag(cat_->Exchange("VX;"),  2, b))  s.vox = b;
-  if (Flag(cat_->Exchange("PR0;"), 3, b))  s.comp = b;
+  // ⚠️ PR0P2 where P2: 1 = OFF, 2 = ON. NOT a 0/1 flag. Verified against the
+  // real radio, which answered PR01; while the compressor was off - read as a
+  // plain flag that says "on".
+  if (auto r = cat_->Exchange("PR0;"); r && r->size() >= 4) s.comp = (r->at(3) == '2');
   if (Digits(cat_->Exchange("ML0;"), 3, 3, v)) s.mon = v > 0;   // ML0PPP, 000=off
   if (Flag(cat_->Exchange("RT;"),  2, b))  s.rit = b;
   if (Flag(cat_->Exchange("XT;"),  2, b))  s.xit = b;
@@ -252,8 +259,12 @@ void RadioPoller::PollFull(RigSnapshot& s) {
       case '1': s.agc = "FAST"; break;
       case '2': s.agc = "MID";  break;
       case '3': s.agc = "SLOW"; break;
-      case '4': s.agc = "AUTO"; break;
-      default:  break;   // unknown code: keep the previous value, never guess
+      // ⚠️ 4, 5 AND 6 all mean AUTO. The real radio answered GT06; and a switch
+      // that only knew 0-4 fell through to "keep the previous value", which
+      // happened to be AUTO - right answer, wrong reason, and it would have been
+      // the wrong answer had anything else been read first.
+      case '4': case '5': case '6': s.agc = "AUTO"; break;
+      default:  break;   // genuinely unknown: keep the previous value, never guess
     }
   }
 }

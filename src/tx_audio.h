@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -27,6 +28,12 @@ class TxAudioSink {
   virtual bool Write(const int16_t* samples, size_t frames) = 0;
   virtual int SampleRate() const = 0;
   virtual std::string Describe() const = 0;
+
+  // Milliseconds currently queued ON THE DEVICE, or -1 if unknowable. This is
+  // the number the adaptive buffering steers and the PTT tail waits for.
+  virtual int QueuedMs() const { return -1; }
+  // Underruns so far. Each one is audible - the device ran dry mid-audio.
+  virtual long Xruns() const { return 0; }
 };
 
 // Counts and discards. Reports honestly that it is not a radio.
@@ -84,8 +91,38 @@ class TxAudioReceiver {
   void Start();
   void Stop();
 
-  // ~500 ms at 48k in 20 ms chunks.
-  static constexpr size_t kMaxQueuedChunks = 25;
+  // ⚠️ THE QUEUE MUST HOLD MORE THAN THE LARGEST PRE-ROLL TARGET.
+  // 50 chunks x 20 ms = 1000 ms, comfortably above the 600 ms ceiling below.
+  //
+  // At 25 chunks (500 ms) this DEADLOCKED on real hardware: a burst of underruns
+  // grew the target to 600 ms, the pre-roll waited for 600 ms it could never
+  // hold, the queue sat full at 500 ms, and audio stopped flowing entirely.
+  // Found only with a real device - a null sink never underruns, so the target
+  // never grows, so the deadlock never happens.
+  static constexpr size_t kMaxQueuedChunks = 50;
+
+  // ⚠️ ADAPTIVE BUFFERING (CARRYOVER.md section 3), and it is not optional.
+  //
+  // Writing each chunk to the device the moment it arrives leaves no cushion:
+  // the device runs dry between chunks and underruns. Measured on the real
+  // codec before this was added: **290 xruns in six seconds**, with the stream
+  // sitting in XRUN. That is a stutter on every syllable, and it is invisible
+  // against a null sink - only a real device shows it.
+  //
+  // So: give the device a generous buffer and control the FILL LEVEL. Hold audio
+  // back until `target` milliseconds are queued, then feed continuously.
+  static constexpr int kTargetStartMs = 150;
+  static constexpr int kTargetFloorMs = 80;
+  static constexpr int kTargetCeilMs  = 600;
+  static constexpr int kXrunGrowMs    = 60;   // an underrun means too little cushion
+  static constexpr int kDecayStepMs   = 20;   // and quiet time means we can trim
+  static constexpr int kDecayAfterSec = 30;
+
+  // 20 ms at 48 kHz, the chunk size clients send.
+  static constexpr size_t kFramesPerChunkHint = 960;
+
+  int target_ms() const { return target_ms_; }
+  int DeviceQueuedMs() const { return sink_->QueuedMs(); }
 
  private:
   void PumpLoop();
@@ -97,4 +134,9 @@ class TxAudioReceiver {
   std::deque<std::vector<int16_t>> queue_;
   std::string holder_;
   std::atomic<size_t> accepted_{0}, dropped_{0};
+
+  int  target_ms_ = kTargetStartMs;
+  long last_xruns_ = 0;
+  bool prerolled_ = false;
+  std::chrono::steady_clock::time_point last_xrun_at_{};
 };

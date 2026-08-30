@@ -198,6 +198,9 @@ std::string Pad(long long v, int width) {
 // In the C# host a LOCAL caller is capped at 100 W while a remote caller gets
 // 200 W - which reads backwards, so it is exactly the kind of thing to port
 // as-is and ask about rather than quietly invert. Flagged in WIP.md.
+// Hard ceiling on how long unkeying may be delayed, whatever the buffer says.
+constexpr int kMaxDrainMs = 1200;
+
 constexpr int kLocalPowerCap = 100;
 constexpr int kMaxWatts      = 200;
 
@@ -353,13 +356,15 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
     WriteJson(res, 200,
               std::format(R"({{"status":"ok","cat":"{}","simulated":{},)"
                           R"("rx_audio":"{}","tx_audio":"{}",)"
-                          R"("tx_accepted":{},"tx_dropped":{},"tx_queue":{}}})",
+                          R"("tx_accepted":{},"tx_dropped":{},"tx_queue":{},)"
+                          R"("device_queued_ms":{}}})",
                           deps.poller ? deps.poller->Backend() : "none",
                           JsonBool(deps.simulated),
                           deps.rx_audio ? deps.rx_audio->Backend() : "none",
                           tx ? tx->Backend() : "none",
                           tx ? tx->Accepted() : 0, tx ? tx->Dropped() : 0,
-                          tx ? tx->QueueDepth() : 0));
+                          tx ? tx->QueueDepth() : 0,
+                          deps.queued_audio_ms ? deps.queued_audio_ms() : -1));
   });
 
   server.Get("/api/status/full", [&deps](const HttpRequest&, HttpResponse& res) {
@@ -468,7 +473,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       {"/api/lock/on",  [rig](bool) { if (rig) rig->Enqueue("LK1;"); return OkJson("lock", "1"); }},
       {"/api/lock/off", [rig](bool) { if (rig) rig->Enqueue("LK0;"); return OkJson("lock", "0"); }},
 
-      // ⚠️ PTT ON is here; PTT OFF IS NOT. Unkeying must wait for the audio still
+      // ⚠️ PTT ON is here; PTT OFF is below, because unkeying is not instant. Unkeying must wait for the audio still
       // queued in the ALSA buffer or the tail of every transmission is lost
       // (CARRYOVER.md section 4a), and that wait needs the real device depth from
       // /proc/asound. Shipping an unkey that drops PTT immediately would look
@@ -530,7 +535,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       // BC01;/BC00;. Handled by the two-digit spec below, not here.
       {"/api/att",    "att",   "RA0", &RigSnapshot::att},
       {"/api/vox",    "vox",   "VX",  &RigSnapshot::vox},
-      {"/api/comp",   "comp",  "PR0", &RigSnapshot::comp},
+      // NOTE: comp is NOT here - PR0 takes 1=OFF / 2=ON, not 0/1. Handled below.
       // NOT a simple ML0<0|1>; - monitor is ML0000;/ML0001; and turning it back on
       // also restores the saved level. Handled separately below.
       {"/api/rit",    "rit",   "RT",  &RigSnapshot::rit},
@@ -559,6 +564,23 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                            if (rig) rig->Enqueue(cat + (now ? "0;" : "1;"));
                            return OkJson(key, now ? "false" : "true");
                          }});
+  }
+
+  // ⚠️ Compressor: PR0P2 where P2 is 1=OFF and 2=ON - NOT a 0/1 flag. Sending
+  // PR01 for "on" would have turned it OFF, and PR00 for "off" is not a valid
+  // value at all. Found by reading the real radio, which answered PR01; with the
+  // compressor off.
+  {
+    generated.push_back({"/api/comp/on", [rig](bool) {
+        if (rig) rig->Enqueue("PR02;");
+        return OkJson("comp", "1"); }});
+    generated.push_back({"/api/comp/off", [rig](bool) {
+        if (rig) rig->Enqueue("PR01;");
+        return OkJson("comp", "0"); }});
+    generated.push_back({"/api/comp/toggle", [rig](bool) {
+        const bool now = rig && rig->Snapshot().comp;
+        if (rig) rig->Enqueue(now ? "PR01;" : "PR02;");
+        return OkJson("comp", now ? "false" : "true"); }});
   }
 
   // Notch: BC0 takes a two-digit value, so it cannot share the one-digit path.
@@ -702,6 +724,47 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       return OkJson("action", Quoted(delta > 0 ? "up" : "down"));
     };
   };
+  // ── Unkeying, which is NOT the reverse of keying ──────────────────────────
+  //
+  // ⚠️ WAIT FOR THE AUDIO THAT IS ALREADY ON THE DEVICE, THEN DROP PTT.
+  // The last fraction of a second of every transmission is sitting in the ALSA
+  // buffer when the operator releases PTT. Drop the carrier first and that audio
+  // is never transmitted - the end of every over is cut off, and it sounds like
+  // the other station stopped listening. CARRYOVER.md section 4a; the bug it
+  // describes took a report from a net to find.
+  //
+  // ⚠️ WAIT THE DEPTH AT THIS MOMENT, NOT "UNTIL EMPTY". The microphone stays
+  // open, so an until-empty loop never terminates and the carrier stays up.
+  // Snapshot the depth, wait exactly that long, unkey.
+  //
+  // ⚠️ HARD CAP. A mis-measured or stuck buffer must not hold the transmitter
+  // open. Nothing is worth an open carrier.
+  auto unkey = [rig, &deps](bool) {
+    int drained = 0;
+    if (deps.queued_audio_ms) {
+      const int q = deps.queued_audio_ms();
+      if (q > 0) drained = q > kMaxDrainMs ? kMaxDrainMs : q;
+    }
+    if (rig) {
+      // Runs on the poller thread, which owns the serial port. The wait happens
+      // there so the unkey is not racing a status poll for the port.
+      rig->EnqueueTask([drained](CatTransport& cat) {
+        if (drained > 0) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(drained));
+        }
+        cat.Send("TX0;");
+      });
+    }
+    return std::format(R"({{"status":"ok","ptt":0,"drained_ms":{}}})", drained);
+  };
+  generated.push_back({"/api/ptt/off",   unkey});
+  generated.push_back({"/api/ptt/unkey", unkey});
+  generated.push_back({"/api/ptt/toggle", [rig, unkey](bool is_local) {
+      const bool keyed = rig && rig->Snapshot().tx;
+      if (keyed) return unkey(is_local);
+      if (rig) rig->Enqueue("TX1;");
+      return std::string(R"({"status":"ok","ptt":true})"); }});
+
   generated.push_back({"/api/rit/up",   rit_nudge(100)});
   generated.push_back({"/api/rit/down", rit_nudge(-100)});
   generated.push_back({"/api/rit/clear", [rig](bool) {

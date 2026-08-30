@@ -29,8 +29,14 @@ struct Config {
 
   // Audio
   int record_sample_rate = 22050;     // RX wire format; the client expects this
-  std::string alsa_capture_device = "default";
-  std::string alsa_playback_device = "default";
+  // ⚠️ EMPTY MEANS SYNTHETIC, not "the default device".
+  // "default" is a real ALSA device on most systems - usually the desktop mixer.
+  // Defaulting to it would mean a host started anywhere near a sound card
+  // quietly streams that machine's audio to the operator, and on the transmit
+  // side plays into whatever the desktop plays into. Real audio has to be asked
+  // for by name, exactly like the CAT device.
+  std::string alsa_capture_device = "";
+  std::string alsa_playback_device = "";
   bool audio_stream_enabled = true;
   bool tx_audio_enabled = true;
 

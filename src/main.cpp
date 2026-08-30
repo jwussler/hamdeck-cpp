@@ -18,6 +18,7 @@
 #include "audio.h"
 #include "http.h"
 #include "auth.h"
+#include "alsa_audio.h"
 #include "cat_sim.h"
 #include "config.h"
 #include "serial_cat.h"
@@ -166,13 +167,52 @@ int main(int argc, char** argv) {
   // Synthetic RX audio: the codec is passed through to the reference host, so
   // there is no real capture device here. 22050 Hz mono/16-bit matches the wire
   // format the client expects (CARRYOVER.md section 2).
-  RxAudioStream rx_audio(std::make_unique<ToneSource>(config.record_sample_rate, 700.0));
+  // RX source: the real codec when one is named, a tone otherwise. A failure to
+  // open a NAMED device is fatal, for the same reason a missing CAT device is:
+  // a host that silently substitutes a test tone for the receiver would have the
+  // operator listening to a sine wave and reporting the band dead.
+  std::unique_ptr<AudioSource> rx_source;
+  if (!config.alsa_capture_device.empty()) {
+    auto cap = std::make_unique<AlsaCapture>();
+    if (!cap->Open(config.alsa_capture_device, config.record_sample_rate)) {
+      std::cerr << "FATAL: capture device '" << config.alsa_capture_device
+                << "': " << cap->error()
+                << "\nNot falling back to a test tone - an operator listening to a "
+                   "sine wave would report the band dead.\n";
+      return 1;
+    }
+    std::cout << "RX: " << cap->Describe() << '\n' << std::flush;
+    rx_source = std::move(cap);
+  } else {
+    rx_source = std::make_unique<ToneSource>(config.record_sample_rate, 700.0);
+  }
+  RxAudioStream rx_audio(std::move(rx_source));
   rx_audio.Start();
 
   // TX audio. The null sink discards: the codec is on the reference host, so
   // there is nowhere to play to. /api/tx-audio/status reports available:false
   // because of it, rather than claiming a working path.
-  TxAudioReceiver tx_audio(std::make_unique<NullTxSink>(48000));
+  // TX sink: the real codec when named, a discarding sink otherwise. Same rule -
+  // a named device that will not open is fatal rather than silently discarding,
+  // because "transmitting" into a null sink puts a carrier on the air with
+  // nothing modulating it.
+  std::unique_ptr<TxAudioSink> tx_sink;
+  AlsaPlayback* playback = nullptr;   // kept for the PTT tail measurement
+  if (!config.alsa_playback_device.empty()) {
+    auto pb = std::make_unique<AlsaPlayback>();
+    if (!pb->Open(config.alsa_playback_device, 48000)) {
+      std::cerr << "FATAL: playback device '" << config.alsa_playback_device
+                << "' would not open. Not falling back to a discarding sink - "
+                   "that would key the transmitter with nothing modulating it.\n";
+      return 1;
+    }
+    std::cout << "TX: " << pb->Describe() << '\n' << std::flush;
+    playback = pb.get();
+    tx_sink = std::move(pb);
+  } else {
+    tx_sink = std::make_unique<NullTxSink>(48000);
+  }
+  TxAudioReceiver tx_audio(std::move(tx_sink));
   tx_audio.Start();
 
   HostState host_state;
@@ -183,6 +223,12 @@ int main(int argc, char** argv) {
   deps.rx_audio = &rx_audio;
   deps.tx_audio = &tx_audio;
   deps.host = &host_state;
+  // Only a real playback device can answer this. With no device the callback
+  // reports -1 and /api/ptt/off unkeys immediately, which is correct: there is
+  // no audio queued to wait for.
+  if (playback) {
+    deps.queued_audio_ms = [playback] { return playback->QueuedMs(); };
+  }
   deps.simulated = simulated;
   deps.allow_anonymous_status = config.allow_anonymous_status;
 
