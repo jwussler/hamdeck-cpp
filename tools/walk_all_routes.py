@@ -84,9 +84,43 @@ DRIVE = [
     ("/api/ant/rx/on",   "rxant",  True),
     ("/api/ant/rx/off",  "rxant",  False),
     ("/api/ptt/on",      "tx",     True),
+
+    # Prefix routes - the parameterised half of the surface, and the half a
+    # panel actually uses: band buttons, the keypad, the numeric setters.
+    ("/api/band/20",           "freq", 14200000),
+    ("/api/band/40",           "freq", 7200000),
+    ("/api/freq/set/14074000", "freq", 14074000),
+    ("/api/mode/lsb",          "mode", "LSB"),
+    # ⚠️ 49, not 50, and that is CORRECT. Percent -> raw -> percent is lossy in
+    # integer math: 50*255/100 = 127, and 127*100/255 = 49. The reference host
+    # does the same arithmetic and reports the same 49, so matching it matters
+    # more than a round number. A client showing a slider should send percent and
+    # trust the readback, not assume it gets its own value returned.
+    ("/api/volume/set/50",     "af_gain_pct", 49),
+    ("/api/power/set/25",      "power", 25),
+    ("/api/cw-speed/set/25",   "cw_speed", 25),
 ]
 
 # Reachable, but with no field to read back - asserted only to answer 200.
+SMOKE_PREFIX = [
+    "/api/step/1000/up", "/api/step/1000/down", "/api/rf-gain/set/60",
+    "/api/memory/recall/3", "/api/ssb-out-level/set/40", "/api/remote-tx/gain/40",
+    "/api/mode/usb", "/api/band/15",
+]
+
+# Routes that must answer honestly rather than 404 when a feature is absent.
+HONEST_ABSENT = [
+    "/api/rxant/2", "/api/preset/nonexistent", "/api/cw/memory/1",
+    "/api/cw/send/TEST", "/api/voice/play/1", "/api/tune/tgxl", "/api/cw/status",
+]
+
+# Frequency-changing routes the software VFO lock MUST refuse.
+VFO_LOCK_BLOCKED = [
+    "/api/band/40", "/api/freq/set/14200000", "/api/freq/digit/7",
+    "/api/step/1000/up", "/api/quick-split", "/api/freq/send",
+    "/api/freq/clear", "/api/freq/backspace", "/api/vfo/swap",
+]
+
 SMOKE = [
     "/api/toggle/nb", "/api/toggle/nr", "/api/toggle/dnr", "/api/toggle/notch",
     "/api/toggle/lock", "/api/att/toggle", "/api/vox/toggle", "/api/comp/toggle",
@@ -163,6 +197,18 @@ def main():
         # queued for the poller thread, so there is always some latency, and a
         # fixed sleep either flakes or wastes time. A bounded wait still fails
         # if the command never lands.
+        if field == "af_gain_pct":
+            actual, _ = wait_for(base, "/api/volume/get", "volume", expect)
+            if actual != expect:
+                print(f"  FAIL  {path}: volume is {actual!r}, expected {expect!r}")
+                drive_fail += 1
+            continue
+        if field == "cw_speed":
+            actual, _ = wait_for(base, "/api/cw-speed/get", "wpm", expect)
+            if actual != expect:
+                print(f"  FAIL  {path}: wpm is {actual!r}, expected {expect!r}")
+                drive_fail += 1
+            continue
         src = "/api/status" if field in (
             "mode", "power", "split", "vfo", "vfo_locked", "diversity", "tx",
             "freq") else "/api/status/full"
@@ -172,16 +218,68 @@ def main():
             drive_fail += 1
     print(f"  drive:     {len(DRIVE) - drive_fail}/{len(DRIVE)} verified by reading the rig back")
 
+    # The keypad, end to end: digits accumulate then tune the rig.
+    keypad_fail = 0
+    get(base, "/api/freq/clear")
+    for d in "14250":
+        st, b = get(base, f"/api/freq/digit/{d}")
+        if st != 200:
+            print(f"  FAIL  /api/freq/digit/{d}: {st}"); keypad_fail += 1
+    st, b = get(base, "/api/freq/send")
+    if (b or {}).get("freq_hz") != 14250000:
+        print(f"  FAIL  /api/freq/send: {b}"); keypad_fail += 1
+    else:
+        actual, _ = wait_for(base, "/api/status", "freq", 14250000)
+        if actual != 14250000:
+            print(f"  FAIL  keypad did not reach the rig: {actual}"); keypad_fail += 1
+    # A non-digit must be refused: the buffer is parsed as a number later, so a
+    # stray character silently became 0 and tuned to the bottom of the range.
+    # A refusal may come back as 4xx with no parsed body, so check the STATUS,
+    # not the body - an earlier version read the body only and reported a pass
+    # for a route that had correctly refused.
+    st, b = get(base, "/api/freq/digit/x")
+    refused = st >= 400 or (isinstance(b, dict) and b.get("status") == "error")
+    if not refused:
+        print(f"  FAIL  /api/freq/digit/x was accepted: {st} {b}"); keypad_fail += 1
+    print(f"  keypad:    {'ok' if not keypad_fail else str(keypad_fail) + ' failure(s)'}")
+
+    # ⚠️ The software VFO lock must REFUSE frequency changes, for every caller.
+    lock_fail = 0
+    get(base, "/api/vfo-lock/on")
+    for path in VFO_LOCK_BLOCKED:
+        st, b = get(base, path)
+        if (b or {}).get("vfo_locked") is not True:
+            print(f"  FAIL  {path} was NOT blocked by the VFO lock: {b}"); lock_fail += 1
+    st, b = get(base, "/api/mode/usb")   # not a frequency change: must still work
+    if (b or {}).get("status") != "ok":
+        print(f"  FAIL  /api/mode/usb blocked by the VFO lock: {b}"); lock_fail += 1
+    get(base, "/api/vfo-lock/off")
+    st, b = get(base, "/api/band/40")
+    if (b or {}).get("status") != "ok":
+        print(f"  FAIL  /api/band/40 still blocked after unlock: {b}"); lock_fail += 1
+    print(f"  vfo lock:  {len(VFO_LOCK_BLOCKED)} blocked, mode allowed, released "
+          f"({'ok' if not lock_fail else str(lock_fail) + ' failure(s)'})")
+
+    absent_fail = 0
+    for path in HONEST_ABSENT:
+        st, b = get(base, path)
+        if st != 200 or not isinstance(b, dict):
+            print(f"  FAIL  {path}: {st} - absent features must answer, not 404")
+            absent_fail += 1
+    print(f"  honest:    {len(HONEST_ABSENT) - absent_fail}/{len(HONEST_ABSENT)} "
+          "absent features answer with a reason")
+
     smoke_fail = 0
-    for path in SMOKE:
+    for path in SMOKE + SMOKE_PREFIX:
         status, _ = get(base, path)
         if status != 200:
             print(f"  FAIL  {path}: {status}")
             smoke_fail += 1
-    print(f"  smoke:     {len(SMOKE) - smoke_fail}/{len(SMOKE)} answered 200")
+    print(f"  smoke:     {len(SMOKE) + len(SMOKE_PREFIX) - smoke_fail}/"
+          f"{len(SMOKE) + len(SMOKE_PREFIX)} answered 200")
 
     get(base, "/api/ptt/off")   # best effort; 404 today, see api.cpp
-    total = failures + drive_fail + smoke_fail
+    total = failures + drive_fail + smoke_fail + keypad_fail + lock_fail + absent_fail
     print(f"\n{total} failure(s)")
     return 1 if total else 0
 

@@ -95,6 +95,7 @@ struct HttpServer::Impl {
   mg_context* ctx = nullptr;
   std::map<std::string, HttpHandler> get_routes;
   std::map<std::string, HttpHandler> post_routes;
+  std::map<std::string, PrefixHandler> prefix_routes;
   struct WsRoute { WsOpen on_open; WsClose on_close; WsData on_data; };
   std::map<std::string, WsRoute> ws_routes;
   std::mutex conn_mu;
@@ -111,6 +112,9 @@ void HttpServer::Get(const std::string& path, HttpHandler h) {
 void HttpServer::Post(const std::string& path, HttpHandler h) {
   impl_->post_routes[path] = std::move(h);
 }
+void HttpServer::GetPrefix(const std::string& prefix, PrefixHandler h) {
+  impl_->prefix_routes[prefix] = std::move(h);
+}
 void HttpServer::WebSocketRoute(const std::string& path, WsOpen on_open, WsClose on_close,
                                WsData on_data) {
   impl_->ws_routes[path] = {std::move(on_open), std::move(on_close), std::move(on_data)};
@@ -124,6 +128,7 @@ static int GenericHandler(mg_connection* conn, void* cbdata);
 struct HandlerCtx {
   HttpServer::Impl* impl;
   PreRouting* pre;
+  PreRouting* gate;
 };
 
 bool HttpServer::Listen(const std::string& listen_spec, int worker_threads) {
@@ -142,7 +147,7 @@ bool HttpServer::Listen(const std::string& listen_spec, int worker_threads) {
   impl_->ctx = mg_start(&callbacks, nullptr, options);
   if (!impl_->ctx) return false;
 
-  auto* hc = new HandlerCtx{impl_.get(), &pre_};
+  auto* hc = new HandlerCtx{impl_.get(), &pre_, &gate_};
   mg_set_request_handler(impl_->ctx, "/", GenericHandler, hc);
 
   for (const auto& [path, route] : impl_->ws_routes) {
@@ -231,9 +236,32 @@ static int GenericHandler(mg_connection* conn, void* cbdata) {
     return 200;
   }
 
+  if (hc->gate && *hc->gate && !(*hc->gate)(req, res)) {
+    WriteResponse(conn, res);
+    return 200;
+  }
+
   const auto& table = (req.method == "POST") ? hc->impl->post_routes : hc->impl->get_routes;
   const auto it = table.find(req.path);
   if (it == table.end()) {
+    // Prefix routes, LONGEST MATCH FIRST. /api/freq/ must not shadow the more
+    // specific /api/freq/set/, and map iteration order alone does not guarantee
+    // that.
+    const PrefixHandler* best = nullptr;
+    size_t best_len = 0;
+    std::string suffix;
+    for (const auto& [prefix, handler] : hc->impl->prefix_routes) {
+      if (req.path.rfind(prefix, 0) == 0 && prefix.size() > best_len) {
+        best = &handler;
+        best_len = prefix.size();
+        suffix = req.path.substr(prefix.size());
+      }
+    }
+    if (best) {
+      (*best)(suffix, req, res);
+      WriteResponse(conn, res);
+      return 200;
+    }
     // Shape matches the reference host: it names the path it could not route.
     res.status = 404;
     res.body = R"({"status":"error","message":"Unknown route","path":")" + req.path + R"("})";

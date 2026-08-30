@@ -3,6 +3,7 @@
 #include <chrono>
 #include <format>
 #include <iostream>
+#include <algorithm>
 #include <cstring>
 #include <tuple>
 #include <functional>
@@ -28,6 +29,18 @@ const std::set<std::string> kAlwaysAnonymous = {
 
 // Read rig state without changing it. Anonymous ONLY when allow_anonymous_status
 // is set. Mirrors ReadOnlyRoutes in the C# ApiServer.
+// ⚠️ THE SOFTWARE VFO LOCK BLOCKS THESE. It is not a UI hint - an operator who
+// has locked the VFO has said "do not move my frequency", and the host must
+// enforce that for every client, including one that has never heard of the lock.
+// Copied from the reference host's VfoLockExactBlocked / VfoLockPrefixBlocked.
+const std::set<std::string> kVfoLockBlockedExact = {
+    "/api/freq/send", "/api/freq/clear", "/api/freq/backspace",
+    "/api/vfo/swap", "/api/quick-split",
+};
+const std::vector<std::string> kVfoLockBlockedPrefix = {
+    "/api/freq/set/", "/api/freq/digit/", "/api/band/", "/api/preset/", "/api/step/",
+};
+
 const std::set<std::string> kReadOnly = {
     "/api/status", "/api/status/full", "/api/health", "/api/meters",
     "/api/session", "/api/cluster/spots", "/api/record/status",
@@ -200,6 +213,29 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
         WriteJson(res, 401, R"({"status":"error","message":"Authentication required"})");
         return false;
       });
+
+  // ── The VFO lock gate ──────────────────────────────────────────────────────
+  // Runs on every path, like the auth gate, so a frequency-moving route added
+  // later is covered without anyone remembering to check. Enforced on BOTH
+  // listeners: a local caller is trusted for auth, but the lock is the
+  // operator's instruction about their own radio, not a permission level.
+  server.SetSecondGate([&deps](const HttpRequest& req, HttpResponse& res) -> bool {
+    if (!deps.host) return true;
+    bool locked = false;
+    {
+      std::lock_guard<std::mutex> lock(deps.host->mu);
+      locked = deps.host->vfo_locked;
+    }
+    if (!locked) return true;
+    bool blocked = kVfoLockBlockedExact.count(req.path) > 0;
+    for (const auto& p : kVfoLockBlockedPrefix) {
+      if (req.path.rfind(p, 0) == 0) blocked = true;
+    }
+    if (!blocked) return true;
+    WriteJson(res, 200,
+              R"({"status":"error","message":"VFO is locked","vfo_locked":true})");
+    return false;
+  });
 
   server.Get("/api/health", [&deps, bound_port](const HttpRequest&, HttpResponse& res) {
     WriteJson(res, 200, HealthJson(deps, bound_port));
@@ -898,6 +934,228 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                          R"("reason":"CW keyer is not implemented in the C++ host yet"})"); }});
   generated.push_back({"/api/cw/stop", [](bool) {
       return std::string(R"({"status":"ok","cw":"stopped","available":false})"); }});
+
+  // ── Prefix routes ──────────────────────────────────────────────────────────
+  auto bad_request = [](HttpResponse& res, const std::string& msg) {
+    WriteJson(res, 400, std::format(R"({{"status":"error","message":"{}"}})", msg));
+  };
+  auto parse_int = [](const std::string& s, int& out) {
+    if (s.empty() || s.find_first_not_of("-0123456789") != std::string::npos) return false;
+    try { out = std::stoi(s); return true; } catch (const std::exception&) { return false; }
+  };
+
+  server.GetPrefix("/api/mode/", [rig](const std::string& m, const HttpRequest&,
+                                       HttpResponse& res) {
+    std::string up = m;
+    std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+    const int code = ModeCode(up);
+    if (code == 0) {
+      WriteJson(res, 400, std::format(R"({{"status":"error","message":"unknown mode {}"}})", up));
+      return;
+    }
+    if (rig) rig->Enqueue(std::format("MD0{};", code));
+    WriteJson(res, 200, OkJson("mode", Quoted(up)));
+  });
+
+  // Band plan centres, copied from the reference host's BandFrequencies. Phone
+  // centres, except 30m which is CW/digital only - which is why the mode comes
+  // from the band plan rather than being assumed.
+  server.GetPrefix("/api/band/", [rig](const std::string& band, const HttpRequest&,
+                                       HttpResponse& res) {
+    static const std::map<std::string, long long> kBands = {
+        {"160", 1880000},  {"80", 3860000},   {"60", 5330500},  {"40", 7200000},
+        {"30", 10130000},  {"20", 14200000},  {"17", 18130000}, {"15", 21300000},
+        {"12", 24940000},  {"10", 28400000},  {"6", 50125000},
+    };
+    const auto it = kBands.find(band);
+    if (it == kBands.end()) {
+      WriteJson(res, 400, std::format(R"({{"status":"error","message":"unknown band {}"}})", band));
+      return;
+    }
+    const std::string mode = ModeForFrequency(it->second);
+    if (rig) {
+      rig->Enqueue(std::format("MD0{};", ModeCode(mode)));
+      rig->Enqueue(std::format("FA{:09d};", it->second));
+    }
+    WriteJson(res, 200,
+              std::format(R"({{"status":"ok","band":"{}","freq":{},"mode":"{}"}})",
+                          band, it->second, mode));
+  });
+
+  server.GetPrefix("/api/freq/set/", [rig](const std::string& hz_s, const HttpRequest&,
+                                           HttpResponse& res) {
+    long long hz = 0;
+    try { hz = std::stoll(hz_s); } catch (const std::exception&) {
+      WriteJson(res, 400, R"({"status":"error","message":"frequency is not a number"})");
+      return;
+    }
+    const std::string mode = ModeForFrequency(hz);
+    if (rig) {
+      rig->Enqueue(std::format("MD0{};", ModeCode(mode)));
+      rig->Enqueue(std::format("FA{:09d};", hz));
+    }
+    WriteJson(res, 200,
+              std::format(R"({{"status":"ok","freq":{},"mode":"{}"}})", hz, mode));
+  });
+
+  // ⚠️ DIGITS ONLY. The buffer is parsed as a number later, so a non-digit
+  // silently parsed to 0 and tuned the rig to the bottom of its range - the
+  // reference host carries that same comment, learned the same way.
+  server.GetPrefix("/api/freq/digit/", [host](const std::string& d, const HttpRequest&,
+                                              HttpResponse& res) {
+    if (d.empty() || d.find_first_not_of("0123456789") != std::string::npos) {
+      WriteJson(res, 400, R"({"status":"error","message":"digits only"})");
+      return;
+    }
+    std::string buf;
+    if (host) {
+      std::lock_guard<std::mutex> lock(host->mu);
+      host->freq_buffer += d;
+      buf = host->freq_buffer;
+    }
+    WriteJson(res, 200, OkJson("buffer", Quoted(buf)));
+  });
+
+  // /api/step/<hz>/<up|down>
+  server.GetPrefix("/api/step/", [rig](const std::string& suffix, const HttpRequest&,
+                                       HttpResponse& res) {
+    const auto slash = suffix.find('/');
+    if (slash == std::string::npos) {
+      WriteJson(res, 400, R"({"status":"error","message":"expected <hz>/<up|down>"})");
+      return;
+    }
+    long long hz = 0;
+    try { hz = std::stoll(suffix.substr(0, slash)); } catch (const std::exception&) {
+      WriteJson(res, 400, R"({"status":"error","message":"step is not a number"})");
+      return;
+    }
+    const std::string dir = suffix.substr(slash + 1);
+    if (dir != "up" && dir != "down") {
+      WriteJson(res, 400, R"({"status":"error","message":"direction must be up or down"})");
+      return;
+    }
+    const long long delta = (dir == "down") ? -hz : hz;
+    // Read-modify-write: stepping needs the current frequency, so it runs as one
+    // task on the poller thread rather than as a read here and a write there.
+    if (rig) rig->EnqueueTask([delta](CatTransport& cat) {
+      auto fa = cat.Exchange("FA;");
+      if (!fa || fa->size() < 12) return;
+      long long f = std::stoll(fa->substr(2, 9)) + delta;
+      if (f < 0) f = 0;
+      cat.Send(std::format("FA{:09d};", f));
+    });
+    WriteJson(res, 200,
+              std::format(R"({{"status":"ok","step":{},"direction":"{}"}})", hz, dir));
+  });
+
+  server.GetPrefix("/api/volume/set/", [rig, parse_int, bad_request](
+      const std::string& s, const HttpRequest&, HttpResponse& res) {
+    int pct = 0;
+    if (!parse_int(s, pct)) { bad_request(res, "volume is not a number"); return; }
+    pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+    if (rig) rig->Enqueue(std::format("AG0{:03d};", pct * 255 / 100));
+    WriteJson(res, 200, OkJson("volume", std::to_string(pct)));
+  });
+
+  server.GetPrefix("/api/rf-gain/set/", [rig, parse_int, bad_request](
+      const std::string& s, const HttpRequest&, HttpResponse& res) {
+    int pct = 0;
+    if (!parse_int(s, pct)) { bad_request(res, "rf_gain is not a number"); return; }
+    pct = pct < 0 ? 0 : (pct > 100 ? 100 : pct);
+    if (rig) rig->Enqueue(std::format("RG0{:03d};", pct * 255 / 100));
+    WriteJson(res, 200, OkJson("rf_gain", std::to_string(pct)));
+  });
+
+  server.GetPrefix("/api/cw-speed/set/", [rig, parse_int, bad_request](
+      const std::string& s, const HttpRequest&, HttpResponse& res) {
+    int wpm = 0;
+    if (!parse_int(s, wpm)) { bad_request(res, "wpm is not a number"); return; }
+    if (rig) rig->Enqueue(std::format("KS{:03d};", wpm));
+    WriteJson(res, 200, OkJson("wpm", std::to_string(wpm)));
+  });
+
+  // ⚠️ The power cap applies here too, on the same is_local rule as
+  // /api/power/max. Capping the preset buttons but not the numeric setter would
+  // leave the cap trivially bypassable.
+  server.GetPrefix("/api/power/set/", [rig, trusted, parse_int, bad_request](
+      const std::string& s, const HttpRequest&, HttpResponse& res) {
+    int w = 0;
+    if (!parse_int(s, w)) { bad_request(res, "power is not a number"); return; }
+    bool clamped = false;
+    if (trusted && w > kLocalPowerCap) { w = kLocalPowerCap; clamped = true; }
+    if (w < 0) w = 0;
+    if (w > kMaxWatts) w = kMaxWatts;
+    if (rig) rig->Enqueue("PC" + Pad(w, 3) + ";");
+    WriteJson(res, 200,
+              std::format(R"({{"status":"ok","power":{},"clamped":{}}})", w, JsonBool(clamped)));
+  });
+
+  server.GetPrefix("/api/remote-tx/gain/", [rig, parse_int, bad_request](
+      const std::string& s, const HttpRequest&, HttpResponse& res) {
+    int g = 0;
+    if (!parse_int(s, g)) { bad_request(res, "gain is not a number"); return; }
+    g = g < 0 ? 0 : (g > 100 ? 100 : g);
+    if (rig) rig->Enqueue(std::format("EX010113{:03d};", g));
+    WriteJson(res, 200, OkJson("rport_gain", std::to_string(g)));
+  });
+
+  server.GetPrefix("/api/ssb-out-level/set/", [rig, parse_int, bad_request](
+      const std::string& s, const HttpRequest&, HttpResponse& res) {
+    int lv = 0;
+    if (!parse_int(s, lv)) { bad_request(res, "level is not a number"); return; }
+    lv = lv < 0 ? 0 : (lv > 100 ? 100 : lv);
+    if (rig) rig->Enqueue(std::format("EX010109{:03d};", lv));
+    WriteJson(res, 200, OkJson("ssb_out_level", std::to_string(lv)));
+  });
+
+  server.GetPrefix("/api/memory/recall/", [rig, parse_int, bad_request](
+      const std::string& s, const HttpRequest&, HttpResponse& res) {
+    int m = 0;
+    if (!parse_int(s, m)) { bad_request(res, "memory is not a number"); return; }
+    if (rig) rig->Enqueue(std::format("MC{:03d};", m));
+    WriteJson(res, 200, OkJson("memory", std::to_string(m)));
+  });
+
+  // ⚠️ Amp tune again, this time as a prefix. The refusal has to be repeated
+  // here: a caller reaching /api/tune/amp/anything must not slip past the exact
+  // route's check.
+  server.GetPrefix("/api/tune/amp/", [trusted](const std::string&, const HttpRequest&,
+                                               HttpResponse& res) {
+    if (!trusted) {
+      WriteJson(res, 200,
+                R"({"status":"error",)"
+                R"("message":"Amp tune is only available when connected locally."})");
+      return;
+    }
+    WriteJson(res, 200,
+              R"({"status":"error","available":false,"tuner":"amp",)"
+              R"("message":"Amp tuner is not configured on this host"})");
+  });
+
+  // Not-configured features answer honestly rather than 404, so a client can
+  // tell "this host cannot do it" from "this host has never heard of it".
+  server.GetPrefix("/api/rxant/", [](const std::string&, const HttpRequest&,
+                                     HttpResponse& res) {
+    WriteJson(res, 200,
+              R"({"status":"error","available":false,)"
+              R"("message":"RX antenna switch is not configured - set kmtronic_host"})");
+  });
+  server.GetPrefix("/api/preset/", [](const std::string& name, const HttpRequest&,
+                                      HttpResponse& res) {
+    WriteJson(res, 200,
+              std::format(R"({{"status":"error","message":"Preset '{}' not found"}})", name));
+  });
+  auto keyer_absent = [](const char* what) {
+    return [what](const std::string&, const HttpRequest&, HttpResponse& res) {
+      WriteJson(res, 200,
+                std::format(R"({{"status":"error","available":false,)"
+                            R"("message":"{} keyer is not implemented in the C++ host yet"}})",
+                            what));
+    };
+  };
+  server.GetPrefix("/api/cw/memory/", keyer_absent("CW"));
+  server.GetPrefix("/api/cw/send/", keyer_absent("CW"));
+  server.GetPrefix("/api/voice/play/", keyer_absent("Voice"));
 
   for (const auto& route : generated) {
     server.Get(route.path, [h = route.handler, trusted](const HttpRequest&, HttpResponse& res) {

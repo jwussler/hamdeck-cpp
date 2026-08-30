@@ -543,6 +543,57 @@ Parity is **25/25** with 4 listed deliberate divergences — three of them extra
 fields on capabilities that are not implemented, which is the honest-capability rule winning
 over strict shape matching. Extra keys are additive and clients ignore unknown fields.
 
+## ⚠️ The coverage number was measuring the wrong thing
+
+"131 of 141" counted only the reference host's **exact** routes. It also has **18 prefix
+route families** in a separate table, and they are the parameterised half of the surface —
+the half a panel actually uses:
+
+`/api/band/<band>`, `/api/freq/digit/<n>` (the keypad), `/api/freq/set/<hz>`,
+`/api/step/<hz>/<up|down>`, `/api/mode/<name>`, `/api/volume/set/<pct>`,
+`/api/power/set/<w>`, `/api/rf-gain/set/<pct>`, `/api/cw-speed/set/<wpm>`,
+`/api/memory/recall/<n>`, `/api/preset/<name>`, `/api/rxant/<n>`,
+`/api/remote-tx/gain/<n>`, `/api/ssb-out-level/set/<n>`, `/api/tune/amp/*`,
+`/api/cw/{memory,send}/*`, `/api/voice/play/<n>`.
+
+All implemented now, with prefix dispatch matching **longest prefix first** so `/api/freq/`
+cannot shadow `/api/freq/set/`.
+
+**A measurement that only counts what you thought to look for is not coverage.** The number
+was right and the question was wrong.
+
+## ⚠️ The software VFO lock BLOCKS routes — it is not a UI hint
+
+An operator who locks the VFO has said *do not move my frequency*, and the host enforces it
+for **every** client, including one that has never heard of the lock. Blocked:
+`/api/freq/{send,clear,backspace}`, `/api/vfo/swap`, `/api/quick-split`, and the
+`/api/freq/set/`, `/api/freq/digit/`, `/api/band/`, `/api/preset/`, `/api/step/` prefixes —
+all answering `{"status":"error","message":"VFO is locked","vfo_locked":true}`.
+
+It runs as a **second gate** beside the auth gate, before dispatch, so a frequency-moving
+route added later is covered without anyone remembering. It applies on both listeners: a
+local caller is trusted for *auth*, but the lock is not a permission level. Walked: 9 routes
+blocked, `/api/mode/usb` still allowed, released cleanly.
+
+### ⚠️ Digits only on the keypad
+A non-digit in the buffer parses to 0 later and tunes the rig to the bottom of its range. The
+reference host carries the same comment, learned the same way.
+
+## Two more test bugs worth naming
+
+- **`/api/volume/set/50` reads back 49, and that is correct.** Percent → raw → percent is
+  lossy in integer maths: `50*255/100 = 127`, `127*100/255 = 49`. The reference does the same
+  arithmetic. A client with a slider should send percent and **trust the readback**, not
+  assume it gets its own number returned. The test was wrong, not the code.
+- A refusal can arrive as 4xx with no parsed body. Checking only the body reported a **pass**
+  for a route that had correctly refused. Check the status.
+
+### ⚠️ And a silent no-op edit
+One patch to the dispatcher did not apply — its anchor text no longer matched after an
+earlier edit — and the string replace reported nothing. Prefix routing was simply absent, and
+`/api/mode/cw` still worked because it is *also* an exact route, which nearly hid it. Edits
+now assert their anchor exists before writing.
+
 ## ⚠️ A test that cannot fail is not a test
 
 The obvious staleness check — `SIGSTOP` the process, re-query — is worthless. It freezes the

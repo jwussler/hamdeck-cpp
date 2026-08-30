@@ -34,6 +34,9 @@ struct HttpResponse {
 };
 
 using HttpHandler = std::function<void(const HttpRequest&, HttpResponse&)>;
+// A prefix route receives the part of the path after the prefix.
+using PrefixHandler =
+    std::function<void(const std::string& suffix, const HttpRequest&, HttpResponse&)>;
 
 // Return false to reject the request with the response as filled in. Runs before
 // every handler, including WebSocket upgrades - an audio stream is somebody's
@@ -72,8 +75,16 @@ class HttpServer {
   ~HttpServer();
 
   void SetPreRouting(PreRouting pre) { pre_ = std::move(pre); }
+  // A second gate, run after auth and before dispatch. Used for the software VFO
+  // lock, which is not a permission level - it is the operator's instruction
+  // about their own radio and applies to every caller.
+  void SetSecondGate(PreRouting gate) { gate_ = std::move(gate); }
   void Get(const std::string& path, HttpHandler h);
   void Post(const std::string& path, HttpHandler h);
+
+  // Matched only when no exact route matches, longest prefix first - so
+  // /api/freq/set/ cannot be shadowed by a shorter /api/freq/ registered later.
+  void GetPrefix(const std::string& prefix, PrefixHandler h);
   void WebSocketRoute(const std::string& path, WsOpen on_open, WsClose on_close,
                       WsData on_data = nullptr);
 
@@ -88,4 +99,5 @@ class HttpServer {
  private:
   std::unique_ptr<Impl> impl_;
   PreRouting pre_;
+  PreRouting gate_;
 };
