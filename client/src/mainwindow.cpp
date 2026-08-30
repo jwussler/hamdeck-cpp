@@ -75,6 +75,28 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 QString("audio: %1 Hz/%2-bit/%3ch").arg(rate).arg(bits).arg(ch));
           });
 
+  connect(&tx_audio_, &TxAudio::ArmedChanged, this,
+          [this](bool armed, QString detail) {
+            arm_button_->setChecked(armed);
+            arm_button_->setText(armed ? "ARMED" : "ARM TX");
+            // ⚠️ A test tone must be unmistakable in the UI. The whole risk of
+            // having one is somebody transmitting it thinking it is a
+            // microphone, so it shouts, in the transmit colour.
+            const bool tone = tx_audio_.using_test_tone();
+            arm_button_->setStyleSheet(
+                armed ? QString("background:%1; border:1px solid %1; color:%2;"
+                                "font-weight:bold;")
+                            .arg(tone ? theme::kTx : theme::kAccent,
+                                 tone ? "white" : "#08121f")
+                      : QString());
+            tx_label_->setText("tx: " + detail);
+          });
+  connect(&tx_audio_, &TxAudio::Sent, this, [this](qint64, int bps) {
+    tx_label_->setText(QString("tx: %1 KiB/s out%2")
+                           .arg(bps / 1024.0, 0, 'f', 1)
+                           .arg(tx_audio_.using_test_tone() ? " — TEST TONE" : ""));
+  });
+
   RestoreGeometryClamped();
 }
 
@@ -235,6 +257,23 @@ QWidget* MainWindow::BuildPanel() {
   });
   tl->addWidget(ptt_button_);
 
+  // ⚠️ ARM IS SEPARATE FROM PTT, AND THAT IS THE POINT.
+  // Arming opens the audio channel and takes the host's single-transmitter
+  // claim; PTT keys the rig. Doing both on one press would put a WebSocket
+  // connect at the start of an over - the worst place for a delay - and would
+  // leave the claim in doubt while the operator is already talking.
+  arm_button_ = Btn("ARM TX", 96);
+  arm_button_->setMinimumHeight(64);
+  arm_button_->setCheckable(true);
+  connect(arm_button_, &QPushButton::clicked, this, [this] {
+    if (tx_audio_.armed()) {
+      tx_audio_.Disarm();
+    } else {
+      ArmTransmit();
+    }
+  });
+  tl->addWidget(arm_button_);
+
   auto* vol_label = new QLabel("VOLUME");
   vol_label->setStyleSheet(
       QString("color:%1; font-size:10px; font-weight:bold; letter-spacing:1px;")
@@ -279,9 +318,35 @@ QWidget* MainWindow::BuildPanel() {
 
   conn_label_ = new QLabel("not connected");
   audio_label_ = new QLabel("audio: idle");
+  tx_label_ = new QLabel("tx: disarmed");
+  statusBar()->addPermanentWidget(tx_label_);
   statusBar()->addPermanentWidget(audio_label_);
   statusBar()->addWidget(conn_label_);
   return root;
+}
+
+void MainWindow::ResizeToContentForCapture() {
+  if (auto* scroll = qobject_cast<QScrollArea*>(centralWidget())) {
+    if (QWidget* inner = scroll->widget()) {
+      const QSize want = inner->sizeHint();
+      resize(want.width() + 24,
+             want.height() + statusBar()->height() + 24);
+    }
+  }
+}
+
+void MainWindow::ArmTransmit() {
+  const QString token = api_.SessionToken();
+  if (token.isEmpty() || settings_.host.isEmpty()) {
+    tx_label_->setText("tx: not connected");
+    arm_button_->setChecked(false);
+    return;
+  }
+  tx_audio_.Arm(QString("ws://%1:%2/ws/tx?token=%3")
+                    .arg(settings_.host)
+                    .arg(settings_.port)
+                    .arg(token),
+                settings_.tx_device_name);
 }
 
 bool MainWindow::ConnectTo(const QString& host, int port, const QString& user,
@@ -352,6 +417,12 @@ void MainWindow::ApplyStatus(const QJsonObject& s) {
     // The receiver is muted from the RIG's tx state, so every PTT source - this
     // panel, another client, the mic button on the radio - behaves the same.
     rx_.SetMutedForTx(tx);
+    // ⚠️ Both driven from the RIG's tx state, not from the button. If the rig
+    // is keyed by anything at all - another client, the mic button, a stuck
+    // command - this client transmits its audio and mutes its receiver to
+    // match. A client that only followed its own button would sit silent while
+    // the transmitter was open.
+    tx_audio_.SetKeyed(tx);
   }
   ptt_button_->setChecked(tx);
   ptt_button_->setText(tx ? "ON AIR" : "PTT");

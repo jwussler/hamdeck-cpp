@@ -11,6 +11,7 @@
 #include "rx_audio.h"
 #include "smeter.h"
 #include "settings.h"
+#include "tx_audio.h"
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -20,6 +21,18 @@ class MainWindow : public QMainWindow {
 
   bool ConnectTo(const QString& host, int port, const QString& user,
                  const QString& password, QString* error);
+
+  // Test facility: transmit a synthetic tone instead of the microphone, so the
+  // path can be proven on a machine with no audio input. Named loudly and shown
+  // in the UI, because a test tone mistaken for live audio would go on the air.
+  void UseTxTestTone() { tx_audio_.UseTestTone(true); }
+  void ArmTransmit();
+
+  // Screenshot mode only: grow the window to the panel's natural height so the
+  // whole app is visible in one image. NOT used in normal operation - the
+  // work-area clamp exists precisely to stop the window doing this on a real
+  // desktop, where it would put the title bar out of reach.
+  void ResizeToContentForCapture();
 
  protected:
   void closeEvent(QCloseEvent* e) override;
@@ -40,6 +53,7 @@ class MainWindow : public QMainWindow {
   Settings settings_;
   ApiClient api_;
   RxAudio rx_;
+  TxAudio tx_audio_;
 
   QLabel* freq_label_ = nullptr;
   QLabel* mode_label_ = nullptr;
@@ -59,6 +73,8 @@ class MainWindow : public QMainWindow {
   // lies whenever the command fails or another client changes it.
   QMap<QString, QPushButton*> dsp_;
   QPushButton* agc_button_ = nullptr;
+  QPushButton* arm_button_ = nullptr;
+  QLabel* tx_label_ = nullptr;
   bool tx_ = false;
   bool stale_ = false;
 };

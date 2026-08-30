@@ -15,7 +15,7 @@ Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anythin
 | | |
 |---|---|
 | **Host** | complete except what needs the radio attached |
-| **Client** | Qt panel: connects, live status, rig control, RX audio. No TX audio, no PTT-off, no hotkey |
+| **Client** | Qt panel: connects, live status, rig control, RX **and TX** audio. No PTT-off, no hotkey |
 | **Route coverage** | **131 of 141** exact routes + all **18** prefix families |
 | **Tests** | 8 host (ctest) + client selftest, all green |
 | **Parity** | 25/25 with 5 listed deliberate divergences |
@@ -56,7 +56,7 @@ are private-storage-only and must never be published. See `SITE.md`.
 | `/proc/asound` delay measurement + adaptive buffering | **yes** |
 | PTT tail-wait → `/api/ptt/{off,toggle,unkey}` | **yes** |
 | RX mute on TX is done client-side; host-side recording is not | **yes** |
-| Client TX audio (`/ws/tx` framing exists and is tested) | no |
+| ~~Client TX audio~~ ✅ done — 93.8 KiB/s measured into the host | no |
 | Global PTT hotkey (F13) — platform code, Qt has no API for it | no |
 | 19 `/api/admin/*` routes — user management is config-file-only today | no |
 | `/audio` HTTP endpoint, `/wsflexknob`, the CAT proxy, the static web UI | no |
@@ -296,6 +296,42 @@ Sources: hamlib `rigs/yaesu/ftdx101.h` (`FTDX101D_STR_CAL`) and `rigs/yaesu/newc
 (`yaesu_default_swr_cal`, `yaesu_default_alc_cal`, `yaesu_default_rfpower_meter_cal`).
 
 ---
+
+## 7b. Client TX audio
+
+Microphone → `/ws/tx` → the host, 48000/16/mono. Measured **93.8 KiB/s** out, which is exactly
+48000 × 2 bytes, with the host counting 212 frames accepted and **zero dropped**.
+
+### ⚠️ ARM and PTT are separate, deliberately
+**Arm** opens the socket and takes the host's single-transmitter claim; **PTT** keys the rig.
+Doing both on one press would put a WebSocket connect at the start of an over — the worst place
+for a delay, and exactly where clipping is most noticeable — and would leave the claim in doubt
+while the operator is already talking.
+
+### Other choices worth keeping
+- **Frames are sent only while the RIG reports keyed**, not while the button is pressed. If the
+  rig is keyed by anything at all — another client, the mic button — this client transmits and
+  mutes its receiver to match.
+- **Capture keeps running while unkeyed and the audio is discarded.** Letting it back up means
+  the first thing transmitted on the next over is several seconds of the room from *before* PTT
+  was pressed. Stopping and restarting capture instead would put device start-up latency at the
+  front of every over.
+- **The rate comes from the host's config frame**, never assumed. A mismatch is not a subtle
+  artefact — it is a chipmunk or a drawl going out on the air.
+- **Mic resolved by NAME with fallback to the system default**, never "the first in the list",
+  which on many machines is a monitor loopback. Transmitting the desktop's own audio output
+  would be a memorable mistake.
+- **The host's two refusal reasons are surfaced separately** — no transmit permission vs
+  somebody else holds the transmitter. Collapsing them into "TX failed" sends people to the
+  wrong fix.
+
+### ⚠️ `--tx-test-tone` is a test facility and shouts about it
+It transmits a synthetic tone so the path can be proven on a machine with no microphone. The
+ARM button turns **transmit-red** rather than blue and every status line says **TEST TONE**,
+because the one real risk of having it is somebody transmitting it thinking it is a microphone.
+
+`--screenshot` now grows the window to the panel's natural height for capture only — normal
+operation keeps the work-area clamp, which exists to stop exactly that on a real desktop.
 
 ## 8. The client
 

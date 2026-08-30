@@ -23,6 +23,7 @@ qt_add_executable(hamdeck-client
     src/settings.cpp
     src/api_client.cpp
     src/rx_audio.cpp
+    src/tx_audio.cpp
     src/mainwindow.cpp
     src/smeter.cpp
     src/theme.cpp

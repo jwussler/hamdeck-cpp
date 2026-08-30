@@ -71,12 +71,20 @@ int main(int argc, char** argv) {
   // the panel actually renders on a headless build box. Claiming a UI works
   // without looking at it is guessing.
   QCommandLineOption shot_opt("screenshot", "Render to PNG and exit.", "path");
+  // ⚠️ TEST FACILITY. Transmits a synthetic tone instead of the microphone, so
+  // the TX path can be proven on a machine with no audio input. The UI shows it
+  // in the transmit colour and every status line says TEST TONE, because the
+  // one real risk of having this is somebody transmitting it thinking it is a
+  // microphone.
+  QCommandLineOption tone_opt("tx-test-tone",
+                              "Transmit a test tone instead of the microphone.");
   parser.addOption(selftest);
   parser.addOption(host_opt);
   parser.addOption(port_opt);
   parser.addOption(user_opt);
   parser.addOption(pass_opt);
   parser.addOption(shot_opt);
+  parser.addOption(tone_opt);
   // Unknown options are an error, not something to ignore: silently accepting a
   // misspelled flag is how an option quietly does nothing.
   parser.process(app);
@@ -84,6 +92,7 @@ int main(int argc, char** argv) {
   if (parser.isSet(selftest)) return SelfTest();
 
   MainWindow w;
+  if (parser.isSet(tone_opt)) w.UseTxTestTone();
   w.show();
 
   if (parser.isSet(shot_opt)) {
@@ -94,10 +103,16 @@ int main(int argc, char** argv) {
       std::cout << "screenshot: could not connect: " << err.toStdString() << '\n';
       return 1;
     }
+    // Arm and key so the screenshot shows the transmit path actually running,
+    // not an idle panel claiming it would work.
+    if (parser.isSet(tone_opt)) {
+      QTimer::singleShot(600, &app, [&] { w.ArmTransmit(); });
+    }
     // Let a few poll cycles land so the readout shows real values rather than
     // the placeholder dashes - a screenshot of an unpopulated window proves
     // nothing about whether the data path works.
-    QTimer::singleShot(2000, &app, [&] {
+    QTimer::singleShot(parser.isSet(tone_opt) ? 5000 : 2000, &app, [&] {
+      w.ResizeToContentForCapture();
       const bool ok = w.grab().save(path);
       std::cout << (ok ? "screenshot written to " : "screenshot FAILED writing ")
                 << path.toStdString() << '\n';
