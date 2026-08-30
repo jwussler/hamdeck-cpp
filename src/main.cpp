@@ -53,6 +53,11 @@ void OnStopSignal(int) {
 // caller (CARRYOVER.md section 2), and "is this caller local" is answered by
 // WHICH SOCKET ACCEPTED IT - never by a header, which the caller controls.
 constexpr const char* kControlAddr = "127.0.0.1";
+// ⚠️ DEFAULTS ONLY. The real values come from the config - api_port and
+// dashboard_port. These were used directly for a while, which meant those two
+// config keys were read, written back on save, and then silently ignored. A
+// setting that does nothing is worse than no setting: the operator changes it,
+// sees no effect, and has no way to tell whether the file or the host is wrong.
 constexpr int         kControlPort = 5001;
 constexpr const char* kDashAddr    = "0.0.0.0";
 constexpr int         kDashPort    = 5002;
@@ -67,7 +72,7 @@ constexpr int         kDashPort    = 5002;
 // ⚠️ A HANG IS A FAILURE, not a pass. CI must run this under an external timeout;
 // a selftest that blocks forever looks exactly like one that is still working.
 int SelfTest(RadioPoller& poller, RxAudioStream& rx, HttpServer& control,
-             const std::string& control_spec);
+             int control_port);
 
 int main(int argc, char** argv) {
   bool selftest = false;
@@ -246,8 +251,11 @@ int main(int argc, char** argv) {
 
   HttpServer control;
   HttpServer dashboard;
-  InstallRoutes(control, Listener::kControl, kControlPort, deps);
-  InstallRoutes(dashboard, Listener::kDashboard, kDashPort, deps);
+  const int control_port = config.api_port > 0 ? config.api_port : kControlPort;
+  const int dash_port = config.dashboard_port > 0 ? config.dashboard_port : kDashPort;
+
+  InstallRoutes(control, Listener::kControl, control_port, deps);
+  InstallRoutes(dashboard, Listener::kDashboard, dash_port, deps);
 
   std::cout << kServiceName << ' ' << kVersion << '\n'
             << "CAT backend: " << poller.Backend() << '\n'
@@ -261,8 +269,8 @@ int main(int argc, char** argv) {
 
   // civetweb listens on its own threads, so both Listen() calls return at once.
   const std::string control_spec =
-      std::string(kControlAddr) + ":" + std::to_string(kControlPort);
-  const std::string dash_spec = std::string(kDashAddr) + ":" + std::to_string(kDashPort);
+      std::string(kControlAddr) + ":" + std::to_string(control_port);
+  const std::string dash_spec = std::string(kDashAddr) + ":" + std::to_string(dash_port);
 
   if (!control.Listen(control_spec)) {
     std::cerr << "failed to bind " << control_spec << '\n';
@@ -276,7 +284,7 @@ int main(int argc, char** argv) {
   }
   std::cout << "dashboard " << dash_spec << " (session required)\n" << std::flush;
 
-  if (selftest) return SelfTest(poller, rx_audio, control, control_spec);
+  if (selftest) return SelfTest(poller, rx_audio, control, control_port);
 
   // Wait for a stop signal, then shut down in an order that leaves the RADIO
   // safe rather than the process tidy.
@@ -326,8 +334,7 @@ bool Probe(const std::string& host, int port, const std::string& path, std::stri
 
 }  // namespace
 
-int SelfTest(RadioPoller& poller, RxAudioStream& rx, HttpServer&,
-             const std::string&) {
+int SelfTest(RadioPoller& poller, RxAudioStream& rx, HttpServer&, int control_port) {
   int failures = 0;
   auto check = [&](const char* what, bool ok) {
     std::cout << (ok ? "  ok   " : "  FAIL ") << what << '\n' << std::flush;
@@ -343,11 +350,11 @@ int SelfTest(RadioPoller& poller, RxAudioStream& rx, HttpServer&,
         rx.ConfigJson().find("\"sample_rate\":22050") != std::string::npos);
 
   std::string body;
-  const bool got = Probe("127.0.0.1", kControlPort, "/api/health", body);
+  const bool got = Probe("127.0.0.1", control_port, "/api/health", body);
   check("control port answers /api/health", got);
   check("health says ok", body.find("\"status\":\"ok\"") != std::string::npos);
 
-  const bool got_status = Probe("127.0.0.1", kControlPort, "/api/status", body);
+  const bool got_status = Probe("127.0.0.1", control_port, "/api/status", body);
   check("control port answers /api/status", got_status);
 
   std::cout << (failures ? "SELFTEST FAILED" : "SELFTEST PASSED") << '\n' << std::flush;
