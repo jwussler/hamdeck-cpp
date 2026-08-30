@@ -16,6 +16,14 @@ Windows client stops working.
   colours or substitute typefaces. If it doesn't cover what you need, say so rather than
   guessing.
 
+## ⚠️ C++ IS DECIDED. DO NOT RE-PITCH .NET.
+
+The choice was made deliberately and is not up for review. NativeAOT, keeping the C# host,
+"you could do that in .NET too" — all of it has been raised, considered and set aside. Raising
+it again is noise, not diligence.
+
+Judge proposals on whether they make the C++ build better, not on whether C++ was correct.
+
 ## Decisions already made — don't relitigate without a reason
 
 - **The host is the target.** It's where C++ earns its keep: audio, timing, serial, and a
