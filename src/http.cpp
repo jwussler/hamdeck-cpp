@@ -214,8 +214,9 @@ static int GenericHandler(mg_connection* conn, void* cbdata) {
   const auto& table = (req.method == "POST") ? hc->impl->post_routes : hc->impl->get_routes;
   const auto it = table.find(req.path);
   if (it == table.end()) {
+    // Shape matches the reference host: it names the path it could not route.
     res.status = 404;
-    res.body = R"({"status":"error","message":"Not found"})";
+    res.body = R"({"status":"error","message":"Unknown route","path":")" + req.path + R"("})";
     WriteResponse(conn, res);
     return 200;
   }

@@ -1,0 +1,39 @@
+# HamDeck C++ host.
+#
+# No hostname, address or credential appears here - this repo is public. The
+# admin password hash comes from an environment file that is NOT in the repo:
+#   /etc/hamdeck-cpp/env   containing   HAMDECK_ADMIN_HASH=pbkdf2:...
+#
+# ⚠️ This unit must NOT be enabled on a machine that is also running the .NET
+# host: they bind the same ports and both want the same USB devices.
+
+[Unit]
+Description=HamDeck C++ host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/hamdeck-cpp/hamdeck-host
+EnvironmentFile=-/etc/hamdeck-cpp/env
+Restart=on-failure
+RestartSec=5
+
+# Restarting must actually restart. The first scaffold had a SIGTERM handler that
+# set a flag nothing read, so the process caught the signal and kept serving -
+# systemd would have waited out the timeout and killed it every single time.
+KillSignal=SIGTERM
+TimeoutStopSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# The radio: serial port and the USB codec. Needed once the real CAT and ALSA
+# backends land; harmless before then.
+DeviceAllow=char-tty rw
+DeviceAllow=char-alsa rw
+SupplementaryGroups=dialout audio
+
+[Install]
+WantedBy=multi-user.target

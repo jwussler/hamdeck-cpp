@@ -30,6 +30,25 @@ std::optional<std::string> SimulatedRig::Exchange(const std::string& cmd) {
   if (cmd == "VS;")  return std::string("VS") + (vfo_b_ ? "1" : "0") + ";";
   if (cmd == "LK;")  return std::string("LK") + (lock_ ? "1" : "0") + ";";
 
+  if (cmd == "AN0;") return "AN0" + Pad(ant_, 1) + ";";
+  if (cmd == "NB0;") return std::string("NB0") + (nb_ ? "1" : "0") + ";";
+  if (cmd == "NR0;") return std::string("NR0") + (nr_ ? "1" : "0") + ";";
+  if (cmd == "BP0;") return std::string("BP0") + (notch_ ? "1" : "0") + ";";
+  if (cmd == "PA0;") return "PA0" + Pad(preamp_, 1) + ";";
+  if (cmd == "RA0;") return std::string("RA0") + (att_ ? "1" : "0") + ";";
+  if (cmd == "GT0;") return "GT0" + Pad(agc_, 1) + ";";
+  if (cmd == "VX;")  return std::string("VX") + (vox_ ? "1" : "0") + ";";
+  if (cmd == "PR0;") return std::string("PR0") + (comp_ ? "1" : "0") + ";";
+  if (cmd == "ML0;") return std::string("ML0") + (mon_ ? "1" : "0") + ";";
+  if (cmd == "RT;")  return std::string("RT") + (rit_ ? "1" : "0") + ";";
+  if (cmd == "XT;")  return std::string("XT") + (xit_ ? "1" : "0") + ";";
+  if (cmd == "RG0;") return "RG0" + Pad(rf_gain_, 3) + ";";
+
+  // Meters. Constant, and deliberately so: a simulator that invented a wandering
+  // S-meter would make a dead meter path look alive.
+  if (cmd == "SM0;") return "SM0000;";
+  if (cmd.rfind("RM", 0) == 0 && cmd.size() == 4) return cmd.substr(0, 3) + "000;";
+
   // An unknown command gets no reply, exactly as the radio behaves. Returning a
   // plausible default here would let a wrong command look like a working one.
   return std::nullopt;

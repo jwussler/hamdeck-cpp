@@ -40,4 +40,20 @@ class SimulatedRig : public CatTransport {
   bool split_       = false;
   bool vfo_b_       = false;
   bool lock_        = false;
+
+  // /api/status/full and /api/meters state. Values chosen to be plainly
+  // synthetic rather than a believable station.
+  int  ant_    = 1;
+  bool nb_     = false;
+  bool nr_     = false;
+  bool notch_  = false;
+  int  preamp_ = 0;
+  bool att_    = false;
+  int  agc_    = 4;      // AUTO
+  bool vox_    = false;
+  bool comp_   = false;
+  bool mon_    = false;
+  bool rit_    = false;
+  bool xit_    = false;
+  int  rf_gain_ = 128;
 };

@@ -33,6 +33,32 @@ struct RigSnapshot {
   bool        split     = false;
   bool        vfo_locked = false;
   long long   freq_b    = 0;
+
+  // /api/status/full. Polled on a SLOWER cadence than the core fields - see
+  // kFullEveryNCycles. None of these move fast enough to be worth a serial round
+  // trip five times a second, and the serial port is the scarce resource.
+  int         ant       = 1;
+  bool        rxant     = false;
+  bool        nb        = false;
+  bool        nr        = false;
+  bool        notch     = false;
+  int         preamp    = 0;
+  bool        att       = false;
+  std::string agc       = "AUTO";
+  bool        vox       = false;
+  bool        comp      = false;
+  bool        mon       = false;
+  bool        rit       = false;
+  int         rit_offset = 0;
+  bool        xit       = false;
+  int         rf_gain   = 0;
+
+  // /api/meters. These DO move fast, so they ride the fast loop.
+  int         s_meter   = 0;
+  int         swr       = 0;
+  int         alc       = 0;
+  int         power_mtr = 0;
+
   std::chrono::steady_clock::time_point taken{};
 };
 
@@ -77,6 +103,11 @@ class RadioPoller {
   // poller is obvious within a couple of seconds.
   static constexpr long long kStaleAfterMs = 1500;
   static constexpr int       kPollIntervalMs = 200;  // matches the WPF host
+  // The full set is read every fifth cycle (~1s). Reading ~16 extra CAT commands
+  // at 200ms would spend most of the serial budget on values that barely change,
+  // and the serial port is single-threaded and shared with every command a
+  // request thread queues.
+  static constexpr int       kFullEveryNCycles = 5;
 
   std::string Backend() const { return cat_->Describe(); }
 
@@ -85,6 +116,9 @@ class RadioPoller {
   void PollOnce();
   void DrainQueue();
   void CheckWatchdog(bool tx_now);
+  void PollFull(RigSnapshot& s);
+  void PollMeters(RigSnapshot& s);
+  int  cycle_ = 0;
 
   std::unique_ptr<CatTransport> cat_;
   mutable std::mutex mu_;

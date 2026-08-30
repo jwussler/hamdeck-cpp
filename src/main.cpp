@@ -41,7 +41,30 @@ constexpr int         kDashPort    = 5002;
 
 }  // namespace
 
-int main() {
+// Walks the whole startup path - poller, audio, auth, both listeners - proves the
+// process actually serves a request, and exits. CARRYOVER.md section 8: the .NET
+// client shipped a release that could not launch at all while every test passed,
+// because CI built the artifact and never ran it.
+//
+// ⚠️ A HANG IS A FAILURE, not a pass. CI must run this under an external timeout;
+// a selftest that blocks forever looks exactly like one that is still working.
+int SelfTest(RadioPoller& poller, RxAudioStream& rx, HttpServer& control,
+             const std::string& control_spec);
+
+int main(int argc, char** argv) {
+  bool selftest = false;
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--selftest") {
+      selftest = true;
+    } else {
+      // Unknown flags abort rather than being ignored. Silently accepting a
+      // misspelled flag is how a safety option gets quietly disabled.
+      std::cerr << "unknown argument: " << arg << "\nusage: hamdeck-host [--selftest]\n";
+      return 2;
+    }
+  }
+
   // A handler that swallows SIGTERM without stopping the server makes the
   // process unkillable by normal means and breaks every systemctl restart. It
   // happened here once already. Default disposition is correct; only SIGPIPE
@@ -100,7 +123,52 @@ int main() {
   }
   std::cout << "dashboard " << dash_spec << " (session required)\n" << std::flush;
 
+  if (selftest) return SelfTest(poller, rx_audio, control, control_spec);
+
   // Park the main thread. SIGTERM ends the process and civetweb's threads with
   // it - deliberately no signal handler, see the note above.
   for (;;) std::this_thread::sleep_for(std::chrono::seconds(3600));
+}
+
+namespace {
+
+bool Probe(const std::string& host, int port, const std::string& path, std::string& body) {
+  const std::string cmd = "curl -sS --max-time 5 http://" + host + ":" +
+                          std::to_string(port) + path;
+  FILE* f = popen(cmd.c_str(), "r");
+  if (!f) return false;
+  char buf[1024];
+  body.clear();
+  while (fgets(buf, sizeof(buf), f)) body += buf;
+  return pclose(f) == 0 && !body.empty();
+}
+
+}  // namespace
+
+int SelfTest(RadioPoller& poller, RxAudioStream& rx, HttpServer&,
+             const std::string&) {
+  int failures = 0;
+  auto check = [&](const char* what, bool ok) {
+    std::cout << (ok ? "  ok   " : "  FAIL ") << what << '\n' << std::flush;
+    if (!ok) ++failures;
+  };
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+
+  check("poller has polled", poller.CacheAgeMs() >= 0);
+  check("poller cache is fresh", poller.CacheAgeMs() < RadioPoller::kStaleAfterMs);
+  check("rig reports connected", poller.Snapshot().connected);
+  check("audio config frame well formed",
+        rx.ConfigJson().find("\"sample_rate\":22050") != std::string::npos);
+
+  std::string body;
+  const bool got = Probe("127.0.0.1", kControlPort, "/api/health", body);
+  check("control port answers /api/health", got);
+  check("health says ok", body.find("\"status\":\"ok\"") != std::string::npos);
+
+  const bool got_status = Probe("127.0.0.1", kControlPort, "/api/status", body);
+  check("control port answers /api/status", got_status);
+
+  std::cout << (failures ? "SELFTEST FAILED" : "SELFTEST PASSED") << '\n' << std::flush;
+  return failures ? 1 : 0;
 }

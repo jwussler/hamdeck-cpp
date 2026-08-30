@@ -104,6 +104,22 @@ void RadioPoller::PollOnce() {
   if (auto r = cat_->Exchange("VS;");  r && r->size() >= 4)  s.vfo    = (r->at(2) != '0') ? "B" : "A";
   if (auto r = cat_->Exchange("LK;");  r && r->size() >= 4)  s.vfo_locked = r->at(2) != '0';
 
+  PollMeters(s);
+
+  // Carry the slow-moving fields forward on cycles where they are not re-read,
+  // so /api/status/full does not flicker between real values and defaults.
+  if (cycle_ % kFullEveryNCycles == 0) {
+    PollFull(s);
+  } else {
+    std::lock_guard<std::mutex> lock(mu_);
+    s.ant = snap_.ant; s.rxant = snap_.rxant; s.nb = snap_.nb; s.nr = snap_.nr;
+    s.notch = snap_.notch; s.preamp = snap_.preamp; s.att = snap_.att;
+    s.agc = snap_.agc; s.vox = snap_.vox; s.comp = snap_.comp; s.mon = snap_.mon;
+    s.rit = snap_.rit; s.rit_offset = snap_.rit_offset; s.xit = snap_.xit;
+    s.rf_gain = snap_.rf_gain;
+  }
+  ++cycle_;
+
   s.taken = std::chrono::steady_clock::now();
   CheckWatchdog(s.tx);
   std::lock_guard<std::mutex> lock(mu_);
@@ -120,4 +136,59 @@ long long RadioPoller::CacheAgeMs() const {
   if (snap_.taken.time_since_epoch().count() == 0) return -1;  // never polled
   return std::chrono::duration_cast<std::chrono::milliseconds>(
              std::chrono::steady_clock::now() - snap_.taken).count();
+}
+
+namespace {
+// A CAT reply is fixed-width. Reading the wrong slice yields a plausible number
+// from the wrong field, which is worse than no number at all - so every read
+// checks the length first and leaves the default in place if it is short.
+bool Digits(const std::optional<std::string>& r, size_t at, size_t n, int& out) {
+  if (!r || r->size() < at + n) return false;
+  try {
+    out = std::stoi(r->substr(at, n));
+    return true;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+bool Flag(const std::optional<std::string>& r, size_t at, bool& out) {
+  if (!r || r->size() <= at) return false;
+  out = r->at(at) != '0';
+  return true;
+}
+}  // namespace
+
+void RadioPoller::PollMeters(RigSnapshot& s) {
+  int v = 0;
+  if (Digits(cat_->Exchange("SM0;"), 3, 3, v)) s.s_meter = v;
+  if (Digits(cat_->Exchange("RM6;"), 3, 3, v)) s.swr = v;
+  if (Digits(cat_->Exchange("RM4;"), 3, 3, v)) s.alc = v;
+  if (Digits(cat_->Exchange("RM5;"), 3, 3, v)) s.power_mtr = v;
+}
+
+void RadioPoller::PollFull(RigSnapshot& s) {
+  int v = 0;
+  bool b = false;
+  if (Digits(cat_->Exchange("AN0;"), 3, 1, v)) s.ant = v;
+  if (Flag(cat_->Exchange("NB0;"), 3, b))  s.nb = b;
+  if (Flag(cat_->Exchange("NR0;"), 3, b))  s.nr = b;
+  if (Flag(cat_->Exchange("BP0;"), 3, b))  s.notch = b;
+  if (Digits(cat_->Exchange("PA0;"), 3, 1, v)) s.preamp = v;
+  if (Flag(cat_->Exchange("RA0;"), 3, b))  s.att = b;
+  if (Flag(cat_->Exchange("VX;"),  2, b))  s.vox = b;
+  if (Flag(cat_->Exchange("PR0;"), 3, b))  s.comp = b;
+  if (Flag(cat_->Exchange("ML0;"), 3, b))  s.mon = b;
+  if (Flag(cat_->Exchange("RT;"),  2, b))  s.rit = b;
+  if (Flag(cat_->Exchange("XT;"),  2, b))  s.xit = b;
+  if (Digits(cat_->Exchange("RG0;"), 3, 3, v)) s.rf_gain = v;
+  if (auto r = cat_->Exchange("GT0;"); r && r->size() >= 5) {
+    switch (r->at(3)) {
+      case '0': s.agc = "OFF";  break;
+      case '1': s.agc = "FAST"; break;
+      case '2': s.agc = "MID";  break;
+      case '3': s.agc = "SLOW"; break;
+      case '4': s.agc = "AUTO"; break;
+      default:  break;   // unknown code: keep the previous value, never guess
+    }
+  }
 }

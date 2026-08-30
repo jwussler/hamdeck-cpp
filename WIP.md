@@ -62,7 +62,7 @@ thin CAT wrappers, so this is not 141 hand-written handlers.
 4. **Auth/session** ✅
 5. **WebSocket** — `/ws` ✅ done; `/ws/tx` still to do (it needs somewhere to put the audio,
    so it lands with the ALSA work).
-6. **systemd unit + CI that runs the binary.**
+6. **systemd unit + CI that runs the binary** ✅
 
 ### Needs the radio.
 
@@ -226,6 +226,65 @@ The first `/ws` probe reported a BINARY first frame instead of the config frame.
 in the probe: the handshake `recv` can pull the first WebSocket frame in with the headers,
 and it was discarding the leftover. **Before believing a server is wrong, check the
 instrument** — a broken measurement and a broken server look identical from the outside.
+
+## Walking it again — the parity harness (`tools/parity_check.py`)
+
+Answering "when we have a workable version, do we walk it again?": yes, and it is three
+separate walks, only one of which needs the radio.
+
+1. **API parity** — automated, radio-free, runs forever. `tools/parity_check.py` logs into
+   both hosts (or tunnels to both local control ports, which need no session) and compares
+   **keys and types**, not values. Currently 8/8 read-only routes match, with one listed
+   deliberate divergence.
+2. **Client compatibility** — point the real WPF client at the C++ host and check nothing
+   greys out. The client probes at connect, so a missing capability shows up as a dead
+   button rather than an error (CARRYOVER.md section 1).
+3. **On-air** — the only one that needs the radio, and it needs *another operator*.
+   CARRYOVER.md section 7 is explicit: **MONI cannot be captured from the host**, so there
+   is no way to hear your own transmission from the host side. Audio quality and the PTT
+   tail can only be confirmed by a second receiver or a net report.
+
+### ⚠️ A parity walker that GETs every route would key the transmitter
+Most of this API is state-changing and many of those routes are **GETs** — `/api/ptt/on`,
+`/api/mode/cw`, `/api/tune/amp`. Walking all 141 against the live station would key the rig,
+change the operating mode and retune the amp. CARRYOVER.md section 9 records that probing
+with a control route once changed the operating mode mid-session with a human at the radio.
+
+So the safety is **structural, not remembered**:
+
+- an **allowlist**, copied from the reference host's own `ReadOnlyRoutes`;
+- a second check of the final URL against state-changing patterns, so a future edit that adds
+  a dangerous route to the allowlist still cannot fire one;
+- **no `--all-routes` flag.** Adding one would defeat both checks. State-changing routes get
+  compared against a *simulated* rig, never the station.
+
+Proven before the tool was trusted: `/api/ptt/on`, `/api/mode/cw`, `/api/tune/amp` and
+`/api/power/max` are all refused.
+
+## Closed by the parity run
+
+`/api/status/full` (18 fields) and `/api/meters` (5 fields) were 404 and are now implemented,
+and the 404 body itself now matches the reference host, which names the path it could not
+route.
+
+⚠️ **The full set is polled every 5th cycle (~1s), not every 200 ms.** Reading ~16 extra CAT
+commands five times a second would spend most of the serial budget on values that barely
+move, and the serial port is single-threaded and shared with every command a request thread
+queues. Meters *do* move fast, so they ride the fast loop. Fields not re-read on a cycle are
+carried forward, so `/api/status/full` never flickers between real values and defaults.
+
+## CI runs the binary, and a hang is a failure
+
+`--selftest` walks the whole startup path — poller, audio, auth, both listeners — proves the
+process actually answers a request, and exits. CI runs it **under `timeout 60`**: a selftest
+that blocks forever looks exactly like one that is still working.
+
+CI also asserts that an **unknown flag aborts**. Silently accepting a misspelled flag is how
+a safety option gets quietly disabled.
+
+`deploy/hamdeck-cpp.service` carries no hostname or credential; the admin hash comes from an
+environment file outside the repo. `KillSignal=SIGTERM` with a 10 s stop timeout is
+deliberate given the earlier unkillable-process bug.
 
 ## ⚠️ A test that cannot fail is not a test
 

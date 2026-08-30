@@ -73,6 +73,29 @@ std::string StatusJson(const ApiDeps& deps) {
       JsonBool(s.split), JsonBool(s.vfo_locked), age < 0 ? 0 : age, JsonBool(stale));
 }
 
+// Field order matches the reference host exactly. Order is not required by JSON,
+// but a diff of two captures is far easier to read when it does.
+std::string StatusFullJson(const ApiDeps& deps) {
+  if (!deps.poller) return "{}";
+  const RigSnapshot s = deps.poller->Snapshot();
+  return std::format(
+      R"({{"ant":{},"rxant":{},"nb":{},"nr":{},"notch":{},"lock":{},"preamp":{},)"
+      R"("att":{},"agc":"{}","vox":{},"comp":{},"mon":{},"rit":{},"rit_offset":{},)"
+      R"("xit":{},"freq_b":{},"rf_gain":{},"rxant_km":0}})",
+      s.ant, JsonBool(s.rxant), JsonBool(s.nb), JsonBool(s.nr), JsonBool(s.notch),
+      JsonBool(s.vfo_locked), s.preamp, JsonBool(s.att), s.agc, JsonBool(s.vox),
+      JsonBool(s.comp), JsonBool(s.mon), JsonBool(s.rit), s.rit_offset,
+      JsonBool(s.xit), s.freq_b, s.rf_gain);
+}
+
+std::string MetersJson(const ApiDeps& deps) {
+  if (!deps.poller) return R"({"status":"ok","s_meter":0,"swr":0,"alc":0,"power":0})";
+  const RigSnapshot s = deps.poller->Snapshot();
+  return std::format(
+      R"({{"status":"ok","s_meter":{},"swr":{},"alc":{},"power":{}}})",
+      s.s_meter, s.swr, s.alc, s.power_mtr);
+}
+
 std::string HealthJson(const ApiDeps& deps, int bound_port) {
   const bool connected = deps.poller && deps.poller->Snapshot().connected;
   return std::format(
@@ -156,6 +179,14 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
 
   server.Get("/api/status", [&deps](const HttpRequest&, HttpResponse& res) {
     WriteJson(res, 200, StatusJson(deps));
+  });
+
+  server.Get("/api/status/full", [&deps](const HttpRequest&, HttpResponse& res) {
+    WriteJson(res, 200, StatusFullJson(deps));
+  });
+
+  server.Get("/api/meters", [&deps](const HttpRequest&, HttpResponse& res) {
+    WriteJson(res, 200, MetersJson(deps));
   });
 
   server.Get("/api/auth/status", [&deps, trusted](const HttpRequest& req, HttpResponse& res) {
