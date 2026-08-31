@@ -89,6 +89,7 @@ bool Config::Load(const std::string& path, Config& out, std::string& error) {
     Get(j, "record_max_seconds", cfg.record_max_seconds);
     Get(j, "record_warning_seconds", cfg.record_warning_seconds);
     Get(j, "api_port", cfg.api_port);
+    Get(j, "cat_proxy_port", cfg.cat_proxy_port);
     Get(j, "dashboard_port", cfg.dashboard_port);
     Get(j, "api_bind_lan", cfg.api_bind_lan);
     Get(j, "allow_anonymous_status", cfg.allow_anonymous_status);
@@ -130,6 +131,11 @@ bool Config::Load(const std::string& path, Config& out, std::string& error) {
     error = "ptt_timeout_seconds must be >= 0 (0 disables the watchdog)";
     return false;
   }
+  if (cfg.cat_proxy_port != 0 &&
+      (cfg.cat_proxy_port == cfg.api_port || cfg.cat_proxy_port == cfg.dashboard_port)) {
+    error = "cat_proxy_port must differ from api_port and dashboard_port";
+    return false;
+  }
   if (cfg.api_port == cfg.dashboard_port) {
     error = "api_port and dashboard_port must differ";
     return false;
@@ -167,6 +173,7 @@ bool Config::Save(const std::string& path, std::string& error) const {
   j["alsa_capture_device"] = alsa_capture_device;
   j["alsa_playback_device"] = alsa_playback_device;
   j["api_port"] = api_port;
+  j["cat_proxy_port"] = cat_proxy_port;
   j["dashboard_port"] = dashboard_port;
   j["allow_anonymous_status"] = allow_anonymous_status;
   j["ptt_timeout_seconds"] = ptt_timeout_seconds;

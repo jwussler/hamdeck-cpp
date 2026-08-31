@@ -49,6 +49,16 @@ struct Config {
 
   // API
   int  api_port = 5001;               // control, bound to loopback
+
+  // ⚠️ TCP CAT PROXY, loopback only. 0 disables it. This is what lets N1MM (or
+  // any logger) talk to the radio without a virtual serial-port splitter:
+  // Configure Ports -> TCP -> 127.0.0.1:4532.
+  //
+  // ⚠️ It forwards CAT VERBATIM, including TX1;. Anything that can reach the
+  // port can key the transmitter, which is why it binds loopback and why it is
+  // OFF unless the operator asks for it. Turning it on is a decision about who
+  // can key the rig, not a formatting preference.
+  int  cat_proxy_port = 0;
   int  dashboard_port = 5002;         // LAN
   bool api_bind_lan = false;          // publishing the CONTROL port to the LAN
   bool allow_anonymous_status = false;

@@ -16,6 +16,7 @@
 #include <thread>
 
 #include "api.h"
+#include "cat_proxy.h"
 #include "audio.h"
 #include "http.h"
 #include "auth.h"
@@ -303,6 +304,22 @@ int main(int argc, char** argv) {
     deps.profile_dir =
         std::filesystem::path(config_path).parent_path().string() + "/profiles";
   }
+  // ── TCP CAT proxy ─────────────────────────────────────────────────────────
+  // ⚠️ A proxy that will not start must NOT stop the host running the radio.
+  // It is a convenience for a logger; the station is the job.
+  TcpCatProxy cat_proxy(&poller, config.cat_proxy_port);
+  if (config.cat_proxy_port > 0) {
+    std::string perr;
+    if (cat_proxy.Start(perr)) {
+      std::cout << "cat proxy: 127.0.0.1:" << config.cat_proxy_port
+                << " (N1MM: Configure Ports -> TCP)\n";
+    } else {
+      std::cerr << "cat proxy: NOT started - " << perr << '\n';
+    }
+  } else {
+    std::cout << "cat proxy: off (set cat_proxy_port to enable)\n";
+  }
+
   deps.simulated = simulated;
   deps.allow_anonymous_status = config.allow_anonymous_status;
 
