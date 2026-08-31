@@ -649,6 +649,26 @@ ApplicationWindow {
                             currentIndex: backend.inputIndex
                             onActivated: backend.inputIndex = currentIndex
                         }
+                        // ⚠️ THE MICROPHONE'S STATE BELONGS NEXT TO THE
+                        // MICROPHONE. This lived only in the status strip along
+                        // the bottom edge, where on a shorter window it is off
+                        // screen entirely - so a client that armed, said
+                        // "armed", and sent no audio at all looked completely
+                        // healthy, and the transmitter keyed into silence.
+                        //
+                        // Nobody should have to run a command to find out
+                        // whether their microphone is working.
+                        Text {
+                            Layout.fillWidth: true
+                            visible: backend.armed
+                            text: backend.txStatus.indexOf("NO MICROPHONE") >= 0
+                                  ? "⚠ " + backend.txStatus.replace("tx: ", "")
+                                  : backend.txStatus.replace("tx: ", "")
+                            wrapMode: Text.WordWrap
+                            font.family: Theme.body; font.pixelSize: Theme.f(11)
+                            color: backend.txStatus.indexOf("NO MICROPHONE") >= 0
+                                   ? Theme.txRed : Theme.dim
+                        }
                     }
                 }
             }
