@@ -12,6 +12,9 @@ Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anythin
 
 ## 1. Status at a glance
 
+> **The open work is in §10 and in `AUDIT-CSHARP.md`** — the reference app walked bit by bit,
+> with what is done, what is left, and what is deliberately not being done.
+>
 > **End of 08/30/2026: see `DAY-08-30-2026.md`** for the full day across all three
 > repos, including the .NET and brand work that is not recorded here.
 
@@ -862,9 +865,53 @@ against it. Two things to plan for.
 
 ## 10. Next session: start here
 
-1. Read §1 and §2. Check the push blocker is still standing.
-2. `HAMDECK_BUILD_HOST=<target> ./sync.sh`, then `ctest` — 8 tests should pass.
-3. Start the host, run `tools/coverage.py`, `tools/walk_all_routes.py` and
-   `tools/parity_check.py` against it. All three should be clean.
-4. Then pick up: **client TX audio + F13 hotkey** (no radio needed), or **book a hardware
-   window** for ALSA, the PTT tail-wait and `/api/ptt/off`.
+⚠️ **The open work is a LIST now, not a memory.** `AUDIT-CSHARP.md` is the whole surface of the
+reference app walked bit by bit; everything below is what is still open from it. Gaps were
+being found one at a time, in use, by the operator — the hotkey that never keyed, the tuner
+that never transmitted, direct entry that was never ported. Each cost a rebuild and a reinstall.
+
+### Getting going
+1. Read §1 and §2.
+2. `HAMDECK_BUILD_HOST=deck ./sync.sh`, then `ctest` in `build/` — **11 tests**.
+   Client: `cmake -S client -B client/build -G Ninja`, then `ctest` — **4 tests**
+   (hotkey, place, freq, qml_selftest).
+3. Deploy with `tools/deploy.sh`, **never** `sync.sh` — it installs nothing and the service
+   will keep running an older binary while you "verify" against it.
+
+### Open, in the order they are worth doing
+
+**Host services the reference has and this does not:**
+
+| what | why it matters | notes |
+|---|---|---|
+| **TCP CAT proxy** (`Services/TcpCatProxy.cs`, 143 lines) | listens on **localhost:4532** and forwards CAT from N1MM through the same lock as the poller — **this is what removes the need for a virtual serial-port splitter** | probably the highest-value item left. N1MM: Configure Ports → TCP → 127.0.0.1:4532 |
+| **WaveLog server** (`Services/WaveLogServer.cs`, 289 lines) | WaveLogGate-compatible: HTTP **54321** for QSY from the bandmap, WS **54322** status, and posting to the Wavelog API | wanted if the log is in use |
+| **CW keyer** (`Services/Keyers.cs`, 127 lines) | sends CW text, five CW memories | `/api/cw/*` currently answers `available:false`, honestly. ⚠️ Check every verb against the manual **and** hamlib — five CAT verbs guessed from their neighbours were wrong last time (§6) |
+
+**Panel controls still missing** (routes all exist on the host):
+
+| control | route |
+|---|---|
+| Memory recall | `/api/memory/recall/{m}` |
+| Presets | `/api/preset/`, `/api/admin/presets` |
+| Voice memories | `/api/voice/play/{n}`, `/stop`, `/status` |
+| SSB out level | `/api/ssb-out-level/get|set` |
+| Remote TX | `/api/remote-tx/on|off|gain|status` |
+| RX antenna | `/api/rxant/1`, `/api/ant/rx/toggle` |
+| Rig internal ATU | `/api/tune` — ⚠️ the **wrong** tuner for this station; label it plainly if it is added at all |
+
+**Deliberately not doing:**
+- **DX cluster** (`/api/cluster/spots`) — 404s on the reference host too. Matching that is
+  correct, not a gap.
+- **FlexKnob**, **Kmtronic relay** — hardware this host does not have.
+- **Hold-to-talk on the GLOBAL hotkey** — needs a `WH_KEYBOARD_LL` hook that sees every
+  keystroke on the machine. The reference refuses it and so do we; the window-focus key still
+  offers hold.
+
+### Open questions, not code
+1. **The Windows installer is unsigned**, and the global hotkey has only ever been exercised by
+   the operator, not here — there is no Windows box in this loop.
+2. **`hamdeck-site` still has no remote.** Backed up and restore-tested, but a bundle on a NAS
+   is not a remote.
+3. **The `joe` test credential is deliberately stable** while testing — Joe rotates it himself
+   when done. Do not change it unasked (`tools/set_password.py`).
