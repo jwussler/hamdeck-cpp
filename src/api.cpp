@@ -1,4 +1,5 @@
 #include "api.h"
+#include "log.h"
 #include <optional>
 #include <filesystem>
 #include <array>
@@ -1667,7 +1668,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
               R"({{"type":"config","sample_rate":{},"channels":1,"bits_per_sample":16}})",
               tx->SampleRate()));
         },
-        [tx, claims, claims_mu](std::shared_ptr<WsConnection> c) {
+        [tx, rigp, claims, claims_mu](std::shared_ptr<WsConnection> c) {
           std::string id;
           {
             std::lock_guard<std::mutex> lock(*claims_mu);
@@ -1677,6 +1678,28 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
             claims->erase(it);
           }
           tx->Release(id);
+
+          // ⚠️ DROP POWER BACK TO THE LOCAL CAP WHEN THE REMOTE CLIENT GOES.
+          //
+          // Remote operating runs at up to 200 W. The operator then sits down at
+          // the radio itself, keys up, and drives an amplifier with twice the
+          // power they expect - because a setting made from another room is
+          // still in force and nothing on the front panel says a client put it
+          // there.
+          //
+          // ⚠️ IT LIVES HERE, NEXT TO THE RADIO, for the same reason the
+          // transmit watchdog does: a client-side reset protects nothing when
+          // the client is the thing that died. This fires on a clean disconnect,
+          // a crash and a dropped link alike, because all three close the socket.
+          //
+          // Only when the connection actually HELD the transmitter - a refused
+          // second client must not reach in and change the first one's power.
+          if (rigp) {
+            rigp->Enqueue("PC" + Pad(kLocalPowerCap, 3) + ";");
+            hdlog::Line(hdlog::kInfo, "TX",
+                        "client " + id + " disconnected - power set back to " +
+                            std::to_string(kLocalPowerCap) + " W");
+          }
         },
         [tx, rigp](std::shared_ptr<WsConnection>, const char* data, size_t len,
                    bool is_binary) {
