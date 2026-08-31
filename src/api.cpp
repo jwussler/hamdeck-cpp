@@ -1223,20 +1223,76 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // rest, which is silent: the route still answers ok, the radio still keys, and
   // it transmits NOTHING because the modulation source never moved off MIC.
   // That cost an evening with a perfect audio chain and a dead transmitter.
-  generated.push_back({"/api/remote-tx/on", [rig](bool) {
-      if (rig) rig->EnqueueTask([](CatTransport& cat) {
+  // ⚠️ THESE ROUTES READ THE RADIO BACK BEFORE THEY CLAIM ANYTHING.
+  //
+  // They used to enqueue three writes and answer ok immediately, which cannot
+  // know whether the rig accepted them - and that is exactly how the dead
+  // transmitter hid: the route said ok, the status route beside it invented
+  // agreeing values, and the radio was doing something else entirely. An
+  // optimistic ok on a route that changes the transmitter is not a status, it is
+  // a hope.
+  //
+  // Same shape as tools/deploy.sh, which does not trust that an install worked -
+  // it compares the running build id against the binary it just wrote. The cost
+  // is one extra round trip on an operation done a handful of times a day, and
+  // it is nowhere near the audio or PTT path.
+  auto verify_remote_tx = [](RadioPoller* rig, bool want_rear) -> std::string {
+    if (!rig) return R"({"status":"error","message":"no radio"})";
+    auto result = std::make_shared<std::promise<std::array<std::optional<std::string>, 2>>>();
+    auto fut = result->get_future();
+    rig->EnqueueTask([result, want_rear](CatTransport& cat) {
+      // ⚠️ 50 ms BETWEEN THE WRITES (§8g). Sent back to back the rig takes the
+      // first and ignores the rest, silently.
+      if (want_rear) {
         cat.Send("EX0101111;");   // MOD SOURCE -> REAR
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         cat.Send("EX0101121;");   // REAR SELECT -> USB
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         cat.Send("EX010113050;"); // RPORT GAIN
-      });
-      return std::string(R"({"status":"ok","remote_tx":true,)"
-                         R"("message":"SSB MOD SOURCE=REAR, REAR SELECT=USB"})"); }});
-  generated.push_back({"/api/remote-tx/off", [rig](bool) {
-      if (rig) rig->EnqueueTask([](CatTransport& cat) { cat.Send("EX0101110;"); });
-      return std::string(R"({"status":"ok","remote_tx":false,)"
-                         R"("message":"SSB MOD SOURCE=MIC"})"); }});
+      } else {
+        cat.Send("EX0101110;");   // MOD SOURCE -> MIC
+      }
+      // Let the rig settle before asking what it did, in the SAME task so
+      // nothing else on the port lands between the write and the read.
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+      std::array<std::optional<std::string>, 2> r;
+      r[0] = cat.Exchange("EX010111;");
+      r[1] = cat.Exchange("EX010112;");
+      result->set_value(r);
+    });
+    if (fut.wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
+      // ⚠️ Unverified is NOT the same as failed. The commands were sent; we do
+      // not know what happened, and saying so is the honest answer.
+      return R"({"status":"ok","verified":false,)"
+             R"("message":"commands sent, but the radio did not answer a read-back"})";
+    }
+    const auto r = fut.get();
+    auto flag = [](const std::optional<std::string>& v, bool& known) -> bool {
+      if (!v || v->size() < 9) { known = false; return false; }
+      known = true;
+      return (*v)[8] == '1';
+    };
+    bool k1 = false, k2 = false;
+    const bool rear = flag(r[0], k1);
+    const bool usb = flag(r[1], k2);
+    if (!k1 || !k2) {
+      return R"({"status":"ok","verified":false,)"
+             R"("message":"could not read the menu items back"})";
+    }
+    const bool as_asked = want_rear ? (rear && usb) : (!rear);
+    return std::format(
+        R"({{"status":"ok","remote_tx":{},"verified":{},)"
+        R"("mod_source_rear":{},"rear_select_usb":{},"message":"{}"}})",
+        JsonBool(rear && usb), JsonBool(as_asked), JsonBool(rear), JsonBool(usb),
+        as_asked ? (want_rear ? "SSB MOD SOURCE=REAR, REAR SELECT=USB"
+                              : "SSB MOD SOURCE=MIC")
+                 : "THE RADIO DID NOT TAKE THE CHANGE");
+  };
+
+  generated.push_back({"/api/remote-tx/on", [rig, verify_remote_tx](bool) {
+      return verify_remote_tx(rig, true); }});
+  generated.push_back({"/api/remote-tx/off", [rig, verify_remote_tx](bool) {
+      return verify_remote_tx(rig, false); }});
   generated.push_back({"/api/remote-tx/status", [rig](bool) {
       // ⚠️ THIS ROUTE USED TO INVENT ITS ANSWER. It reported the rig's TX flag as
       // mod_source_rear and hardcoded the other two - a confident wrong answer,
