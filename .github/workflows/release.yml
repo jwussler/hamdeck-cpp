@@ -147,3 +147,46 @@ jobs:
           QT_QPA_PLATFORM=offscreen ./client/build/hamdeck-qml --selftest
       # Deliberately no upload: see the note on this job. An artifact nobody has
       # run is worse than no artifact, because somebody will install it.
+
+  # ⚠️ WITHOUT THIS THERE IS NO PERMANENT DOWNLOAD. Actions artifacts expire in
+  # 90 days and are reachable only by someone logged in who can find the right
+  # run - which is why every "here is the installer" link had to be dug out of a
+  # workflow run by hand. A Release gives /releases/latest, and it does not expire.
+  #
+  # ⚠️ needs linux+windows ONLY. The macos job sits queued for hours on this
+  # runner pool; gating the release on it would mean never publishing at all.
+  publish:
+    needs: [linux, windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          find dist -type f | sort
+          # ⚠️ Refuse to publish without an installer. An empty release is worse
+          # than none: it looks like the build shipped when nothing did.
+          test -n "$(find dist -name '*.exe' -print -quit)" || {
+            echo "no installer among the artifacts - refusing to publish"; exit 1; }
+          cat > notes.md <<'NOTES'
+          Windows installer and Linux `.deb`.
+
+          **The Windows installer is unsigned**, so SmartScreen warns on first run:
+          *More info* then *Run anyway*.
+
+          Every CI job runs the binary before packaging it, the panel placement is
+          checked at seven screen sizes, and the application icon is verified to be
+          embedded in the executable.
+          NOTES
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "HamDeck ${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            $(find dist -name '*.exe') $(find dist -name '*.deb')
