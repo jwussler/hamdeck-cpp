@@ -72,6 +72,70 @@ now rather than later:
   that estimate is always ≈0 in steady state and reads exactly like a working measurement.
 - ⚠️ **Never feed the operator their own delayed audio.** Mute RX while keyed.
 
+## ⚠️ RULES EARNED ON 08/31/2026 — the night the client first transmitted
+
+Six bugs stood between "it compiles" and "a voice on the air". **Not one was a language or a
+build problem, and every single one looked healthy to the checks that existed.** Full account in
+`WIP.md` §8f–§8h; these are the rules that came out of it.
+
+### Counting is not checking
+Frames accepted, `hw_ptr` advancing at 48 kHz, zero drops, a queue behaving — **all of it reads
+exactly the same whether the audio is a voice or digital silence.** A muted microphone produces
+perfectly formed silence at precisely the right rate. If a number cannot distinguish working
+from broken, it is not a measurement, and reporting it as one wastes an operator's night.
+`tx_peak` exists for this reason, and it **decays**: a high-water mark cannot show a gain being
+turned DOWN, which is the entire job.
+
+### A control no test TOUCHES is a control nobody has tested
+`qml_selftest` loads the QML and `--check-resolutions` measures geometry. Every slider in the
+panel had **zero height** and swallowed no mouse events, and both stayed green for the life of
+the project, because a zero-height item lays out and paints perfectly well. `tests_knob.cpp`
+drags one with synthetic mouse events. Do that for any control that matters.
+
+### Comparing route INVENTORIES is not comparing behaviour
+`AUDIT-CSHARP.md` ticked `/api/remote-tx/on` because the route existed. It answered `200` and
+changed nothing, and the status route beside it **invented all three of its fields** so the two
+agreed with each other. ⚠️ **The test that catches this: call the route, then read the radio
+back through something that is NOT the route under test.**
+
+### A confident wrong answer is worse than no answer — it gets believed
+`/api/remote-tx/status` reported the rig's TX flag as `mod_source_rear` and hardcoded the rest,
+behind a comment claiming it read straight through. It said MIC while the radio was already on
+REAR/USB, so a **correct** write was reported as a failure and the search went to the wrong end
+of the chain. When a read fails, say `null`. Never fall back to a plausible value.
+
+### ⚠️ NEVER SHIP A FIX NOTHING HERE CAN TEST
+It happened twice in one night and the operator found both:
+- **0.1.10** "fixed" the sliders by correcting a real binding loop that was not the cause.
+- **0.1.12** "added" the icon with a `.rc` that CMake **silently never compiled**
+  (`project(... LANGUAGES CXX)` — no RC language, no warning, green build).
+
+Flagging "I could not verify this" in the message is not a substitute for verifying it. If it
+cannot be tested here, build the thing that tests it — `tests_knob.cpp` and
+`check_exe_icon.py` both exist because of this, and each took minutes.
+
+### A gate is not a gate until it FAILS on demand
+Every gate in this repo was verified by reintroducing its bug and watching it fail, then
+restoring it and watching it pass. A check that has only ever passed is a check nobody has
+tested. It is the same rule as the one above, applied to the test itself.
+
+### Two mechanisms are two tests
+The `--selftest` icon check covers the WINDOW icon (qrc + `setWindowIcon`). The taskbar,
+shortcut and Explorer icon comes from the **exe's embedded resource** — a completely different
+path. A check on one says nothing about the other, and reporting it as covering both is how
+0.1.12 shipped blank.
+
+### Safety belongs next to the radio
+The transmit watchdog, the disconnect power reset and the MOD SOURCE restore all live in the
+HOST. ⚠️ **A client-side safeguard protects nothing when the client is the thing that died** —
+and a dropped link, a crash and a clean quit all look the same from here, which is exactly why
+the `/ws/tx` close callback is the right hook.
+
+### CAT menu writes need 50 ms between them
+Sent back to back the rig takes the first and ignores the rest, **silently**. The reference host
+has three explicit sleeps in `EnableRemoteTx`; nobody writes those for fun. Port the timing, not
+just the commands.
+
 ## House style
 
 MIT licensed; every dependency must stay OSI-approved. Measure before claiming — every real
