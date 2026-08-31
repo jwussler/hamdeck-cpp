@@ -927,6 +927,32 @@ refuses unless `/api/backend` says `simulated:true`.
   sinks so the radio was never at risk, but they are debris. Cleared. `tx_path_test.sh` traps
   its own exit so it cannot add more.
 
+### ⚠️ IT WORKED, AND THE PANEL SAID OTHERWISE — the status line was stale
+After 0.1.8 the station showed a red **`armed, NO MICROPHONE:`** with **nothing after the
+colon** — and an empty reason is impossible for a real failure, because all three `OpenMic`
+paths set one. That was the tell.
+
+`ArmedChanged` was emitted **only when OpenMic FAILED**. The panel renders its line when the
+SOCKET connects, which is the moment *before* the microphone is opened; on success nothing was
+emitted, so the pre-mic snapshot stayed on screen for the life of the session. A working
+microphone looked broken indefinitely.
+
+Every path out of that branch now signals. ⚠️ **A UI that reports only failures cannot show a
+recovery** — the success case needs a signal exactly as much as the failure case does.
+
+### PROVEN ON THE AIR-SIDE HARDWARE — 08/31/2026 02:52
+First audio ever to reach the station host from the client:
+
+| | |
+|---|---|
+| tx_accepted | **0 → 10 → 182 in two seconds**, then 214 |
+| tx_dropped | **0** |
+| device_queued_ms | 68 → 51, steady |
+
+The microphone, the negotiation, the converter and the socket all work. ⚠️ **The rig was NOT
+keyed for that test** (`"tx":false` throughout), so PO stayed 0 — the host accepts audio
+regardless of key state, so arrival proves the audio chain and says nothing about RF.
+
 ⚠️ **Still unproven: Windows microphone capture.** Qt's Linux audio enumeration is hard-wired to
 PulseAudio in this build, and installing an audio server on the station box is not acceptable —
 PulseAudio grabs ALSA cards and that box owns the codec. So the client's capture side cannot be

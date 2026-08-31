@@ -56,8 +56,18 @@ void TxAudio::OnTextFrame(const QString& text) {
     // Take the rate from the host rather than assuming it. A mismatch here is
     // not a subtle artefact - it is a chipmunk or a drawl going out on the air.
     sample_rate_ = o.value("sample_rate").toInt(48000);
-    if (!test_tone_ && !OpenMic(device_name_)) {
-      emit ArmedChanged(true, "armed, but no usable microphone: " + last_error_);
+    if (!test_tone_) {
+      // ⚠️ SIGNAL ON SUCCESS TOO, or the panel keeps the line it rendered when
+      // the SOCKET connected - which is the moment before the microphone is
+      // opened, so it reads "armed, NO MICROPHONE:" with no reason after it.
+      // A working microphone then looked broken for as long as the panel was up,
+      // and the empty reason sent an evening of debugging after a failure that
+      // had never happened. Every path out of here now tells the UI something.
+      if (OpenMic(device_name_)) {
+        emit ArmedChanged(true, StatusLine());
+      } else {
+        emit ArmedChanged(true, "armed, but no usable microphone: " + last_error_);
+      }
     }
   }
 }
