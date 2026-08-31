@@ -8,6 +8,7 @@
 // install at that station.
 
 #include <QFontDatabase>
+#include <QIcon>
 #include <QGuiApplication>
 #include <QAudioDevice>
 #include <QAudioFormat>
@@ -74,6 +75,27 @@ int SelfTest(QQmlApplicationEngine& engine) {
         if (!ok) ++failures;
     };
     check("QML loaded without errors", !engine.rootObjects().isEmpty());
+
+    // ⚠️ THE APP SHIPPED WITH A BLANK ICON IN EVERY RELEASE. The artwork was in
+    // the repo from the start and wired to nothing - no window icon, and no .rc
+    // embedding the .ico into the exe. Nothing failed, because nothing looked.
+    // A resource that silently is not there is exactly what a check is for.
+    {
+        const QIcon icon = QGuiApplication::windowIcon();
+        check("application icon is set", !icon.isNull());
+        // A QIcon whose files all failed to load is non-null but has no sizes,
+        // which looks identical to a working one until it is drawn.
+        check("application icon actually has artwork", !icon.availableSizes().isEmpty());
+        // BRAND.md: 16 and 24 are separate marks, not downscales. If the qrc
+        // paths break, these are the first to vanish.
+        bool has16 = false, has24 = false;
+        for (const QSize& sz : icon.availableSizes()) {
+            if (sz.width() == 16) has16 = true;
+            if (sz.width() == 24) has24 = true;
+        }
+        check("the separate 16px mark is present", has16);
+        check("the separate 24px mark is present", has24);
+    }
     if (!engine.rootObjects().isEmpty()) {
         auto* w = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
         check("root object is a window", w != nullptr);
@@ -241,6 +263,22 @@ int main(int argc, char** argv) {
 #endif
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("HamDeckClient");
+    // ⚠️ THE WINDOW ICON IS A SEPARATE THING FROM THE EXE'S RESOURCE ICON.
+    // The .rc gives Explorer, shortcuts and the taskbar their icon on Windows;
+    // this gives the running window its icon, and is the only one that does
+    // anything at all on Linux. Both were missing, so the app was blank
+    // everywhere despite the artwork shipping since the first release.
+    //
+    // ⚠️ Every size is added, not just the largest. BRAND.md: the 16 and 24 px
+    // marks are SEPARATE ARTWORK, not downscales - letting Qt shrink the 256
+    // throws away the exact thing they exist for.
+    {
+        QIcon appIcon;
+        for (int sz : {16, 24, 32, 48, 64, 128, 256, 512}) {
+            appIcon.addFile(QStringLiteral(":/icons/hamdeck-%1.png").arg(sz), QSize(sz, sz));
+        }
+        QGuiApplication::setWindowIcon(appIcon);
+    }
     QGuiApplication::setOrganizationName("HamDeck");
     LoadBundledFonts();
 

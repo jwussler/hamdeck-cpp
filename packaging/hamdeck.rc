@@ -1,0 +1,11 @@
+// Windows icon resource.
+//
+// ⚠️ WITHOUT THIS THE EXE HAS NO ICON, AND NEITHER DOES ANYTHING POINTING AT IT.
+// SetupIconFile in hamdeck.iss skins the INSTALLER only; Explorer, the taskbar,
+// Alt-Tab and every shortcut read the icon from the executable's own resource.
+// The artwork existed from the first release and was wired to nothing, so the
+// app shipped blank in every one of those places.
+//
+// ⚠️ IDI_ICON1 must be the LOWEST-numbered icon resource: Windows shows the
+// first icon by ordinal for the application, not one picked by name.
+IDI_ICON1 ICON "icons/hamdeck.ico"

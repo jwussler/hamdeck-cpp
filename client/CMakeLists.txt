@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(hamdeck-client VERSION 0.1.11 LANGUAGES CXX)
+project(hamdeck-client VERSION 0.1.12 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -100,6 +100,13 @@ target_link_libraries(hamdeck-qml PRIVATE
 # so it behaves as a GUI app when double-clicked and as a console tool when run
 # from a terminal. CI depends on that output.
 set_target_properties(hamdeck-qml PROPERTIES WIN32_EXECUTABLE TRUE MACOSX_BUNDLE TRUE)
+
+# ⚠️ Embeds the .ico INTO the exe. Explorer, the taskbar and every shortcut read
+# the icon from the binary's own resource - the installer's SetupIconFile does
+# not give the installed app an icon, which is why it shipped blank.
+if(WIN32)
+    target_sources(hamdeck-qml PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/hamdeck.rc)
+endif()
 
 if(MSVC)
     target_compile_options(hamdeck-qml PRIVATE /W3)

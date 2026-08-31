@@ -1,6 +1,14 @@
 <RCC>
   <qresource prefix="/">
     <file>qml/Main.qml</file>
+    <file alias="icons/hamdeck-16.png">../packaging/icons/hamdeck-16.png</file>
+    <file alias="icons/hamdeck-24.png">../packaging/icons/hamdeck-24.png</file>
+    <file alias="icons/hamdeck-32.png">../packaging/icons/hamdeck-32.png</file>
+    <file alias="icons/hamdeck-48.png">../packaging/icons/hamdeck-48.png</file>
+    <file alias="icons/hamdeck-64.png">../packaging/icons/hamdeck-64.png</file>
+    <file alias="icons/hamdeck-128.png">../packaging/icons/hamdeck-128.png</file>
+    <file alias="icons/hamdeck-256.png">../packaging/icons/hamdeck-256.png</file>
+    <file alias="icons/hamdeck-512.png">../packaging/icons/hamdeck-512.png</file>
     <file>qml/HamDeck/qmldir</file>
     <file>qml/HamDeck/Theme.qml</file>
     <file>qml/HamDeck/SilkLabel.qml</file>

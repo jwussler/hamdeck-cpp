@@ -1020,6 +1020,32 @@ splatter. Not yet done; the sliders had to work first.
 
 ---
 
+## 8h. The app shipped blank in every release — the icon was wired to nothing
+
+The artwork has been in the repo since the first release: `packaging/icons/hamdeck.ico` with
+all seven sizes, including the **separate 16 and 24 px marks** BRAND.md requires. Nothing used
+it.
+
+- **No `.rc`**, so the icon was never embedded in the exe. `SetupIconFile` in `hamdeck.iss`
+  skins the INSTALLER only — Explorer, the taskbar, Alt-Tab and every shortcut read the icon
+  from the executable's own resource, and there wasn't one.
+- **No `setWindowIcon()`**, so the running window had no icon either, on any platform.
+
+⚠️ There is **no `QSystemTrayIcon` in the client at all** — what reads as a blank tray icon is
+the window/taskbar icon. If a tray icon is actually wanted, that is a feature to build, not an
+icon to fix.
+
+Both paths are now wired, and `--selftest` checks it: the icon is set, it HAS artwork (a QIcon
+whose files all failed to load is non-null but sizeless — indistinguishable from a working one
+until it is drawn), and the 16 and 24 px marks are present, because those are the first things
+to vanish if the qrc paths break.
+
+Proven as a gate: with `setWindowIcon` removed the selftest emits four FAILs and
+`SELFTEST FAILED`; restored, it passes. **CI runs `--selftest` in every job, so a blank icon now
+blocks a release.** A missing PNG is caught even earlier — `rcc` fails the build outright.
+
+---
+
 ## 9. Adding radios nobody here owns
 
 The simulator makes this tractable: look up the CAT set, write a profile, run the walker
