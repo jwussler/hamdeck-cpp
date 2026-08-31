@@ -1,5 +1,7 @@
 #include "backend.h"
 
+#include <cstdio>
+
 #include "freq_input.h"
 
 #include <QEventLoop>
@@ -47,6 +49,10 @@ Backend::Backend(QObject* parent) : QObject(parent) {
   // out of step the first time anything else keys the radio.
   connect(&global_hotkey_, &GlobalHotkey::Pressed, this, [this] {
     send(tx() ? "/api/ptt/off" : "/api/ptt/on");
+    // So the panel can show that the press ARRIVED, even if the rig then
+    // refuses. Without this an operator cannot tell a key Windows never
+    // delivered from a command the host rejected.
+    emit hotkeyChanged();
   });
 
   connect(&rx_, &RxAudio::ConnectionChanged, this, [this](bool up, QString d) {
@@ -163,6 +169,12 @@ void Backend::ApplyGlobalHotkey() {
   global_hotkey_status_ =
       err.isEmpty() ? QString("armed: %1 works anywhere").arg(settings_.global_ptt_key)
                     : err;
+  if (!err.isEmpty()) {
+    // ⚠️ Say it on the console too. On Windows the panel may be behind the
+    // logging program when this fails, which is exactly when nobody sees a
+    // line of grey text in a UI they are not looking at.
+    std::fprintf(stderr, "global hotkey: %s\n", err.toUtf8().constData());
+  }
 }
 
 void Backend::setHotkeyHold(bool hold) {

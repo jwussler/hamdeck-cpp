@@ -520,7 +520,13 @@ ApplicationWindow {
                         // not a fault in this app.
                         Text {
                             Layout.preferredWidth: Theme.u(230)
-                            text: backend.globalHotkeyStatus
+                            // The press count turns "it does nothing" into one
+                            // of two answers: the key never registered, or it
+                            // registered and Windows is not delivering it.
+                            text: backend.globalHotkeyStatus +
+                                  (backend.globalHotkeyPresses > 0
+                                   ? " · " + backend.globalHotkeyPresses + " presses"
+                                   : "")
                             wrapMode: Text.WordWrap
                             font.family: Theme.body; font.pixelSize: Theme.f(10)
                             color: backend.globalHotkeyStatus.indexOf("armed") === 0

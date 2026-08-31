@@ -140,6 +140,11 @@ class Backend : public QObject {
   Q_PROPERTY(int globalHotkeyIndex READ globalHotkeyIndex WRITE setGlobalHotkeyIndex
                  NOTIFY hotkeyChanged)
   Q_PROPERTY(QString globalHotkeyStatus READ globalHotkeyStatus NOTIFY hotkeyChanged)
+  // ⚠️ A PRESS COUNT, because "not registered" and "registered but the press
+  // never arrives" are different faults with different fixes and they look
+  // identical from the operator's chair. The reference client tracks this for
+  // the same reason.
+  Q_PROPERTY(int globalHotkeyPresses READ globalHotkeyPresses NOTIFY hotkeyChanged)
 
  public:
   explicit Backend(QObject* parent = nullptr);
@@ -278,6 +283,7 @@ class Backend : public QObject {
   int globalHotkeyIndex() const;
   void setGlobalHotkeyIndex(int i);
   QString globalHotkeyStatus() const { return global_hotkey_status_; }
+  int globalHotkeyPresses() const { return global_hotkey_.pressCount(); }
   // Called once the window exists: RegisterHotKey needs a window handle.
   void attachWindow(QWindow* w);
 
