@@ -38,11 +38,35 @@ every counter in the audio chain reads perfectly healthy. Hours went into that o
 ⚠️ **And it is a two-sided trap.** Left on REAR/USB, the operator's own hand mic at the radio
 does nothing. `/api/remote-tx/off` puts it back to MIC.
 
-### Safeguard: power returns to 100 W when a client disconnects
+### Safeguard: the station is handed back safe when a client disconnects
 Remote runs to 200 W; the operator then sits down at the radio and drives an amp with twice the
 power they expect. The host drops to `kLocalPowerCap` on the `/ws/tx` close — clean disconnect,
 crash and dropped link alike, and only when that connection actually held the transmitter.
 ⚠️ **It lives next to the radio** for the same reason the transmit watchdog does.
+
+**And MOD SOURCE goes back to MIC in the same task, 50 ms later.** Left on REAR the operator's
+own hand mic does nothing — it keys, ALC sits at idle, no power comes out, which is exactly the
+symptom §8g chased from the other direction. A remote session must not leave the station
+unusable to the person standing in front of it.
+
+### TCP CAT proxy — DONE, but OFF by default
+`cat_proxy_port` (0 disables). Loopback only. A logger talks to the radio through the poller's
+own queue, so no VSPE/VSPD splitter: **N1MM → Configure Ports → TCP → 127.0.0.1:4532.**
+
+⚠️ **It forwards CAT verbatim, including `TX1;`.** Anything that can reach the port can key the
+transmitter, which is why it binds loopback and why enabling it is the operator's decision, not
+a default.
+
+⚠️ **`cat_sim` does not implement `IF;`** — the one command N1MM leans on hardest. Deliberately
+not invented: a simulator written from the manual tests your reading of the manual. The real rig
+answers it and the proxy forwards it untouched, so **the proxy is unproven against a real radio
+until someone runs N1MM through it.**
+
+### Remote TX now reports what the RADIO says
+`/api/remote-tx/on|off` write and read back in the same CAT task and return `verified`. Three
+outcomes, not two: the change took, the change did not take, and the read-back could not be
+obtained. ⚠️ **Unverified is not the same as failed.** Proven by patching the simulator to
+ignore the write and watching it report `THE RADIO DID NOT TAKE THE CHANGE`.
 
 ### Per-user settings live on the host
 `GET`/`POST /api/profile`, one JSON file per user beside the config. Mic gain, volume, PTT
@@ -1140,7 +1164,6 @@ exactly the same whether the audio is a voice or digital silence. That cost a ni
 
 | what | why it matters | notes |
 |---|---|---|
-| **TCP CAT proxy** (`Services/TcpCatProxy.cs`, 143 lines) | listens on **localhost:4532** and forwards CAT from N1MM through the same lock as the poller — **this is what removes the need for a virtual serial-port splitter** | probably the highest-value item left. N1MM: Configure Ports → TCP → 127.0.0.1:4532 |
 | **WaveLog server** (`Services/WaveLogServer.cs`, 289 lines) | WaveLogGate-compatible: HTTP **54321** for QSY from the bandmap, WS **54322** status, and posting to the Wavelog API | wanted if the log is in use |
 | **CW keyer** (`Services/Keyers.cs`, 127 lines) | sends CW text, five CW memories | `/api/cw/*` currently answers `available:false`, honestly. ⚠️ Check every verb against the manual **and** hamlib — five CAT verbs guessed from their neighbours were wrong last time (§6) |
 
