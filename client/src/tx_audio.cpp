@@ -63,11 +63,6 @@ void TxAudio::OnTextFrame(const QString& text) {
 }
 
 bool TxAudio::OpenMic(const QString& device_name) {
-  QAudioFormat fmt;
-  fmt.setSampleRate(sample_rate_);
-  fmt.setChannelCount(1);
-  fmt.setSampleFormat(QAudioFormat::Int16);
-
   // Resolve BY NAME, falling back to the SYSTEM DEFAULT - never to "the first in
   // the list", which is arbitrary and on many machines is a monitor loopback.
   // Transmitting the desktop's own audio output would be a memorable mistake.
@@ -84,15 +79,56 @@ bool TxAudio::OpenMic(const QString& device_name) {
     last_error_ = "no audio input device";
     return false;
   }
+
+  // ⚠️ NEGOTIATE, DO NOT REFUSE.
+  //
+  // This asked for exactly 48000/16-bit/mono and returned false when the device
+  // said no. A stereo-only USB microphone - which is how many of them enumerate
+  // in Windows shared mode - failed on the channel count alone, and the panel
+  // then armed, reported "armed", and transmitted SILENCE. The rig keyed into
+  // nothing. Zero frames ever reached the host.
+  //
+  // 48000/16/mono is the HOST's wire format, not a requirement anyone can put on
+  // the operator's microphone. Take what the device offers and convert.
+  QAudioFormat fmt;
+  fmt.setSampleRate(sample_rate_);
+  fmt.setChannelCount(1);
+  fmt.setSampleFormat(QAudioFormat::Int16);
+
   if (!chosen.isFormatSupported(fmt)) {
-    last_error_ = QString("input cannot capture %1 Hz/16-bit/mono").arg(sample_rate_);
-    return false;
+    const QAudioFormat native = chosen.preferredFormat();
+    QAudioFormat alt;
+    alt.setSampleRate(native.sampleRate() > 0 ? native.sampleRate() : sample_rate_);
+    alt.setChannelCount(native.channelCount() > 0 ? native.channelCount() : 2);
+    alt.setSampleFormat(QAudioFormat::Int16);
+
+    if (!chosen.isFormatSupported(alt)) {
+      // Last resort: the device's preferred format exactly as it reports it,
+      // including its sample format. Float is common on Windows.
+      alt = native;
+    }
+    if (!chosen.isFormatSupported(alt)) {
+      // ⚠️ Say what the device DOES support. "cannot capture 48000 Hz/16-bit/
+      // mono" sent us looking at the wrong end of the chain for an evening,
+      // because it named what we asked for and never what was on offer.
+      last_error_ = QString("%1 supports %2-%3 Hz, %4-%5 ch; cannot capture")
+                        .arg(chosen.description())
+                        .arg(chosen.minimumSampleRate())
+                        .arg(chosen.maximumSampleRate())
+                        .arg(chosen.minimumChannelCount())
+                        .arg(chosen.maximumChannelCount());
+      return false;
+    }
+    fmt = alt;
   }
+
+  src_format_ = fmt;
+  conv_ = PcmConverter(fmt.sampleRate(), fmt.channelCount(), sample_rate_);
 
   mic_ = std::make_unique<QAudioSource>(chosen, fmt);
   mic_dev_ = mic_->start();
   if (!mic_dev_) {
-    last_error_ = "could not start capture";
+    last_error_ = QString("could not start capture on %1").arg(chosen.description());
     return false;
   }
   connect(mic_dev_, &QIODevice::readyRead, this, &TxAudio::OnMicReady);
@@ -129,6 +165,10 @@ void TxAudio::Disarm() {
 void TxAudio::SetKeyed(bool keyed) {
   if (keyed == keyed_) return;
   keyed_ = keyed;
+  // Drop the resampler phase between overs, never during one: an over always
+  // starts from a known state, and nothing is carried across a gap in which the
+  // device kept running.
+  if (!keyed_) conv_.Reset();
   // Nothing else to do: OnMicReady drains the capture buffer either way and only
   // SENDS while keyed. Stopping capture on unkey and restarting it on key would
   // put device start-up latency at the front of every over.
@@ -143,7 +183,36 @@ void TxAudio::OnMicReady() {
   // means the first thing transmitted on the next over is several seconds of the
   // room from before the operator pressed PTT.
   if (!keyed_ || !armed_) return;
-  SendChunk(pcm);
+
+  // The device's native format, converted to the host's wire format here rather
+  // than refused at open time. Passthrough when they already agree.
+  if (conv_.passthrough() && src_format_.sampleFormat() == QAudioFormat::Int16) {
+    return SendChunk(pcm);
+  }
+
+  const QByteArray native = src_format_.sampleFormat() == QAudioFormat::Int16
+                                ? pcm
+                                : FloatToInt16(pcm);
+  const auto out = conv_.Convert(reinterpret_cast<const int16_t*>(native.constData()),
+                                 static_cast<std::size_t>(native.size() / 2));
+  if (out.empty()) return;
+  SendChunk(QByteArray(reinterpret_cast<const char*>(out.data()),
+                       static_cast<qsizetype>(out.size() * 2)));
+}
+
+// ⚠️ Windows commonly offers Float32 capture and nothing else. Scaling by 32767
+// and clipping - not 32768, and not wrapping: a wrapped sample is a crack on the
+// air, which is the same rule SendChunk applies to gain.
+QByteArray TxAudio::FloatToInt16(const QByteArray& in) const {
+  const int n = static_cast<int>(in.size() / static_cast<qsizetype>(sizeof(float)));
+  QByteArray out(n * 2, Qt::Uninitialized);
+  const auto* f = reinterpret_cast<const float*>(in.constData());
+  auto* s = reinterpret_cast<qint16*>(out.data());
+  for (int i = 0; i < n; ++i) {
+    const double v = static_cast<double>(f[i]) * 32767.0;
+    s[i] = static_cast<qint16>(v > 32767.0 ? 32767 : (v < -32768.0 ? -32768 : std::lround(v)));
+  }
+  return out;
 }
 
 void TxAudio::PushTestTone() {
@@ -202,6 +271,14 @@ void TxAudio::SendChunkRaw(const QByteArray& pcm) {
 QString TxAudio::StatusLine() const {
   if (!armed_) return last_error_.isEmpty() ? "tx: disarmed" : "tx: " + last_error_;
   if (test_tone_) return "tx: ARMED — TEST TONE, NOT A MICROPHONE";
-  if (!mic_dev_) return "tx: armed, no microphone";
-  return keyed_ ? "tx: transmitting" : "tx: armed";
+  if (!mic_dev_) return "tx: armed, NO MICROPHONE: " + last_error_;
+  // ⚠️ Name the negotiated format. When the mic is not running at the wire
+  // format, the operator should be able to see that from the panel rather than
+  // from a host-side counter.
+  const QString mic = conv_.passthrough()
+                          ? QString("mic 48k mono")
+                          : QString("mic %1k/%2ch→48k mono")
+                                .arg(conv_.src_rate() / 1000.0, 0, 'g', 3)
+                                .arg(conv_.src_channels());
+  return (keyed_ ? QString("tx: transmitting · ") : QString("tx: armed · ")) + mic;
 }

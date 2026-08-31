@@ -9,6 +9,9 @@
 
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QAudioDevice>
+#include <QAudioFormat>
+#include <QMediaDevices>
 #include <QCommandLineParser>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -257,11 +260,50 @@ int main(int argc, char** argv) {
                                 "Forget the saved window position and exit.");
     QCommandLineOption res_opt("check-resolutions",
                                "Walk the panel across screen sizes; PNGs into DIR.", "dir");
+    QCommandLineOption audio_opt("list-audio",
+                                 "List capture devices and what they can actually do, then exit.");
     for (auto* o : {&selftest, &host_opt, &port_opt, &user_opt, &pass_opt, &shot_opt, &tone_opt,
-                    &scale_opt, &shotsize_opt, &res_opt, &reset_opt}) {
+                    &scale_opt, &shotsize_opt, &res_opt, &reset_opt, &audio_opt}) {
         parser.addOption(*o);
     }
     parser.process(app);   // unknown options abort
+
+    // ⚠️ EXISTS SO WE STOP GUESSING AT A DEVICE'S CAPABILITIES.
+    //
+    // An evening went into a dead transmitter whose only symptom was "no
+    // microphone" in a status line that ran off the bottom of the window, while
+    // the host's counters showed zero frames had ever arrived. What was missing
+    // was not cleverness - it was one fact: what format that microphone will
+    // actually give us. Print it, on the operator's machine, in one command.
+    //
+    // Before the QML loads and before any window opens, so it works on a machine
+    // where the panel itself is the thing misbehaving.
+    if (parser.isSet(audio_opt)) {
+        const QAudioDevice def = QMediaDevices::defaultAudioInput();
+        std::cout << "capture devices (* = system default)\n";
+        const auto ins = QMediaDevices::audioInputs();
+        if (ins.isEmpty()) std::cout << "  NONE - the system is offering no capture device\n";
+        for (const QAudioDevice& d : ins) {
+            const QAudioFormat pf = d.preferredFormat();
+            std::cout << (d.id() == def.id() ? " * " : "   ")
+                      << d.description().toStdString() << "\n"
+                      << "      rates    " << d.minimumSampleRate() << "-" << d.maximumSampleRate()
+                      << "\n      channels " << d.minimumChannelCount() << "-"
+                      << d.maximumChannelCount()
+                      << "\n      prefers  " << pf.sampleRate() << " Hz, " << pf.channelCount()
+                      << " ch, format " << static_cast<int>(pf.sampleFormat()) << "\n";
+            // The exact question OpenMic asks. This is the line that decides
+            // whether the fast path is taken or the converter is needed.
+            QAudioFormat wire;
+            wire.setSampleRate(48000);
+            wire.setChannelCount(1);
+            wire.setSampleFormat(QAudioFormat::Int16);
+            std::cout << "      48k/16/mono directly: "
+                      << (d.isFormatSupported(wire) ? "yes" : "NO - converter will be used")
+                      << "\n";
+        }
+        return 0;
+    }
 
     Backend backend;
     // ⚠️ Before the QML loads, and it exits without opening a window: the whole

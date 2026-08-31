@@ -9,6 +9,7 @@
 // is 48000 because the codec's capture does 8000-48000 but its PLAYBACK only
 // does 32000-48000 - the asymmetry belongs to the device, not to a preference.
 
+#include <QAudioFormat>
 #include <QAudioSource>
 #include <QByteArray>
 #include <QIODevice>
@@ -16,6 +17,8 @@
 #include <QString>
 #include <QWebSocket>
 #include <memory>
+
+#include "pcm_convert.h"
 
 class TxAudio : public QObject {
   Q_OBJECT
@@ -70,11 +73,17 @@ class TxAudio : public QObject {
   void SendChunkRaw(const QByteArray& pcm);
   void PushTestTone();
   bool OpenMic(const QString& device_name);
+  QByteArray FloatToInt16(const QByteArray& in) const;
 
   QWebSocket socket_;
   std::unique_ptr<QAudioSource> mic_;
   QIODevice* mic_dev_ = nullptr;
   QString device_name_;
+
+  // What the microphone actually gave us, and the conversion to the wire
+  // format. Set at open time by negotiation, never assumed.
+  QAudioFormat src_format_;
+  PcmConverter conv_;
 
   bool armed_ = false;
   bool keyed_ = false;

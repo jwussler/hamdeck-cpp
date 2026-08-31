@@ -847,6 +847,62 @@ CW, a **10 second** carrier, then 100 W and the original mode back. `/api/tune/a
 
 ---
 
+## 8f. The transmitter keyed into silence, because the client refused the microphone
+
+⚠️ **The panel armed, said "armed", and sent NOTHING.** A live keyup produced `tx=true`, ALC
+6%, **PO 0%** and a playback substream still reading `state: PREPARED, hw_ptr: 0` — not one
+frame had ever been written to the codec. `/api/backend` settled it in one read:
+
+    tx_accepted: 0   tx_dropped: 0   tx_queue: 0
+
+Not accepted-and-dropped. **Zero arrivals, ever.** That exonerates the host, the ALSA sink and
+the rig in a single measurement, and puts the whole fault between the microphone and
+`sendBinaryMessage`.
+
+### The bug: OpenMic() demanded one format and gave up
+It asked for exactly 48000 Hz / 16-bit / **mono** and returned false on anything else. A USB
+microphone that enumerates as **stereo** — which is how many of them appear in Windows shared
+mode — failed on the channel count alone. 48000/16/mono is the **host's wire format**; it is not
+a requirement anyone can place on the operator's microphone.
+
+**It now negotiates**: exact format first (unchanged fast path), then the device's native rate
+and channel count, then its preferred format including Float. `PcmConverter` downmixes to mono
+and resamples to 48 k in the client, so the wire format never changes.
+
+⚠️ **Average the channels, never take the left one.** A stereo-enumerating mic commonly has the
+capsule on one channel and silence on the other; picking a channel is a coin flip between full
+audio and a dead transmitter.
+
+### Three things this failure got away with, and what now stops them
+- **The status line said `no microphone` and nothing else** — no reason, and it ran off the
+  bottom of the window. It now carries the reason, and names the negotiated format
+  (`tx: transmitting · mic 44.1k/2ch→48k mono`) so a converted path is visible rather than
+  inferred.
+- **The error named what we ASKED FOR, never what was on OFFER.** "cannot capture 48000 Hz/
+  16-bit/mono" sent an evening's debugging to the wrong end of the chain. It now prints the
+  device's actual supported ranges.
+- **Nobody could see a device's capabilities without a rebuild.** `--list-audio` prints every
+  capture device, its rate and channel ranges, its preferred format, and the direct answer to
+  the one question `OpenMic` asks. Before the QML loads, so it works when the panel is the
+  thing misbehaving.
+
+### Tests — `client/tests_pcm.cpp`, 17 cases
+⚠️ **Chunk continuity is tested by MEASURING THE SEAM, not by counting samples.** A resampler
+that reset its phase every chunk still produces about the right number of samples — the count
+is exactly the thing that looks fine while the audio buzzes at the chunk rate. The test
+resamples one second in 441-sample chunks and compares the largest sample-to-sample step
+against the continuous version: **346 both ways.**
+
+Writing it also found a real off-by-one: the first chunk had no predecessor, and inventing one
+by repeating the first sample made one second of 44.1 k resample to **48001** samples.
+
+⚠️ **Still unproven on hardware.** Every measurement above is the host's counters and a unit
+test. Nothing has confirmed which of the three `OpenMic` failures the fifine actually hit —
+`--list-audio` on the operator's machine answers that, and `tx_accepted` climbing off zero is
+what will prove the fix.
+
+---
+
 ## 9. Adding radios nobody here owns
 
 The simulator makes this tractable: look up the CAT set, write a profile, run the walker

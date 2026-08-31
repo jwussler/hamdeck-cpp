@@ -49,6 +49,10 @@ add_test(NAME place COMMAND test_place)
 # cases (HamDeck.Tests/FreqInputTests.cs). A port that gives different answers
 # to the same input is not a port, and the grouped "7.185.000" form the readout
 # displays is exactly what a fresh implementation gets wrong.
+qt_add_executable(test_pcm tests_pcm.cpp src/pcm_convert.cpp)
+target_link_libraries(test_pcm PRIVATE Qt6::Core)
+add_test(NAME pcm COMMAND test_pcm)
+
 qt_add_executable(test_freq tests_freq.cpp src/freq_input.cpp)
 target_include_directories(test_freq PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test_freq PRIVATE Qt6::Core)
@@ -71,6 +75,7 @@ qt_add_executable(hamdeck-qml
     src/api_client.cpp
     src/rx_audio.cpp
     src/tx_audio.cpp
+    src/pcm_convert.cpp
     src/ptt_hotkey.cpp
     resources.qrc
 )
