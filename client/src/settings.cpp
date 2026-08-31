@@ -1,4 +1,6 @@
 #include "settings.h"
+#include <QJsonObject>
+#include <QJsonDocument>
 
 #include <QSettings>
 #include <QStandardPaths>
@@ -51,4 +53,33 @@ void Settings::Save() const {
 
 QString Settings::BaseUrl() const {
   return QString("http://%1:%2").arg(host.trimmed()).arg(port);
+}
+
+QString Settings::ProfileJson() const {
+  QJsonObject o;
+  o["mic_gain"] = mic_gain;
+  o["volume"] = volume;
+  o["ptt_key"] = ptt_key;
+  o["ptt_hold"] = ptt_hold;
+  o["global_ptt_key"] = global_ptt_key;
+  o["step_hz"] = step_hz;
+  o["ui_scale_mode"] = ui_scale_mode;
+  return QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+void Settings::ApplyProfileJson(const QString& json) {
+  const auto doc = QJsonDocument::fromJson(json.toUtf8());
+  if (!doc.isObject()) return;
+  const QJsonObject o = doc.object();
+
+  // ⚠️ Each key only if PRESENT. A profile written by an older client is missing
+  // keys a newer one knows about, and treating absent as zero would hand the
+  // operator a mic gain of 0 - a dead transmitter - on their next login.
+  if (o.contains("mic_gain")) mic_gain = o["mic_gain"].toInt(mic_gain);
+  if (o.contains("volume")) volume = o["volume"].toInt(volume);
+  if (o.contains("ptt_key")) ptt_key = o["ptt_key"].toInt(ptt_key);
+  if (o.contains("ptt_hold")) ptt_hold = o["ptt_hold"].toBool(ptt_hold);
+  if (o.contains("global_ptt_key")) global_ptt_key = o["global_ptt_key"].toString(global_ptt_key);
+  if (o.contains("step_hz")) step_hz = o["step_hz"].toInt(step_hz);
+  if (o.contains("ui_scale_mode")) ui_scale_mode = o["ui_scale_mode"].toString(ui_scale_mode);
 }

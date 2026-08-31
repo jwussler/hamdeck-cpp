@@ -4,6 +4,7 @@
 // split. See WIP.md for the road map and CARRYOVER.md for the traps.
 
 #include <cstdlib>
+#include <filesystem>
 #include <csignal>
 #include <iostream>
 #include <memory>
@@ -294,6 +295,13 @@ int main(int argc, char** argv) {
   // no audio queued to wait for.
   if (playback) {
     deps.queued_audio_ms = [playback] { return playback->QueuedMs(); };
+  }
+  // Per-user settings live beside the config, so a host with a config file gets
+  // profiles and one running on defaults quietly does not - rather than picking
+  // a directory nobody chose and writing the operator's settings into it.
+  if (!config_path.empty()) {
+    deps.profile_dir =
+        std::filesystem::path(config_path).parent_path().string() + "/profiles";
   }
   deps.simulated = simulated;
   deps.allow_anonymous_status = config.allow_anonymous_status;

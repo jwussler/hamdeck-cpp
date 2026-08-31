@@ -1,4 +1,6 @@
 #include "api.h"
+#include <optional>
+#include <filesystem>
 #include <array>
 #include <future>
 
@@ -503,6 +505,123 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
     WriteJson(res, 200, std::format(R"({{"status":"ok","build":"{}","version":"{}"}})",
                                     id, HAMDECK_VERSION));
   });
+
+  // ── Per-user settings profile ──────────────────────────────────────────────
+  // One JSON file per user, so an operator's preferences follow them to any
+  // machine instead of living in one PC's registry. Mic gain is the reason this
+  // exists: it reverted to 100% on every restart, which pins the rig's ALC.
+  //
+  // ⚠️ THE BODY IS OPAQUE TO THE HOST. It stores and returns whatever the client
+  // sends. That means it must never be trusted as configuration here, and the
+  // client must never put a credential in it - it is handed back to anything
+  // that can log in as that user.
+  {
+    AuthService* prof_auth = deps.auth;
+    const std::string dir = deps.profile_dir;
+
+    // ⚠️ THE USERNAME BECOMES A FILENAME. Without this a username containing
+    // ".." or "/" would read and write anywhere the service user can reach. Only
+    // a conservative character set is allowed, and anything else is refused
+    // outright rather than sanitised into something surprising.
+    auto safe_name = [](const std::string& user) -> std::optional<std::string> {
+      if (user.empty() || user.size() > 64) return std::nullopt;
+      for (const char c : user) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
+        if (!ok) return std::nullopt;
+      }
+      if (user.front() == '.') return std::nullopt;   // no dotfiles, no ".."
+      return user;
+    };
+
+    auto who_for = [prof_auth, trusted](const HttpRequest& req) -> std::string {
+      const std::string token = ExtractToken(req);
+      const auto user = prof_auth ? prof_auth->Username(token) : std::nullopt;
+      if (user && !user->empty()) return *user;
+      // The control listener is loopback-only and already trusted for auth.
+      return trusted ? std::string("local") : std::string();
+    };
+
+    server.Get("/api/profile", [dir, who_for, safe_name](const HttpRequest& req,
+                                                         HttpResponse& res) {
+      if (dir.empty()) {
+        WriteJson(res, 200, R"({"status":"ok","stored":false,"profile":{},)"
+                            R"("message":"no profile directory configured"})");
+        return;
+      }
+      const auto name = safe_name(who_for(req));
+      if (!name) {
+        WriteJson(res, 403, R"({"status":"error","message":"no user"})");
+        return;
+      }
+      std::ifstream in(dir + "/" + *name + ".json");
+      if (!in) {
+        // ⚠️ Absent is not an error, and it is not an empty profile silently
+        // presented as a saved one. The client needs to know it has nothing
+        // stored so it keeps its local settings instead of wiping them.
+        WriteJson(res, 200, R"({"status":"ok","stored":false,"profile":{}})");
+        return;
+      }
+      std::string body((std::istreambuf_iterator<char>(in)),
+                       std::istreambuf_iterator<char>());
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","stored":true,"profile":{}}})",
+                            body.empty() ? "{}" : body));
+    });
+
+    server.Post("/api/profile", [dir, who_for, safe_name](const HttpRequest& req,
+                                                          HttpResponse& res) {
+      if (dir.empty()) {
+        WriteJson(res, 503, R"({"status":"error","message":"no profile directory"})");
+        return;
+      }
+      const auto name = safe_name(who_for(req));
+      if (!name) {
+        WriteJson(res, 403, R"({"status":"error","message":"no user"})");
+        return;
+      }
+      // ⚠️ A cap, because this writes to the station's disk on an authenticated
+      // request. 64 KB is far more than a settings blob and far less than a
+      // problem.
+      if (req.body.size() > 64 * 1024) {
+        WriteJson(res, 413, R"({"status":"error","message":"profile too large"})");
+        return;
+      }
+      if (req.body.empty() || req.body.front() != '{') {
+        WriteJson(res, 400, R"({"status":"error","message":"expected a JSON object"})");
+        return;
+      }
+      std::error_code ec;
+      std::filesystem::create_directories(dir, ec);
+
+      // ⚠️ Temp file then rename, so an interrupted write cannot leave a
+      // half-written profile that then fails to parse on the next login. The
+      // same rule the config writer and set_password.py follow.
+      const std::string final_path = dir + "/" + *name + ".json";
+      const std::string tmp_path = final_path + ".tmp";
+      {
+        std::ofstream out(tmp_path, std::ios::trunc);
+        if (!out) {
+          WriteJson(res, 500, R"({"status":"error","message":"cannot write profile"})");
+          return;
+        }
+        out << req.body;
+        out.flush();
+        if (!out) {
+          WriteJson(res, 500, R"({"status":"error","message":"write failed"})");
+          return;
+        }
+      }
+      std::filesystem::rename(tmp_path, final_path, ec);
+      if (ec) {
+        WriteJson(res, 500, R"({"status":"error","message":"could not replace profile"})");
+        return;
+      }
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","stored":true,"bytes":{}}})",
+                            req.body.size()));
+    });
+  }
 
   server.Get("/api/backend", [&deps](const HttpRequest&, HttpResponse& res) {
     TxAudioReceiver* tx = deps.tx_audio;

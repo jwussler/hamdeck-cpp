@@ -25,6 +25,26 @@ class Settings {
   void Load();
   void Save() const;
 
+  // ── The portable profile ───────────────────────────────────────────────────
+  // ⚠️ WHAT FOLLOWS THE OPERATOR, AND WHAT DOES NOT.
+  //
+  // Portable: the preferences that are about the PERSON - mic gain above all,
+  // because a gain that reverts pins the rig's ALC and puts a splattering signal
+  // on the air.
+  //
+  // Deliberately NOT portable, because they describe a MACHINE and carrying them
+  // would actively break a second PC:
+  //   host, port, username  - which station and who; set at the connect screen
+  //   rx/tx_device_name     - a sound device that exists on one computer only.
+  //                           Carrying this is how an operator ends up armed
+  //                           against a microphone that is not there.
+  //   window_geometry       - a position on a screen that may not exist
+  //
+  // ⚠️ NEVER a password or a token. The profile is handed back to anything that
+  // can log in as this user.
+  QString ProfileJson() const;
+  void ApplyProfileJson(const QString& json);
+
   QString host;              // empty until the operator says. No default, ever.
   int port = 5002;           // the dashboard port; the control port is loopback-only
   QString username;

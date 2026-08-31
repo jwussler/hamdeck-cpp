@@ -63,6 +63,15 @@ struct ApiDeps {
   Recorder* recorder = nullptr;
   SessionStats* stats = nullptr;
   std::function<bool(std::string&)> save_config;
+
+  // ⚠️ WHERE PER-USER SETTINGS LIVE, one JSON file per user. Empty disables the
+  // profile routes entirely rather than writing somewhere arbitrary.
+  //
+  // This is the operator's own preferences - mic gain above all, because a gain
+  // that reverts to 100% pins the rig's ALC and puts a splattering signal on the
+  // air. It is NOT a place for credentials, and never for a session token: it is
+  // read back to any client that logs in as that user.
+  std::string profile_dir;
   // True when the CAT backend is the simulator. Surfaced on /api/backend so a
   // test tool can PROVE it is not pointed at the station.
   bool simulated = false;
