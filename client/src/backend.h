@@ -66,6 +66,7 @@ class Backend : public QObject {
 
   // ── Audio / transmit ──
   Q_PROPERTY(QString audioStatus READ audioStatus NOTIFY audioChanged)
+  Q_PROPERTY(QString profileStatus READ profileStatus NOTIFY audioChanged)
   Q_PROPERTY(QString txStatus READ txStatus NOTIFY txChanged)
   Q_PROPERTY(bool armed READ armed NOTIFY txChanged)
   Q_PROPERTY(bool testTone READ testTone CONSTANT)
@@ -199,6 +200,7 @@ class Backend : public QObject {
   void setVolume(int v);
   int micGain() const { return tx_audio_.mic_gain(); }
   void setMicGain(int v);
+  void PushProfile();
   QStringList outputDevices() const;
   QStringList inputDevices() const;
   int outputIndex() const;
@@ -252,6 +254,7 @@ class Backend : public QObject {
   QString agc() const { return full_.value("agc").toString("—"); }
 
   QString audioStatus() const { return audio_status_; }
+  QString profileStatus() const { return profile_status_; }
   QString txStatus() const { return tx_audio_.StatusLine(); }
   bool armed() const { return tx_audio_.armed(); }
   bool testTone() const { return tx_audio_.using_test_tone(); }
@@ -316,6 +319,7 @@ class Backend : public QObject {
   QJsonObject status_, full_, meters_, record_;
   QVariantList ticks_;
   QString audio_status_ = "idle";
+  QString profile_status_ = "";
   QString connection_text_ = "not connected";
   int hotkey_index_ = 0;
   bool was_tx_ = false;

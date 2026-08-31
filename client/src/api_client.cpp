@@ -81,6 +81,19 @@ void ApiClient::Get(const QString& path, std::function<void(QJsonObject)> done) 
   });
 }
 
+void ApiClient::Post(const QString& path, const QByteArray& body,
+                     std::function<void(QJsonObject)> done) {
+  QNetworkRequest req{QUrl(base_url_ + path)};
+  req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+  auto* reply = net_.post(req, body);
+  connect(reply, &QNetworkReply::finished, this, [reply, done] {
+    reply->deleteLater();
+    if (!done) return;
+    const auto doc = QJsonDocument::fromJson(reply->readAll());
+    done(doc.isObject() ? doc.object() : QJsonObject{});
+  });
+}
+
 void ApiClient::StartPolling(int interval_ms) { poll_timer_.start(interval_ms); }
 void ApiClient::StopPolling() { poll_timer_.stop(); }
 

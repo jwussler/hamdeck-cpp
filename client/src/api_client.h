@@ -30,6 +30,11 @@ class ApiClient : public QObject {
   // on transport failure.
   void Get(const QString& path, std::function<void(QJsonObject)> done = nullptr);
 
+  // POST a JSON body. Used for the per-user settings profile; the session cookie
+  // rides along the same way it does on a GET.
+  void Post(const QString& path, const QByteArray& body,
+            std::function<void(QJsonObject)> done = nullptr);
+
   // Starts polling /api/status. The interval matches the host's own 200ms cache
   // refresh - polling faster only re-reads the same cached values.
   void StartPolling(int interval_ms = 250);

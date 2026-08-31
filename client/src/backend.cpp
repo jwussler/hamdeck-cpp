@@ -6,6 +6,7 @@
 
 #include <QEventLoop>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QAudioDevice>
 #include <QMediaDevices>
 #include <QGuiApplication>
@@ -234,6 +235,49 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
   // ⚠️ The host and username are remembered; the PASSWORD never is. Losing it
   // costs a login; storing it costs a credential on disk.
   settings_.Save();
+
+  // ── The operator's profile, from the host ─────────────────────────────────
+  // ⚠️ ONLY when the host actually HAS one. `stored:false` means nothing is
+  // saved for this user, and applying an empty profile then would wipe good
+  // local settings - handing the operator a mic gain of 100% on a machine where
+  // they had set it correctly. Absent means leave everything alone.
+  //
+  // ⚠️ Machine-specific settings are not in the profile at all (see
+  // settings.h): host, port, username, audio device names and window geometry
+  // stay local, because carrying a device name to another PC is how somebody
+  // ends up armed against a microphone that is not there.
+  api_.Get("/api/profile", [this](QJsonObject o) {
+    if (!o.value("stored").toBool()) {
+      // ⚠️ SEED IT from what this machine already has, rather than leaving the
+      // operator with nothing stored until they happen to touch a control. The
+      // first login from a machine that is already set up correctly is exactly
+      // when the good values are known.
+      profile_status_ = "no profile on the host - seeding from this machine";
+      PushProfile();
+      emit audioChanged();
+      return;
+    }
+    const QJsonObject prof = o.value("profile").toObject();
+    if (prof.isEmpty()) {
+      profile_status_ = "profile on the host was empty";
+      emit audioChanged();
+      return;
+    }
+    settings_.ApplyProfileJson(
+        QString::fromUtf8(QJsonDocument(prof).toJson(QJsonDocument::Compact)));
+    settings_.Save();
+
+    // ⚠️ APPLY it to the live objects, not just the struct. A profile that is
+    // loaded and displayed but never handed to the audio path leaves the panel
+    // showing a gain the transmitter is not using - which is worse than not
+    // loading it, because it looks right.
+    tx_audio_.SetMicGain(settings_.mic_gain);
+    rx_.SetVolume(settings_.volume);
+    profile_status_ = QString("profile loaded (mic gain %1%)").arg(settings_.mic_gain);
+    emit audioChanged();
+    emit hotkeyChanged();
+    emit uiScaleChanged();
+  });
 
   // The meter scale comes from the HOST, so the face follows the rig. Without
   // it the meter draws unlabelled ticks rather than inventing a calibration.
@@ -501,7 +545,24 @@ void Backend::setMicGain(int v) {
   // long as the process did.
   settings_.mic_gain = tx_audio_.mic_gain();
   settings_.Save();
+  PushProfile();
   emit audioChanged();
+}
+
+// ⚠️ Best effort, and deliberately quiet. The profile is a convenience; a host
+// that will not store it must never stop the operator using the radio, and a
+// failure here is not worth a dialog in front of somebody mid-over. It is
+// reported in the status line and nowhere else.
+void Backend::PushProfile() {
+  if (!session_active_) return;
+  api_.Post("/api/profile", settings_.ProfileJson().toUtf8(),
+            [this](QJsonObject o) {
+              profile_status_ = o.value("stored").toBool()
+                                    ? QString("profile saved to the host")
+                                    : QString("profile NOT saved: ") +
+                                          o.value("message").toString();
+              emit audioChanged();
+            });
 }
 
 QStringList Backend::outputDevices() const {
