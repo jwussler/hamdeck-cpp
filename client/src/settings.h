@@ -32,6 +32,13 @@ class Settings {
   QString tx_device_name;
   int volume = 80;
 
+  // ⚠️ MIC GAIN MUST PERSIST. It was applied to the audio path and never saved,
+  // so every restart silently reverted it to 100% - and 100% is what pins the
+  // rig's ALC and puts a splattering signal on the air. An operator who has set
+  // their gain correctly must not have to set it again, and must certainly not
+  // be returned to the wrong value without being told.
+  int mic_gain = 100;   // percent; 100 = unity
+
   // PTT hotkey, as a Qt::Key value plus a mode.
   //
   // ⚠️ Defaults to Pause/Break, NOT F13. F13 is the better key in theory - no

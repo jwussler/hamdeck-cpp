@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(hamdeck-client VERSION 0.1.13 LANGUAGES CXX)
+project(hamdeck-client VERSION 0.1.14 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -53,6 +53,10 @@ qt_add_executable(test_knob tests_knob.cpp resources.qrc)
 target_link_libraries(test_knob PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 add_test(NAME knob COMMAND test_knob)
 set_tests_properties(knob PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
+qt_add_executable(test_settings tests_settings.cpp src/settings.cpp)
+target_link_libraries(test_settings PRIVATE Qt6::Core Qt6::Gui)
+add_test(NAME settings COMMAND test_settings)
 
 qt_add_executable(test_pcm tests_pcm.cpp src/pcm_convert.cpp)
 target_link_libraries(test_pcm PRIVATE Qt6::Core)

@@ -16,6 +16,10 @@
 
 Backend::Backend(QObject* parent) : QObject(parent) {
   settings_.Load();
+  // ⚠️ APPLY it, not just load it. A setting that is saved and read back but
+  // never handed to the thing it controls is the same as not saving it at all -
+  // the panel would show the operator's gain while the audio path ran at 100%.
+  tx_audio_.SetMicGain(settings_.mic_gain);
 
   connect(&api_, &ApiClient::StatusUpdated, this, [this](QJsonObject s) {
     status_ = s;
@@ -493,6 +497,10 @@ void Backend::setVolume(int v) {
 
 void Backend::setMicGain(int v) {
   tx_audio_.SetMicGain(v);
+  // ⚠️ SAVE IT. Applying without persisting meant the value survived exactly as
+  // long as the process did.
+  settings_.mic_gain = tx_audio_.mic_gain();
+  settings_.Save();
   emit audioChanged();
 }
 

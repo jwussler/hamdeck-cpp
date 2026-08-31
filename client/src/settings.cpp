@@ -18,6 +18,7 @@ void Settings::Load() {
   rx_device_name = s.value("rx_device_name", "").toString();
   tx_device_name = s.value("tx_device_name", "").toString();
   volume = s.value("volume", 80).toInt();
+  mic_gain = s.value("mic_gain", 100).toInt();
   ptt_key = s.value("ptt_key", static_cast<int>(Qt::Key_Pause)).toInt();
   ptt_hold = s.value("ptt_hold", true).toBool();
   ui_scale_mode = s.value("ui_scale_mode", "Auto").toString();
@@ -38,6 +39,7 @@ void Settings::Save() const {
   s.setValue("rx_device_name", rx_device_name);
   s.setValue("tx_device_name", tx_device_name);
   s.setValue("volume", volume);
+  s.setValue("mic_gain", mic_gain);
   s.setValue("ptt_key", ptt_key);
   s.setValue("ptt_hold", ptt_hold);
   s.setValue("ui_scale_mode", ui_scale_mode);
