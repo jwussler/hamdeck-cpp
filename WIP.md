@@ -961,6 +961,54 @@ exercised here. Which of the three `OpenMic` failures the fifine hits is answere
 
 ---
 
+## 8g. ON THE AIR — 08/31/2026 03:23, and the three bugs between here and there
+
+First voice through the C++ host:
+
+| time | tx | tx_peak | ALC | PWR |
+|---|---|---|---|---|
+| 03:23:51 | true | 15245 | 6% | 0% |
+| 03:23:52 | true | 25576 | **100%** | 5% |
+| 03:23:53 | true | 26218 | **100%** | **33%** |
+| 03:23:54 | true | 26819 | 98% | **69%** |
+
+### What actually stood in the way
+1. **`OpenMic()` refused the microphone** instead of negotiating (§8f).
+2. **A muted microphone, invisible to every counter we had.** Frames arrived, the queue
+   behaved, `hw_ptr` advanced at 48 kHz, zero drops — all of it exactly as it reads when the
+   audio is real. ⚠️ **`tx_peak` exists because of this.** Counting frames never proves there
+   is SOUND in them.
+3. **`/api/remote-tx/status` invented all three fields**, reporting the rig's TX flag as
+   `mod_source_rear` behind a comment claiming it read through. It said the radio was on MIC
+   when it was already on REAR/USB — so a correct write was reported as a failed one, and the
+   hunt went to the wrong end of the chain. ⚠️ **A confident wrong answer is worse than no
+   answer: it gets believed.**
+
+⚠️ **The C# walk could not have caught #3.** `AUDIT-CSHARP.md` compared route INVENTORIES —
+the route existed, so it was ticked — and the fabricating status route agreed with itself.
+**Comparing route lists is not comparing behaviour.** The test that would have caught it is:
+call the route, then read the radio back through something that is not the route under test.
+
+Also fixed: `/api/remote-tx/on` fired three menu writes back to back where the reference host
+spaces them **50 ms** apart.
+
+### ⚠️ EVERY SLIDER IN THE PANEL WAS DEAD
+`Knob.qml` had `value: pressed ? value : knob.value` — a binding referring to the Slider's OWN
+value. The instant `pressed` went true QML saw a binding loop, broke the binding, and the
+control froze. Volume, mic gain, RF gain, RF power, CW speed: none of them draggable, and the
+operator could not turn down a microphone pinning ALC at 100%.
+
+⚠️ **`qml_selftest` and `--check-resolutions` both passed the whole time**, because the loop
+only forms on the FIRST PRESS. A control no test ever TOUCHES is a control nobody has tested —
+the same lesson the global PTT hotkey taught, learned again.
+
+### Open: ALC is pegged
+Audio arrives at peak ~26,800 of 32,767 (82% FS) and ALC sits at 98-100%. Mic gain is 100% and
+RPORT GAIN is 50. Wants trimming to ALC peaking 50-70%, not pinned — pegged ALC on SSB is
+splatter. Not yet done; the sliders had to work first.
+
+---
+
 ## 9. Adding radios nobody here owns
 
 The simulator makes this tractable: look up the CAT set, write a profile, run the walker

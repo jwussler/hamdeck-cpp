@@ -41,7 +41,26 @@ ColumnLayout {
         to: knob.to
         stepSize: 1
         // Follow the rig unless the operator has hold of it.
-        value: pressed ? value : knob.value
+        //
+        // ⚠️ NOT `value: pressed ? value : knob.value`. That referred to the
+        // Slider's OWN value, so the moment `pressed` went true QML saw a
+        // binding loop, broke the binding, and the control FROZE. Every slider
+        // in the panel - volume, mic gain, RF gain, RF power, CW speed - was
+        // undraggable, and the operator could not turn down a microphone that
+        // was pinning ALC at 100%.
+        //
+        // ⚠️ The startup checks could not see it: the loop only forms on the
+        // first press, so qml_selftest and --check-resolutions both passed. A
+        // control that is never TOUCHED by a test is a control nobody has tested,
+        // which is the same lesson the global PTT hotkey taught.
+        //
+        // A Binding with `when` is the right shape: it follows knob.value while
+        // the operator is not holding the control, and stops asserting itself the
+        // moment they are - without ever referring to the property it drives.
+        Binding on value {
+            when: !slider.pressed
+            value: knob.value
+        }
         onMoved: knob.moved(Math.round(value))
 
         background: Rectangle {
