@@ -15,18 +15,42 @@ Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anythin
 > **The open work is in §10 and in `AUDIT-CSHARP.md`** — the reference app walked bit by bit,
 > with what is done, what is left, and what is deliberately not being done.
 >
-> **End of 08/30/2026: see `DAY-08-30-2026.md`** for the full day across all three
-> repos, including the .NET and brand work that is not recorded here.
+> **08/31/2026: the client puts a voice on the air.** §8f–§8h are the six bugs between "it
+> compiles" and "it transmits", and the gates that now catch each one. Read §8g first if you
+> read nothing else.
 
 | | |
 |---|---|
 | **Host** | **running the station.** The .NET server VM is shut down |
-| **Client** | QML panel: connects, live status, rig control, RX **and TX** audio, PTT hotkey, admin, **resolution-aware** (§8d) |
+| **Client** | QML panel: connect, live status, rig control, RX **and TX** audio, PTT hotkey, admin, resolution-aware (§8d) — **transmitting, gain set, ALC 52–72%** |
+| **Downloads** | **`github.com/jwussler/hamdeck-cpp/releases/latest`** — every tag publishes a Release with the installer attached |
+| **Client version** | 0.1.15 |
 | **Route coverage** | **140 of 141** exact routes + all **18** prefix families (DX cluster only, which 404s on the reference too) |
-| **Tests** | **11 host (ctest)**, all green — and now green under `RelWithDebInfo` too, which is what CI builds |
+| **Tests** | **11 host**, **7 client** (`hotkey`, `place`, `knob`, `pcm`, `freq`, `settings`, `qml_selftest`) |
 | **Parity** | 25/25 with 5 listed deliberate divergences |
-| **Verification** | 12/12 read-only, 50/50 driven routes read back from the rig, 46/46 smoke, 7/7 honest-absence, keypad and VFO-lock walked |
-| **Radio** | **attached and operating.** §4b records the six CAT bugs only hardware found |
+| **Radio** | attached and operating. §4b records the six CAT bugs only hardware found |
+
+### ⚠️ THE RIG MUST BE ON REAR/USB OR IT TRANSMITS NOTHING
+`SSB MOD SOURCE=REAR` + `REAR SELECT=USB`, which is what `/api/remote-tx/on` sets. On MIC the
+radio ignores the USB codec entirely: it keys, ALC sits at its ~6% idle floor, PWR stays 0, and
+every counter in the audio chain reads perfectly healthy. Hours went into that once.
+
+⚠️ **And it is a two-sided trap.** Left on REAR/USB, the operator's own hand mic at the radio
+does nothing. `/api/remote-tx/off` puts it back to MIC.
+
+### Safeguard: power returns to 100 W when a client disconnects
+Remote runs to 200 W; the operator then sits down at the radio and drives an amp with twice the
+power they expect. The host drops to `kLocalPowerCap` on the `/ws/tx` close — clean disconnect,
+crash and dropped link alike, and only when that connection actually held the transmitter.
+⚠️ **It lives next to the radio** for the same reason the transmit watchdog does.
+
+### Per-user settings live on the host
+`GET`/`POST /api/profile`, one JSON file per user beside the config. Mic gain, volume, PTT
+key/hold, tuning step and UI scale follow the operator to any machine; the client seeds the host
+on first login and pushes on change. ⚠️ Host, port, username, **audio device names** and window
+geometry are deliberately NOT carried — a device name from another PC is how somebody ends up
+armed against a microphone that is not there. ⚠️ The username becomes a filename, so it is
+checked against a strict character set and refused otherwise.
 
 ### Deploying — use `tools/deploy.sh`, not `sync.sh`
 ⚠️ `sync.sh` builds on the VM and **installs nothing**. On 08/30 the service ran a binary
@@ -1087,12 +1111,28 @@ being found one at a time, in use, by the operator — the hotkey that never key
 that never transmitted, direct entry that was never ported. Each cost a rebuild and a reinstall.
 
 ### Getting going
-1. Read §1 and §2.
-2. `HAMDECK_BUILD_HOST=deck ./sync.sh`, then `ctest` in `build/` — **11 tests**.
-   Client: `cmake -S client -B client/build -G Ninja`, then `ctest` — **4 tests**
-   (hotkey, place, freq, qml_selftest).
-3. Deploy with `tools/deploy.sh`, **never** `sync.sh` — it installs nothing and the service
-   will keep running an older binary while you "verify" against it.
+1. Read §1 and §2, then §8f–§8h.
+2. `HAMDECK_BUILD_HOST=deck ./sync.sh`, then `ctest` in `build/` — **11 host tests**.
+   Client: `cmake -S client -B client/build -G Ninja`, then `ctest` — **7 tests**.
+3. Deploy the host with `tools/deploy.sh`, **never** `sync.sh` — it installs nothing and the
+   service will keep running an older binary while you "verify" against it.
+4. Ship the client by pushing a tag. CI builds it and **publishes a GitHub Release with the
+   installer attached**; `releases/latest` is the permanent link.
+
+### ⚠️ THE GATES — run these, do not re-reason about the bugs they cover
+Each one is proven to FAIL when its bug is put back. That was checked, not assumed.
+
+| gate | catches |
+|---|---|
+| `tools/tx_path_test.sh` | the host's audio path carrying silence, wrong rate, or nothing |
+| `tx_peak` on `/api/backend` | a muted or dead microphone that every other counter reports as healthy |
+| `client/tests_knob.cpp` | a panel control that cannot be pressed |
+| `tools/check_exe_icon.py` | the icon resource silently not compiled into the exe |
+| `client/tests_settings.cpp` | settings not persisting, and machine-specific keys leaking into the portable profile |
+| `--selftest` icon checks | the window icon unwired |
+
+⚠️ **Counting is not checking.** Frames accepted, `hw_ptr` advancing and zero drops all read
+exactly the same whether the audio is a voice or digital silence. That cost a night.
 
 ### Open, in the order they are worth doing
 
