@@ -9,12 +9,19 @@
 // refused, a rate mismatch is resampled, and the resampler carries its phase
 // across chunk boundaries instead of restarting every 20 ms.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
 #include "src/pcm_convert.h"
+
+// ⚠️ NOT M_PI. MSVC does not define it without _USE_MATH_DEFINES, and unlike the
+// app sources this file includes no Qt header that supplies it - which broke the
+// Windows release build while every Linux build stayed green.
+static constexpr double kPi = 3.14159265358979323846;
 
 static int failures = 0;
 
@@ -72,7 +79,7 @@ int main() {
         Check("44.1k mono is not passthrough", !c.passthrough());
         std::vector<int16_t> in(4410);
         for (size_t i = 0; i < in.size(); ++i) {
-            in[i] = static_cast<int16_t>(8000.0 * std::sin(2.0 * M_PI * 700.0 * (double)i / 44100.0));
+            in[i] = static_cast<int16_t>(8000.0 * std::sin(2.0 * kPi * 700.0 * (double)i / 44100.0));
         }
         const auto out = c.Convert(in.data(), in.size());
         // 100 ms in should be ~100 ms out: 4800 samples, within a sample or two.
@@ -81,8 +88,8 @@ int main() {
               "got " + std::to_string(out.size()));
         // Not silence, and not clipped: a resampler that returns zeros would
         // pass a size check and transmit nothing.
-        int16_t peak = 0;
-        for (int16_t s : out) peak = std::max<int16_t>(peak, std::abs(s));
+        int peak = 0;
+        for (int16_t s : out) peak = std::max(peak, std::abs(static_cast<int>(s)));
         Check("resampled audio is not silence", peak > 7000 && peak <= 8100,
               "peak " + std::to_string(peak));
     }
@@ -99,7 +106,7 @@ int main() {
         PcmConverter chunked(44100, 1, 48000);
         std::vector<int16_t> in(44100);
         for (size_t i = 0; i < in.size(); ++i) {
-            in[i] = static_cast<int16_t>(6000.0 * std::sin(2.0 * M_PI * 440.0 * (double)i / 44100.0));
+            in[i] = static_cast<int16_t>(6000.0 * std::sin(2.0 * kPi * 440.0 * (double)i / 44100.0));
         }
         const auto a = whole.Convert(in.data(), in.size());
         Check("one second resamples to ~48000 samples",

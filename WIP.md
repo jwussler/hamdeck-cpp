@@ -896,10 +896,42 @@ against the continuous version: **346 both ways.**
 Writing it also found a real off-by-one: the first chunk had no predecessor, and inventing one
 by repeating the first sample made one second of 44.1 k resample to **48001** samples.
 
-⚠️ **Still unproven on hardware.** Every measurement above is the host's counters and a unit
-test. Nothing has confirmed which of the three `OpenMic` failures the fifine actually hit —
-`--list-audio` on the operator's machine answers that, and `tx_accepted` climbing off zero is
-what will prove the fix.
+### The host's transmit path had NEVER RUN — now measured, `tools/tx_path_test.sh`
+⚠️ Because the client never sent a frame, `accept → queue → pump → codec` had **never executed
+once** on real hardware. It was assumed working; it was untested code that compiled.
+
+It is now proven, with `snd-aloop` standing in for the codec so what the host writes can be
+recorded and measured rather than counted:
+
+| | |
+|---|---|
+| audio recovered | 3.10 s for 3.00 s sent |
+| peak | **8000** — exactly what was sent; no clipping, no attenuation |
+| rms | 5565 against 5657 for a pure sine (98.4%) |
+| 700 Hz vs neighbours | **326:1** |
+
+⚠️ **Counting arrivals is not proof.** A sink writing silence, or writing at the wrong rate,
+gives a perfectly healthy `tx_accepted`. The script records the audio and measures it, and it
+FAILS on a silent recording, a wrong peak, or a tone that is not cleanly dominant.
+
+The script is simulated-rig-only and refuses to run against a real radio; `ws_tx_send.py`
+refuses unless `/api/backend` says `simulated:true`.
+
+### ⚠️ Two findings from building that rig
+- **`keyed` is NOT an accept gate.** `TxAudioReceiver::Accept` takes the rig's tx state but uses
+  it only to decide whether the queue may be **trimmed** when full — audio is queued and pumped
+  to the codec whatever the rig is doing. The client is the only thing that stops audio flowing
+  while unkeyed. Harmless with VOX off; **with VOX on, a client that sent while unkeyed would
+  key the transmitter.** Not changed — it is a deliberate-looking design and the call is Joe's.
+- **Stray test hosts on the station box**, one up 4h23m, squatting on 5011. Simulated with null
+  sinks so the radio was never at risk, but they are debris. Cleared. `tx_path_test.sh` traps
+  its own exit so it cannot add more.
+
+⚠️ **Still unproven: Windows microphone capture.** Qt's Linux audio enumeration is hard-wired to
+PulseAudio in this build, and installing an audio server on the station box is not acceptable —
+PulseAudio grabs ALSA cards and that box owns the codec. So the client's capture side cannot be
+exercised here. Which of the three `OpenMic` failures the fifine hits is answered by
+`--list-audio` and by the panel's own mic line.
 
 ---
 
