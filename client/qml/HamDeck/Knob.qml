@@ -40,23 +40,31 @@ ColumnLayout {
         from: knob.from
         to: knob.to
         stepSize: 1
+        // ⚠️ THE SLIDER MUST HAVE A HEIGHT OR IT CANNOT BE TOUCHED.
+        //
+        // Neither delegate below declared an implicit size, so the control's
+        // implicitHeight was 0; in a ColumnLayout with only Layout.fillWidth it
+        // got height 0 and swallowed no mouse events ANYWHERE. The background
+        // draws at an explicit height, so a full-looking slider rendered that
+        // could not be grabbed - volume, mic gain, RF gain, RF power, CW speed,
+        // all dead, including the one that turns down a microphone pinning ALC
+        // at 100%.
+        //
+        // ⚠️ EVERY EXISTING CHECK PASSED. qml_selftest loads the QML and
+        // --check-resolutions measures geometry; neither ever PRESSES anything,
+        // and a zero-height item still lays out and paints. tests_knob.cpp drags
+        // it with real mouse events, which is the only thing that would have
+        // caught this - the same lesson the global PTT hotkey taught.
+        implicitHeight: Theme.u(16)
+        implicitWidth: Theme.u(120)
+
         // Follow the rig unless the operator has hold of it.
         //
-        // ⚠️ NOT `value: pressed ? value : knob.value`. That referred to the
-        // Slider's OWN value, so the moment `pressed` went true QML saw a
-        // binding loop, broke the binding, and the control FROZE. Every slider
-        // in the panel - volume, mic gain, RF gain, RF power, CW speed - was
-        // undraggable, and the operator could not turn down a microphone that
-        // was pinning ALC at 100%.
-        //
-        // ⚠️ The startup checks could not see it: the loop only forms on the
-        // first press, so qml_selftest and --check-resolutions both passed. A
-        // control that is never TOUCHED by a test is a control nobody has tested,
-        // which is the same lesson the global PTT hotkey taught.
-        //
-        // A Binding with `when` is the right shape: it follows knob.value while
-        // the operator is not holding the control, and stops asserting itself the
-        // moment they are - without ever referring to the property it drives.
+        // Separately wrong before, though NOT the reason the sliders were dead:
+        // `value: pressed ? value : knob.value` referred to the Slider's own
+        // value, which is a binding loop the first time pressed goes true. A
+        // Binding with `when` expresses the intent without referring to the
+        // property it drives.
         Binding on value {
             when: !slider.pressed
             value: knob.value
@@ -64,6 +72,8 @@ ColumnLayout {
         onMoved: knob.moved(Math.round(value))
 
         background: Rectangle {
+            implicitWidth: Theme.u(120)
+            implicitHeight: Theme.u(14)
             x: slider.leftPadding
             y: slider.topPadding + slider.availableHeight / 2 - height / 2
             width: slider.availableWidth
@@ -80,6 +90,8 @@ ColumnLayout {
             }
         }
         handle: Rectangle {
+            implicitWidth: Theme.u(14)
+            implicitHeight: Theme.u(14)
             x: slider.leftPadding + slider.visualPosition * (slider.availableWidth - width)
             y: slider.topPadding + slider.availableHeight / 2 - height / 2
             // ⚠️ The grab handle scales with everything else. A 14 px handle

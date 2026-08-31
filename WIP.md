@@ -992,15 +992,26 @@ call the route, then read the radio back through something that is not the route
 Also fixed: `/api/remote-tx/on` fired three menu writes back to back where the reference host
 spaces them **50 ms** apart.
 
-### ⚠️ EVERY SLIDER IN THE PANEL WAS DEAD
-`Knob.qml` had `value: pressed ? value : knob.value` — a binding referring to the Slider's OWN
-value. The instant `pressed` went true QML saw a binding loop, broke the binding, and the
-control froze. Volume, mic gain, RF gain, RF power, CW speed: none of them draggable, and the
-operator could not turn down a microphone pinning ALC at 100%.
+### ⚠️ EVERY SLIDER IN THE PANEL WAS DEAD — AND THE FIRST FIX WAS WRONG
+**The cause: the Slider had ZERO HEIGHT.** Neither the `background` nor the `handle` delegate
+in `Knob.qml` declared an implicit size, so the control's `implicitHeight` was 0; in a
+ColumnLayout with only `Layout.fillWidth` it got height 0 and swallowed no mouse events
+anywhere. The background draws at an *explicit* height, so a perfectly normal-looking slider
+rendered that could not be grabbed. Measured: `slider geometry x=0 y=78 w=300 h=0`.
 
-⚠️ **`qml_selftest` and `--check-resolutions` both passed the whole time**, because the loop
-only forms on the FIRST PRESS. A control no test ever TOUCHES is a control nobody has tested —
-the same lesson the global PTT hotkey taught, learned again.
+⚠️ **A first fix was shipped (0.1.10) that did NOT fix it.** `value: pressed ? value :
+knob.value` is a genuine binding loop and was corrected — but it was never the reason the
+sliders were dead, and it went out as "the fix" on reasoning alone because nothing here could
+press a slider. **The operator found it still broken.** Do not ship a UI fix that no test
+touched.
+
+⚠️ **`qml_selftest` and `--check-resolutions` passed the whole time.** One loads the QML, the
+other measures geometry; a zero-height item lays out and paints perfectly well. Neither ever
+PRESSES anything.
+
+**`client/tests_knob.cpp` now drags it with real synthetic mouse events** and asserts `moved()`
+carries a changed value. Proven as a gate, not assumed: with the implicit sizes removed it
+FAILS (`h=0`, 0 emissions); restored it passes (`h=16`, `moved(173)` from 100).
 
 ### Open: ALC is pegged
 Audio arrives at peak ~26,800 of 32,767 (82% FS) and ALC sits at 98-100%. Mic gain is 100% and

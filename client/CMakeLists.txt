@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(hamdeck-client VERSION 0.1.10 LANGUAGES CXX)
+project(hamdeck-client VERSION 0.1.11 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,7 +15,7 @@ set(CMAKE_AUTORCC ON)
 # Ubuntu 24.04 ships Qt 6.4, which is NOT an LTS. For something maintained for
 # years, build releases against a Qt LTS (6.8) rather than whatever the distro
 # happens to carry. 6.4 is fine to develop against.
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network WebSockets Multimedia Quick QuickControls2 Qml)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network WebSockets Multimedia Quick QuickControls2 Qml Test)
 qt_standard_project_setup()
 
 # ⚠️ The Qt Widgets front end was REMOVED here, not kept as a fallback.
@@ -49,6 +49,11 @@ add_test(NAME place COMMAND test_place)
 # cases (HamDeck.Tests/FreqInputTests.cs). A port that gives different answers
 # to the same input is not a port, and the grouped "7.185.000" form the readout
 # displays is exactly what a fresh implementation gets wrong.
+qt_add_executable(test_knob tests_knob.cpp resources.qrc)
+target_link_libraries(test_knob PRIVATE Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
+add_test(NAME knob COMMAND test_knob)
+set_tests_properties(knob PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 qt_add_executable(test_pcm tests_pcm.cpp src/pcm_convert.cpp)
 target_link_libraries(test_pcm PRIVATE Qt6::Core)
 add_test(NAME pcm COMMAND test_pcm)
