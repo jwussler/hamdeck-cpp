@@ -1695,10 +1695,26 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
           // Only when the connection actually HELD the transmitter - a refused
           // second client must not reach in and change the first one's power.
           if (rigp) {
-            rigp->Enqueue("PC" + Pad(kLocalPowerCap, 3) + ";");
+            // ⚠️ AND HAND THE MICROPHONE BACK. Remote TX leaves the rig on
+            // SSB MOD SOURCE=REAR / REAR SELECT=USB, and on REAR the operator's
+            // own hand mic at the radio does NOTHING - it keys, ALC sits at its
+            // idle floor, and no power comes out. That is the exact symptom that
+            // cost a night to diagnose from the other direction. A remote
+            // session must not leave the station unusable to the person standing
+            // in front of it.
+            //
+            // ⚠️ 50 ms BETWEEN THE WRITES. Sent back to back the rig takes the
+            // first and ignores the rest, silently (§8g). One task so the
+            // sequence cannot be interleaved with anything else on the port.
+            rigp->EnqueueTask([](CatTransport& cat) {
+              cat.Send("PC" + Pad(kLocalPowerCap, 3) + ";");
+              std::this_thread::sleep_for(std::chrono::milliseconds(50));
+              cat.Send("EX0101110;");   // SSB MOD SOURCE -> MIC
+            });
             hdlog::Line(hdlog::kInfo, "TX",
-                        "client " + id + " disconnected - power set back to " +
-                            std::to_string(kLocalPowerCap) + " W");
+                        "client " + id + " disconnected - power back to " +
+                            std::to_string(kLocalPowerCap) +
+                            " W and MOD SOURCE back to MIC");
           }
         },
         [tx, rigp](std::shared_ptr<WsConnection>, const char* data, size_t len,
