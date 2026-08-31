@@ -43,6 +43,17 @@ bool TxAudioReceiver::Accept(const char* data, size_t bytes, bool keyed) {
   std::vector<int16_t> chunk(bytes / sizeof(int16_t));
   std::memcpy(chunk.data(), data, bytes);
 
+  // Peak of what actually arrived, so silence can be told from audio. Cheap: one
+  // pass over a 20 ms chunk, and it is the only reading here that distinguishes
+  // a working microphone from a perfectly healthy pipe full of nothing.
+  int peak = 0;
+  for (const int16_t v : chunk) {
+    const int a = v < 0 ? -static_cast<int>(v) : static_cast<int>(v);
+    if (a > peak) peak = a;
+  }
+  int prev = peak_.load();
+  while (peak > prev && !peak_.compare_exchange_weak(prev, peak)) {}
+
   std::lock_guard<std::mutex> lock(mu_);
   if (queue_.size() >= kMaxQueuedChunks) {
     // ⚠️ TRIM ONLY BETWEEN OVERS (CARRYOVER.md section 3). Dropping audio while

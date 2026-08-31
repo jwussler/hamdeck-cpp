@@ -76,6 +76,17 @@ class TxAudioReceiver {
 
   size_t Accepted() const { return accepted_.load(); }
   size_t Dropped() const { return dropped_.load(); }
+
+  // ⚠️ PEAK SAMPLE OF THE AUDIO ACTUALLY ARRIVING, 0-32767.
+  //
+  // Counting frames does not prove there is SOUND in them. A muted microphone,
+  // a capsule on the silent half of a stereo pair, or a wrong capture device all
+  // deliver perfectly formed silence at exactly the right rate - accepted climbs,
+  // the queue behaves, the device consumes it, and the transmitter sends nothing.
+  // Every counter in this class reads like success in that case. This is the one
+  // number that does not.
+  int PeakSinceReset() const { return peak_.load(); }
+  void ResetPeak() { peak_.store(0); }
   size_t QueueDepth() const;
   std::string Backend() const { return sink_->Describe(); }
   int SampleRate() const { return sink_->SampleRate(); }
@@ -134,6 +145,7 @@ class TxAudioReceiver {
   std::deque<std::vector<int16_t>> queue_;
   std::string holder_;
   std::atomic<size_t> accepted_{0}, dropped_{0};
+  std::atomic<int> peak_{0};   // loudest sample seen, 0-32767
 
   int  target_ms_ = kTargetStartMs;
   long last_xruns_ = 0;

@@ -1,4 +1,6 @@
 #include "api.h"
+#include <array>
+#include <future>
 
 #include <fstream>
 
@@ -508,13 +510,14 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
               std::format(R"({{"status":"ok","cat":"{}","simulated":{},)"
                           R"("rx_audio":"{}","tx_audio":"{}",)"
                           R"("tx_accepted":{},"tx_dropped":{},"tx_queue":{},)"
-                          R"("device_queued_ms":{}}})",
+                          R"("tx_peak":{},"device_queued_ms":{}}})",
                           deps.poller ? deps.poller->Backend() : "none",
                           JsonBool(deps.simulated),
                           deps.rx_audio ? deps.rx_audio->Backend() : "none",
                           tx ? tx->Backend() : "none",
                           tx ? tx->Accepted() : 0, tx ? tx->Dropped() : 0,
                           tx ? tx->QueueDepth() : 0,
+                          tx ? tx->PeakSinceReset() : 0,
                           deps.queued_audio_ms ? deps.queued_audio_ms() : -1));
   });
 
@@ -1095,10 +1098,17 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // ── Remote TX: menu items that route the mic to the USB codec ─────────────
   // EX010111 MOD SOURCE (0=MIC, 1=REAR), EX010112 REAR SELECT (0=DATA, 1=USB),
   // EX010113 RPORT GAIN. Enabling saves the old gain so disabling restores it.
+  // ⚠️ 50 ms BETWEEN THE MENU WRITES, copied from the reference host's
+  // EnableRemoteTx. Sent back to back the rig takes the first and ignores the
+  // rest, which is silent: the route still answers ok, the radio still keys, and
+  // it transmits NOTHING because the modulation source never moved off MIC.
+  // That cost an evening with a perfect audio chain and a dead transmitter.
   generated.push_back({"/api/remote-tx/on", [rig](bool) {
       if (rig) rig->EnqueueTask([](CatTransport& cat) {
         cat.Send("EX0101111;");   // MOD SOURCE -> REAR
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         cat.Send("EX0101121;");   // REAR SELECT -> USB
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
         cat.Send("EX010113050;"); // RPORT GAIN
       });
       return std::string(R"({"status":"ok","remote_tx":true,)"
@@ -1108,10 +1118,40 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       return std::string(R"({"status":"ok","remote_tx":false,)"
                          R"("message":"SSB MOD SOURCE=MIC"})"); }});
   generated.push_back({"/api/remote-tx/status", [rig](bool) {
-      // Read straight through: these are menu items the poller does not cache.
+      // ⚠️ THIS ROUTE USED TO INVENT ITS ANSWER. It reported the rig's TX flag as
+      // mod_source_rear and hardcoded the other two - a confident wrong answer,
+      // which is worse than no answer: it was believed, and it sent the search
+      // for a dead transmitter to the wrong end of the chain.
+      //
+      // It now asks the radio. EX010111 MOD SOURCE (0=MIC, 1=REAR), EX010112
+      // REAR SELECT (0=DATA, 1=USB), EX010113 RPORT GAIN (000-100); the reply is
+      // the command echoed with the value at offset 8, exactly as the reference
+      // host parses it. If the read fails, SAY SO - never fall back to a value.
+      if (!rig) return std::string(R"({"status":"error","message":"no radio"})");
+      auto result = std::make_shared<std::promise<std::array<std::optional<std::string>, 3>>>();
+      auto fut = result->get_future();
+      rig->EnqueueTask([result](CatTransport& cat) {
+        std::array<std::optional<std::string>, 3> r;
+        r[0] = cat.Exchange("EX010111;");
+        r[1] = cat.Exchange("EX010112;");
+        r[2] = cat.Exchange("EX010113;");
+        result->set_value(r);
+      });
+      if (fut.wait_for(std::chrono::seconds(3)) != std::future_status::ready) {
+        return std::string(R"({"status":"error","message":"radio did not answer"})");
+      }
+      const auto r = fut.get();
+      auto flag = [](const std::optional<std::string>& v) -> std::string {
+        if (!v || v->size() < 9) return "null";   // unknown, and says so
+        return (*v)[8] == '1' ? "true" : "false";
+      };
+      std::string gain = "null";
+      if (r[2] && r[2]->size() >= 11) {
+        try { gain = std::to_string(std::stoi(r[2]->substr(8, 3))); } catch (...) {}
+      }
       return std::format(R"({{"status":"ok","mod_source_rear":{},"rear_select_usb":{},)"
                          R"("rport_gain":{}}})",
-                         JsonBool(rig && rig->Snapshot().tx), "false", 50); }});
+                         flag(r[0]), flag(r[1]), gain); }});
 
   generated.push_back({"/api/ssb-out-level/get", [rig](bool) {
       (void)rig;
