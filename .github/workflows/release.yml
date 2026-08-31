@@ -86,6 +86,14 @@ jobs:
           $p = Start-Process -FilePath "client\build\Release\hamdeck-qml.exe" `
                -ArgumentList "--selftest" -NoNewWindow -PassThru -Wait
           if ($p.ExitCode -ne 0) { throw "selftest failed: $($p.ExitCode)" }
+      # ⚠️ A GREEN WINDOWS BUILD DOES NOT MEAN THE ICON IS IN THE BINARY.
+      # CMake ignores a .rc silently when the RC language is not enabled, so
+      # 0.1.12 shipped with the resource committed, referenced, and never once
+      # compiled. This looks inside the exe for the artwork itself.
+      - name: The icon is actually in the exe
+        run: python tools/check_exe_icon.py client\build\Release\hamdeck-qml.exe packaging\icons\hamdeck-256.png
+        shell: cmd
+
       - name: Stage the Qt runtime beside the binary
         shell: pwsh
         run: |

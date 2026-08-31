@@ -77,7 +77,7 @@ class TxAudioReceiver {
   size_t Accepted() const { return accepted_.load(); }
   size_t Dropped() const { return dropped_.load(); }
 
-  // ⚠️ PEAK SAMPLE OF THE AUDIO ACTUALLY ARRIVING, 0-32767.
+  // ⚠️ RECENT peak sample of the audio actually arriving, 0-32767.
   //
   // Counting frames does not prove there is SOUND in them. A muted microphone,
   // a capsule on the silent half of a stereo pair, or a wrong capture device all
@@ -85,7 +85,12 @@ class TxAudioReceiver {
   // the queue behaves, the device consumes it, and the transmitter sends nothing.
   // Every counter in this class reads like success in that case. This is the one
   // number that does not.
-  int PeakSinceReset() const { return peak_.load(); }
+  // ⚠️ IT MUST BE ABLE TO GO DOWN. The first version was a high-water mark that
+  // only ever rose, which is useless for the job it exists for: an operator
+  // turning mic gain DOWN to stop pinning ALC would watch a number that could
+  // not fall. It now decays over a short window, so it reads what is arriving
+  // NOW rather than the loudest thing that ever did.
+  int PeakSinceReset() const;
   void ResetPeak() { peak_.store(0); }
   size_t QueueDepth() const;
   std::string Backend() const { return sink_->Describe(); }
@@ -145,7 +150,9 @@ class TxAudioReceiver {
   std::deque<std::vector<int16_t>> queue_;
   std::string holder_;
   std::atomic<size_t> accepted_{0}, dropped_{0};
-  std::atomic<int> peak_{0};   // loudest sample seen, 0-32767
+  std::atomic<int> peak_{0};   // loudest sample in the current window, 0-32767
+  std::atomic<long long> peak_ms_{0};   // when that window started
+  static constexpr long long kPeakWindowMs = 1500;
 
   int  target_ms_ = kTargetStartMs;
   long last_xruns_ = 0;

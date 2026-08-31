@@ -51,8 +51,17 @@ bool TxAudioReceiver::Accept(const char* data, size_t bytes, bool keyed) {
     const int a = v < 0 ? -static_cast<int>(v) : static_cast<int>(v);
     if (a > peak) peak = a;
   }
-  int prev = peak_.load();
-  while (peak > prev && !peak_.compare_exchange_weak(prev, peak)) {}
+  const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  if (now_ms - peak_ms_.load() > kPeakWindowMs) {
+    // Window expired: start a new one at this chunk rather than carrying the old
+    // maximum forward, so the reading falls when the audio does.
+    peak_ms_.store(now_ms);
+    peak_.store(peak);
+  } else {
+    int prev = peak_.load();
+    while (peak > prev && !peak_.compare_exchange_weak(prev, peak)) {}
+  }
 
   std::lock_guard<std::mutex> lock(mu_);
   if (queue_.size() >= kMaxQueuedChunks) {
@@ -171,4 +180,12 @@ void TxAudioReceiver::PumpLoop() {
     Pump();
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
+}
+
+int TxAudioReceiver::PeakSinceReset() const {
+  // Nothing has arrived for a while: report silence, not the last loud thing.
+  const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  if (now_ms - peak_ms_.load() > kPeakWindowMs * 2) return 0;
+  return peak_.load();
 }

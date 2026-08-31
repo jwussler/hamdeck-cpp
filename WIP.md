@@ -1044,6 +1044,23 @@ Proven as a gate: with `setWindowIcon` removed the selftest emits four FAILs and
 `SELFTEST FAILED`; restored, it passes. **CI runs `--selftest` in every job, so a blank icon now
 blocks a release.** A missing PNG is caught even earlier — `rcc` fails the build outright.
 
+### ⚠️ 0.1.12 SHIPPED WITH THE .rc NEVER COMPILED — `enable_language(RC)`
+`project(hamdeck-client ... LANGUAGES CXX)` declares **CXX only**. Without the RC language
+enabled, CMake treats a `.rc` as a file it cannot compile and **silently ignores it**: no
+warning, build green, no icon in the binary. The `.rc` was committed, referenced from
+`target_sources`, and never compiled once. Confirmed by its absence from the Windows build log,
+which named every other source it compiled.
+
+⚠️ **The selftest could not catch this.** It checks the WINDOW icon, which comes from the qrc
+via `setWindowIcon` — a completely different mechanism from the exe resource that Explorer, the
+taskbar and shortcuts read. Two icon paths, and a check on one says nothing about the other.
+
+`tools/check_exe_icon.py` now looks INSIDE the built exe: the .ico's 256px entry is PNG data
+that the resource compiler copies into RT_ICON verbatim, so a 60-byte slice of
+`hamdeck-256.png` appears byte-for-byte in the binary if and only if the resource was really
+compiled in. Wired into the Windows release job before packaging. Verified both directions
+against a synthetic exe with and without the artwork.
+
 ---
 
 ## 9. Adding radios nobody here owns

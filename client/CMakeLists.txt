@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(hamdeck-client VERSION 0.1.12 LANGUAGES CXX)
+project(hamdeck-client VERSION 0.1.13 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -104,7 +104,13 @@ set_target_properties(hamdeck-qml PROPERTIES WIN32_EXECUTABLE TRUE MACOSX_BUNDLE
 # ⚠️ Embeds the .ico INTO the exe. Explorer, the taskbar and every shortcut read
 # the icon from the binary's own resource - the installer's SetupIconFile does
 # not give the installed app an icon, which is why it shipped blank.
+# ⚠️ enable_language(RC) IS LOAD-BEARING. project() above declares LANGUAGES CXX,
+# and without RC enabled CMake treats a .rc as a file it does not know how to
+# compile and SILENTLY IGNORES IT - no warning, build succeeds, no icon. 0.1.12
+# shipped exactly that: the .rc was committed, referenced here, and never
+# compiled once. A green Windows build proved nothing.
 if(WIN32)
+    enable_language(RC)
     target_sources(hamdeck-qml PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/hamdeck.rc)
 endif()
 
