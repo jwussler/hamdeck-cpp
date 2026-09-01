@@ -25,13 +25,20 @@ PrivilegesRequiredOverridesAllowed=dialog
 SetupIconFile=..\..\packaging\icons\hamdeck.ico
 ArchitecturesInstallIn64BitMode=x64compatible
 
-; ⚠️ THE UNINSTALLER IS GENERATED AT INSTALL TIME AND IS NOT COVERED BY SIGNING THE
-; INSTALLER. Inno writes unins000.exe onto the target machine from a stub, so the signature
-; applied to this setup.exe in CI never reaches it - and an unsigned executable appearing in
-; Program Files is exactly the shape the heuristic that flagged us is trained on.
-; SignedUninstaller signs that stub at compile time instead. It is a no-op unless a
-; SignTool is configured, so it is safe to leave on while signing is not yet wired.
-SignedUninstaller=yes
+; ⚠️ SignedUninstaller IS DELIBERATELY NOT SET, AND THE REASON IS MEASURED, NOT ASSUMED.
+;
+; It was added on the belief that it is "a no-op unless a SignTool is configured". That is
+; wrong. With no [Setup] SignTool defined, iscc writes the uninstaller stub and then STOPS
+; with "Signed uninstaller mode is enabled... please attach your digital signature to the
+; following executable file" and exit code 2. It breaks the build outright.
+;
+; Turning it on properly means defining a SignTool that invokes the Azure dlib, whose path
+; the signing action installs under a versioned directory in the runner's LOCALAPPDATA -
+; brittle to hard-code, and it buys only the uninstaller.
+;
+; Accepted gap, stated plainly: unins000.exe is unsigned. The Defender detection this
+; project actually hit was on the SETUP executable, which IS signed, and the uninstaller is
+; not what anybody downloads. Worth revisiting if an uninstaller detection ever appears.
 
 [Files]
 ; ⚠️ The whole onedir tree, not just the exe. A PyInstaller onedir build needs its
