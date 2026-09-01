@@ -95,21 +95,32 @@ def _explain(e: OSError) -> str:
     ⚠️ WSAEACCES IS THE ONE THAT MISLEADS. Windows words it "an attempt was made to
     access a socket in a way forbidden by its access permissions", which reads like a
     firewall or an antivirus problem and sends the operator to the wrong place entirely.
-    It almost never is. On Windows, Hyper-V, WSL and Docker Desktop reserve large blocks
-    of TCP ports, and NOTHING can bind inside them - the port is not in use, it is
-    spoken for. `netsh interface ipv4 show excludedportrange protocol=tcp` shows the
-    blocks, and reserving the port back is the fix.
+    It is neither.
 
-    That matters more here than usual: the port cannot simply be changed, because 44
-    Stream Deck buttons are pointed at 5001.
+    ⚠️ AND THE FIRST GUESS AT THE RIGHT ANSWER WAS ALSO WRONG, EXPENSIVELY. This message
+    used to blame a Hyper-V/WSL/Docker port reservation and tell the operator to run
+    `netsh int ipv4 add excludedportrange ... store=persistent`. Measured on the station
+    PC on 09/01/2026, the real holder was **the legacy C# HamDeck host**, still running
+    and holding `HTTP://+:5001/` through http.sys - and that "fix" would have created an
+    ADMINISTERED exclusion, after which nothing could bind the port ever again, this
+    pusher included, across reboots. It converts a transient conflict into a permanent
+    one. It is never suggested here again.
+
+    ⚠️ The trap that made the wrong answer look confirmed: an http.sys registration
+    ALSO appears in `show excludedportrange`. Only rows marked `*` are administered
+    reservations. `netstat` owner **PID 4** is http.sys, which is what a .NET
+    HttpListener binds through - the signature of the old C# host, not of a NAT range.
+
+    The port cannot simply be changed, either: 44 Stream Deck buttons point at 5001.
     """
     win = getattr(e, "winerror", None)
     if win == 10013:            # WSAEACCES
-        return ("Windows refuses this port (WSAEACCES). It is usually RESERVED by "
-                "Hyper-V / WSL / Docker, not in use. Check with:  netsh interface ipv4 "
-                "show excludedportrange protocol=tcp  - and reserve it back with:  "
-                "net stop winnat  /  netsh int ipv4 add excludedportrange protocol=tcp "
-                f"startport={PORT_HINT} numberofports=1 store=persistent  /  net start winnat")
+        return (f"port {PORT_HINT} is already held by another program (WSAEACCES). Usually "
+                "the OLD C# HamDeck host - close it, and remove HamDeck from shell:startup "
+                "or it returns at next logon. Find the holder:  netstat -ano | findstr "
+                f":{PORT_HINT}   (owner PID 4 = http.sys, i.e. a .NET host)  and  netsh http "
+                "show servicestate view=requestq. DO NOT add an excludedportrange for it - "
+                "that blocks this app from its own port permanently.")
     if win == 10048 or getattr(e, "errno", None) == 98:   # WSAEADDRINUSE / EADDRINUSE
         return "already in use - another program has it, very often an older copy of this one"
     return str(e.strerror or e)

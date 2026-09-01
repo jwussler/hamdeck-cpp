@@ -172,23 +172,30 @@ never surfaced there. `::1` is as local as `127.0.0.1`, so the security model is
 
 ### ⚠️ "An attempt was made to access a socket in a way forbidden by its access permissions"
 
-That is Winsock **WSAEACCES (10013)** on bind, and Windows' wording is actively
-misleading — it reads like a firewall or antivirus fault and it almost never is.
-**Hyper-V, WSL and Docker Desktop reserve large blocks of TCP ports**, and nothing can
-bind inside one. The port is not in use; it is spoken for.
+Winsock **WSAEACCES (10013)** on bind. Windows words it like a permissions failure; it is
+not one, and it is not the firewall or Defender either.
 
-Check, in an **Administrator** prompt:
+🔴 **The first answer written here was wrong, and its prescribed fix was harmful.** It
+blamed a Hyper-V/WSL/Docker port reservation and told the operator to run
+`netsh int ipv4 add excludedportrange ... store=persistent`. Measured on the station PC
+09/01/2026, the real holder was **the legacy C# HamDeck host still running on that PC**,
+holding `HTTP://+:5001/` through http.sys. That "fix" would have created an *administered*
+exclusion, after which **nothing could bind 5001 again — this app included — across
+reboots.** A transient conflict made permanent. Never run it.
 
-    netsh interface ipv4 show excludedportrange protocol=tcp
+⚠️ **The trap that made the wrong answer look confirmed:** an http.sys registration also
+appears in `show excludedportrange`. **Only rows marked `*` are administered reservations.**
+`5357` (WSDAPI) sits right beside it for the same reason.
 
-If 5001 falls inside a listed range, reserve it back:
+Find the actual holder:
 
-    net stop winnat
-    netsh int ipv4 add excludedportrange protocol=tcp startport=5001 numberofports=1 store=persistent
-    net start winnat
+    netstat -ano | findstr :5001          # owner PID 4 = http.sys, i.e. a .NET host
+    netsh http show servicestate view=requestq
 
-⚠️ **Do not just pick another port.** 44 Stream Deck buttons are pointed at 5001; moving
-the endpoint means editing all of them. Reserving the port is the smaller job.
+If it is the old C# host, stop it — **and remove `HamDeck` from `shell:startup`**, or it
+takes the port back at the next logon and the deck dies again with the same message.
+
+⚠️ **Do not solve this by choosing another port.** 44 Stream Deck buttons point at 5001.
 
 ⚠️ **Windows will show a firewall prompt the first time. Click Cancel.** Loopback traffic
 is not filtered by Windows Firewall at all, so denying it leaves every button working,

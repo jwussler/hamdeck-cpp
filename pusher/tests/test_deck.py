@@ -170,19 +170,45 @@ class BindFailureMessages(unittest.TestCase):
             e.errno = errno
         return _explain(e)
 
-    def test_wsaeacces_names_the_reservation_not_a_permission(self):
+    def test_wsaeacces_names_the_real_holder_not_a_permission(self):
         msg = self.explain(winerror=10013)
-        self.assertIn("RESERVED", msg)
-        self.assertIn("excludedportrange", msg)
+        self.assertIn("already held", msg)
         # ⚠️ It must NOT send them to the firewall, which is the natural misreading.
         self.assertNotIn("firewall", msg.lower())
+
+    def test_wsaeacces_never_prescribes_the_harmful_fix(self):
+        """🔴 THE ONE THAT MATTERS MOST IN THIS FILE.
+
+        This message used to say "add an excludedportrange for the port". Measured on
+        the station PC 09/01/2026, that would have created an ADMINISTERED exclusion and
+        blocked this app from its own port permanently, across reboots - turning a
+        transient conflict (the old C# host still running) into a forever one. Advice
+        that damages the machine is worse than no advice, so it is asserted absent
+        rather than left to review.
+        """
+        msg = self.explain(winerror=10013)
+        self.assertNotIn("add excludedportrange", msg)
+        self.assertNotIn("store=persistent", msg)
+        self.assertNotIn("winnat", msg)
+        self.assertIn("DO NOT add an excludedportrange", msg)
+
+    def test_wsaeacces_points_at_the_actual_holder(self):
+        msg = self.explain(winerror=10013)
+        self.assertIn("netstat", msg)
+        self.assertIn("PID 4", msg)          # http.sys, the .NET host signature
+        self.assertIn("shell:startup", msg)  # or it comes back at next logon
 
     def test_wsaeacces_advice_names_the_actual_port(self):
         from hamdeck_pusher.deck import DeckProxy
         p = DeckProxy(None, port=5001)
         p.start()          # succeeds here; the point is PORT_HINT being set
         p.stop()
-        self.assertIn("startport=5001", self.explain(winerror=10013))
+        # The port must appear in the DIAGNOSTIC command, not in a prescription. It used
+        # to be checked as "startport=5001", which only ever appeared inside the harmful
+        # excludedportrange advice - so this assertion was quietly enforcing that advice.
+        msg = self.explain(winerror=10013)
+        self.assertIn("port 5001 is already held", msg)
+        self.assertIn("findstr :5001", msg)
 
     def test_address_in_use_says_another_copy(self):
         self.assertIn("older copy", self.explain(winerror=10048))
