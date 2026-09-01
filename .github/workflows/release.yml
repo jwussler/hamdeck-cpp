@@ -583,45 +583,31 @@ jobs:
             --keychain "$KEYCHAIN"
           rm -f "$RUNNER_TEMP/asc.p8"
 
-      - name: Install vpk
-        run: dotnet tool install -g vpk
-
-      - name: Pack, sign and notarise
+      # ⚠️ NO VELOPACK ON macOS, DELIBERATELY.
+      #
+      # vpk builds its own .app from a directory of loose binaries, which fights the bundle
+      # CMake already produced - the staging copy kept reaching for
+      # client/build/hamdeck-qml, a path that does not exist when the output is an .app.
+      # Velopack's value here is auto-update, and the macOS update source is not wired at
+      # all yet, so the layer was costing correctness and buying nothing.
+      #
+      # This is plain Apple tooling end to end: macdeployqt, codesign, notarytool, stapler.
+      - name: Deploy Qt into the bundle and sign it
         if: ${{ env.APPLE_CERT_P12 != '' }}
         run: |
           set -euo pipefail
-          mkdir -p client/packaging/stage
-          cp client/build/hamdeck-qml client/packaging/stage/
-          macdeployqt client/packaging/stage/hamdeck-qml -qmldir=client/qml || true
-          VER="${GITHUB_REF_NAME#v}"
-          # ⚠️ --noInst: a signed .pkg needs a Developer ID INSTALLER certificate, which is
-          # a second certificate. Apple caps Developer ID certs at 5 per account, so this
-          # ships the signed .app rather than burning one for an installer nobody asked for.
-          vpk pack --packId HamDeckRemote --packVersion "$VER" \
-                   --packDir client/packaging/stage \
-                   --mainExe hamdeck-qml \
-                   --packTitle "HamDeck Remote" --packAuthors "WA0O" \
-                   --outputDir client/packaging/Releases \
-                   --noInst \
-                   --signAppIdentity "Developer ID Application: henry Wussler (V829EBE8HH)" \
-                   --signEntitlements client/packaging/entitlements.plist \
-                   --notaryProfile hamdeck-notary \
-                   --keychain "$KEYCHAIN"
-
-      # ⚠️ ASK THE OS, NOT THE BUILD LOG. A pack that quietly skipped signing and one that
-      # signed and notarised look the same in stdout. spctl is what Gatekeeper itself uses,
-      # and stapler proves the ticket is attached rather than merely issued - an app that
-      # is notarised but not stapled still warns when the machine is offline.
-      - name: Prove it is signed, notarised and stapled
-        if: ${{ env.APPLE_CERT_P12 != '' }}
-        run: |
-          set -euo pipefail
-          APP=$(find client/packaging/Releases -name "*.app" -maxdepth 3 | head -1)
-          [ -n "$APP" ] || { echo "vpk produced no .app"; exit 1; }
-          echo "== codesign =="   && codesign --verify --deep --strict --verbose=2 "$APP"
-          echo "== signer =="     && codesign -dvv "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Runtime"
-          echo "== gatekeeper ==" && spctl --assess --type execute --verbose=4 "$APP"
-          echo "== staple =="     && xcrun stapler validate "$APP"
+          APP=client/build/hamdeck-qml.app
+          [ -d "$APP" ] || { echo "no .app was built at $APP"; exit 1; }
+          macdeployqt "$APP" -qmldir=client/qml
+          # ⚠️ --deep signs the frameworks macdeployqt just copied in. Signing only the
+          # outer bundle leaves them unsigned, and notarisation rejects the whole thing
+          # for a nested binary rather than for the app itself.
+          codesign --force --deep --options runtime --timestamp \
+                   --entitlements client/packaging/entitlements.plist \
+                   --sign "Developer ID Application: henry Wussler (V829EBE8HH)" \
+                   --keychain "$KEYCHAIN" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "APP=$APP" >> "$GITHUB_ENV"
 
       # ⚠️ A DMG WITH AN APPLICATIONS ALIAS - the idiomatic macOS install, and safer than a
       # zip in practice: an unzipped .app tends to get run from Downloads, where quarantine
@@ -635,8 +621,6 @@ jobs:
         if: ${{ env.APPLE_CERT_P12 != '' }}
         run: |
           set -euo pipefail
-          APP=$(find client/packaging/Releases -name "*.app" -maxdepth 3 | head -1)
-          [ -n "$APP" ] || { echo "no .app to package"; exit 1; }
           STAGE="$RUNNER_TEMP/dmg"
           rm -rf "$STAGE" && mkdir -p "$STAGE"
           cp -R "$APP" "$STAGE/"
