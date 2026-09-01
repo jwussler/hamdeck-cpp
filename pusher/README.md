@@ -146,6 +146,13 @@ halves are asserted in `tests/test_deck.py`.
 
 It shares the pusher's session, so one login serves both and one re-login fixes both.
 
+⚠️ **Windows lets a second process bind a port that is already in use.** `http.server`
+sets `allow_reuse_address`, which on Linux only shortens TIME_WAIT and still refuses a
+live second listener — on Windows it means *share it*, so a second copy of this app would
+bind 5001 with **no error** and requests would go to whichever socket won. Two copies
+fighting over 44 buttons, silently. Off on Windows, on elsewhere. Caught by CI failing on
+Windows while passing on Linux, which is the only reason it was found.
+
 ### What actually works — measured against a simulator, never your rig
 
 74 button routes from the C# README's table, fired at a **simulated** host (the walker

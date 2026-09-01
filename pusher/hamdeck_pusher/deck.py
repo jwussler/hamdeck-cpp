@@ -27,6 +27,7 @@ It is off by default: `deck_port: 0`.
 from __future__ import annotations
 
 import ipaddress
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -84,6 +85,21 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
 
+class _Server(ThreadingHTTPServer):
+    # ⚠️ WINDOWS LETS A SECOND PROCESS BIND A PORT THAT IS ALREADY IN USE.
+    #
+    # http.server sets allow_reuse_address = 1, which on Linux only shortens TIME_WAIT
+    # and still refuses a live second listener. On Windows the same flag means "share
+    # it": a second copy of this app binds 5001 with NO ERROR, and Stream Deck requests
+    # then go to whichever socket happens to win. Two copies fighting over 44 buttons,
+    # silently - the exact case the "port already in use" message was written for, not
+    # working on the one platform that has the Stream Deck attached.
+    #
+    # Found by CI, which failed on Windows while passing on Linux. So: off on Windows,
+    # where it is a hazard; on elsewhere, where it only helps a quick restart.
+    allow_reuse_address = os.name != "nt"
+
+
 class DeckProxy:
     """Serves loopback GETs by replaying them against the host with a real session."""
 
@@ -110,7 +126,7 @@ class DeckProxy:
         try:
             # ⚠️ 127.0.0.1, never 0.0.0.0. This port has no authentication at all; the
             # bind address IS the security.
-            self._srv = ThreadingHTTPServer(("127.0.0.1", self.port), _Handler)
+            self._srv = _Server(("127.0.0.1", self.port), _Handler)
         except OSError as e:
             # ⚠️ Say WHICH port and WHY. "Failed to start" sends somebody to read code;
             # "port 5001 is already in use" sends them to close the other program - and
