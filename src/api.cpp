@@ -1495,8 +1495,18 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   AmpTuner* amp = deps.amp;
   AuthService* amp_auth = deps.auth;
   auto amp_tune = [amp, amp_auth, trusted](const HttpRequest& req, HttpResponse& res) {
+    // ⚠️ BOTH RIGHTS, and can_transmit is not redundant here. Amp tune is not in
+    // IsTransmitRoute - it predates that list and is gated separately - so without
+    // this an account with can_transmit=false could start a ten-second carrier the
+    // moment it was given the station right. Found on the live host, where the
+    // `pusher` account is exactly that shape: tx denied, and it is the account the
+    // Stream Deck's session belongs to.
+    //
+    // "Denied transmit" has to mean it everywhere, or it means nothing.
+    const std::string amp_token = ExtractToken(req);
     const bool at_station =
-        trusted || (amp_auth && amp_auth->IsStation(ExtractToken(req)));
+        trusted || (amp_auth && amp_auth->IsStation(amp_token) &&
+                    amp_auth->CanTransmit(amp_token));
     if (!at_station) {
       // ⚠️ 403, NOT 200. The reference host answered 200 with an error body, and a
       // Stream Deck button reads that as success: it lights up green and the amp
@@ -1749,7 +1759,9 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   server.GetPrefix("/api/tune/amp/", [trusted, amp_auth](const std::string&,
                                                          const HttpRequest& req,
                                                          HttpResponse& res) {
-    if (!(trusted || (amp_auth && amp_auth->IsStation(ExtractToken(req))))) {
+    const std::string amp_token = ExtractToken(req);
+    if (!(trusted || (amp_auth && amp_auth->IsStation(amp_token) &&
+                      amp_auth->CanTransmit(amp_token)))) {
       WriteJson(res, 403,
                 R"({"status":"error","station":false,)"
                 R"("message":"Amp tune needs the station right."})");

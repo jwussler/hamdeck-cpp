@@ -102,6 +102,17 @@ else
   bad "expected the amp route to answer, got HTTP $c body: $b"
 fi
 
+say "3b. station right is NOT enough on its own - transmit must also be allowed"
+# â ï¸ The live host has an account shaped exactly like this: the `pusher`
+# account the Stream Deck session belongs to has can_transmit=false. Amp tune is
+# gated separately from IsTransmitRoute, so without this check a station grant
+# would hand a ten-second carrier to an account explicitly denied transmit.
+curl -fsS "http://127.0.0.1:$DASH/api/admin/user/tx/disable/deckop?token=$BOSS" >/dev/null
+c=$(code "http://127.0.0.1:$DASH/api/tune/amp?token=$DECK")
+[ "$c" = "403" ] && ok "station right alone does not key the rig" \
+                 || bad "an account denied transmit could amp tune, got $c"
+curl -fsS "http://127.0.0.1:$DASH/api/admin/user/tx/enable/deckop?token=$BOSS" >/dev/null
+
 say "4. revoking reaches the LIVE session, not just the stored user"
 curl -fsS "http://127.0.0.1:$DASH/api/admin/user/station/disable/deckop?token=$BOSS" >/dev/null
 c=$(code "http://127.0.0.1:$DASH/api/tune/amp?token=$DECK")
