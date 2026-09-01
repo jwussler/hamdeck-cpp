@@ -88,9 +88,15 @@ jobs:
         run: |
           # ⚠️ Ask before building. If Qt is thin, the app link fails with an error about
           # missing symbols for x86_64, which reads as a code problem and is not one.
-          LIB=$(find "$QT_ROOT_DIR/lib" -name "QtCore" -type f | head -1)
-          echo "QtCore: ${LIB:-not found}"
-          [ -n "$LIB" ] && lipo -archs "$LIB" || true
+          #
+          # ⚠️ The framework BINARY, not whatever `find -name QtCore` hits first - the
+          # first match was QtCore.framework.dSYM/.../DWARF/QtCore, a debug file, and
+          # lipo on it says nothing about the library that gets linked. A check that
+          # reports confidently about the wrong file is worse than no check.
+          LIB="$QT_ROOT_DIR/lib/QtCore.framework/Versions/A/QtCore"
+          [ -f "$LIB" ] || LIB="$QT_ROOT_DIR/lib/QtCore.framework/QtCore"
+          echo "QtCore: $LIB"
+          [ -f "$LIB" ] && lipo -archs "$LIB" || echo "  (QtCore framework binary not found)"
       - name: Build universal
         run: |
           cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release \

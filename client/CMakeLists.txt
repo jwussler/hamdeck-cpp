@@ -131,22 +131,50 @@ set_tests_properties(qml_selftest PROPERTIES
 # ── Install and packaging ───────────────────────────────────────────────────
 include(GNUInstallDirs)
 
-install(TARGETS hamdeck-qml RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/hamdeck-client.desktop
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-foreach(SZ 16 24 32 48 64 128 256 512)
-    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/icons/hamdeck-${SZ}.png
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${SZ}x${SZ}/apps
-            RENAME hamdeck.png)
-endforeach()
+# ⚠️ macOS NEEDS A BUNDLE DESTINATION, AND WITHOUT IT CONFIGURE FAILS OUTRIGHT.
+#
+# qt_add_executable produces a MACOSX_BUNDLE on Apple, and install(TARGETS) refuses a
+# bundle target that is only given RUNTIME DESTINATION:
+#
+#   install TARGETS given no BUNDLE DESTINATION for MACOSX_BUNDLE executable target
+#
+# So the macOS build did not merely fail to package - it never CONFIGURED. That went
+# unnoticed for months because the macOS CI job pointed at a runner label GitHub had
+# retired, so it queued forever instead of failing, behind continue-on-error and no
+# upload. Two silent failures stacked on each other.
+if(APPLE)
+    install(TARGETS hamdeck-qml BUNDLE DESTINATION .)
+else()
+    install(TARGETS hamdeck-qml RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    # ⚠️ freedesktop files, so Linux only. A .desktop entry and hicolor icons mean
+    # nothing inside an .app bundle or on Windows.
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/hamdeck-client.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    foreach(SZ 16 24 32 48 64 128 256 512)
+        install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/icons/hamdeck-${SZ}.png
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${SZ}x${SZ}/apps
+                RENAME hamdeck.png)
+    endforeach()
+endif()
 
 # ⚠️ Qt is LGPLv3 here, so it is linked DYNAMICALLY and the licence texts ship
 # with the package. The bundled typefaces are SIL OFL, which also requires its
 # licence to travel with any binary that embeds them.
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/OFL.txt
-        DESTINATION ${CMAKE_INSTALL_DOCDIR} RENAME OFL-fonts.txt)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/README.md
-        DESTINATION ${CMAKE_INSTALL_DOCDIR} RENAME FONTS.md)
+# ⚠️ THE LICENCES MUST TRAVEL WITH THE BINARY ON EVERY PLATFORM, including macOS - SIL
+# OFL requires it of anything that embeds the fonts, and a .app that leaves them behind
+# is a licence problem rather than a packaging preference. Inside a bundle that means
+# Resources/, not a Unix docdir.
+if(APPLE)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/OFL.txt
+            DESTINATION hamdeck-qml.app/Contents/Resources RENAME OFL-fonts.txt)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/README.md
+            DESTINATION hamdeck-qml.app/Contents/Resources RENAME FONTS.md)
+else()
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/OFL.txt
+            DESTINATION ${CMAKE_INSTALL_DOCDIR} RENAME OFL-fonts.txt)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/README.md
+            DESTINATION ${CMAKE_INSTALL_DOCDIR} RENAME FONTS.md)
+endif()
 
 set(CPACK_PACKAGE_NAME "hamdeck-client")
 set(CPACK_PACKAGE_DESCRIPTION
