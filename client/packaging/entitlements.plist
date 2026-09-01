@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- ⚠️ Hardened runtime is REQUIRED for notarisation, and it breaks Qt by default.
+       Qt loads its platform plugin and QML modules as separate dylibs at runtime, which
+       the hardened runtime refuses unless library validation is relaxed. Without this the
+       app is notarised, launches, and dies with no window and no message - the same
+       silent failure the Windows platform-plugin check exists to catch. -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!-- The client opens WebSockets to the rig box, so it needs outbound network. -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- ⚠️ Microphone: the client transmits. Without this entitlement macOS denies access
+       and the operator gets a panel that says armed and sends silence - exactly the bug
+       that took a night to find on Windows. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>

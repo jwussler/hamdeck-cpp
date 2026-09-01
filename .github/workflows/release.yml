@@ -350,17 +350,23 @@ jobs:
         with: { name: hamdeck-pusher-windows-installer, path: pusher/packaging/Releases/* }
 
   macos:
-    # ⚠️ NOT VERIFIED BY ANYONE. Nobody in this project has a Mac to run the
-    # result on, and CARRYOVER.md section 8 is about shipping a binary nobody
-    # started. This job exists to catch PORTABILITY breaks in the source, not to
-    # produce an artifact anybody should install - so it does not block a
-    # release, and it uploads nothing.
+    # ⚠️ RUNS AFTER publish, NOT BEFORE IT, AND THAT IS DELIBERATE.
     #
-    # macos-13 rather than macos-latest: the arm64 runner's SDK has dropped the
-    # AGL framework that this Qt build still links against, which fails at the
-    # link step for environment reasons rather than anything in the code.
-    continue-on-error: true
+    # This runner pool queues for a long time. Gating the release on it would mean the
+    # Windows installer waits hours behind a Mac build, so the release is published first
+    # and this job attaches its artifact to the finished release when it gets there.
+    #
+    # It is also no longer `continue-on-error`. It used to be, because nobody had a Mac
+    # and an artifact nobody has run is worse than none. There is a Mac now, and a job
+    # allowed to fail quietly while producing something people install is the worse of the
+    # two risks.
+    needs: [publish]
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: macos-13
+    permissions:
+      contents: write
+    env:
+      APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
     steps:
       - uses: actions/checkout@v4
       - uses: jurplel/install-qt-action@v4
@@ -370,15 +376,112 @@ jobs:
           # and naming it as an add-on makes aqt fail to parse the package XML -
           # which kills the whole step before a single line is compiled.
           modules: 'qtwebsockets qtmultimedia'
+
       - name: Build
         run: |
           cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release
           cmake --build client/build
+
       - name: Run the binary
+        run: QT_QPA_PLATFORM=offscreen ./client/build/hamdeck-qml --selftest
+
+      # ⚠️ A TEMPORARY KEYCHAIN, not the login keychain. The runner is shared
+      # infrastructure; importing a signing identity into the default keychain leaves it
+      # for whatever runs next. This one is created, used, and destroyed with the job.
+      - name: Import the signing identity
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        env:
+          P12: ${{ secrets.APPLE_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
         run: |
-          QT_QPA_PLATFORM=offscreen ./client/build/hamdeck-qml --selftest
-      # Deliberately no upload: see the note on this job. An artifact nobody has
-      # run is worse than no artifact, because somebody will install it.
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          # Without this, codesign blocks on a GUI prompt that nothing can answer and the
+          # job hangs until it times out rather than failing.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "identity available:"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Store the notarisation credentials
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        env:
+          KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          echo "$KEY_P8" | base64 --decode > "$RUNNER_TEMP/asc.p8"
+          # ⚠️ The TEAM key. Apple's own docs: individual keys cannot use notaryTool.
+          xcrun notarytool store-credentials hamdeck-notary \
+            --key "$RUNNER_TEMP/asc.p8" --key-id "$KEY_ID" --issuer "$ISSUER" \
+            --keychain "$KEYCHAIN"
+          rm -f "$RUNNER_TEMP/asc.p8"
+
+      - name: Install vpk
+        run: dotnet tool install -g vpk
+
+      - name: Pack, sign and notarise
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p client/packaging/stage
+          cp client/build/hamdeck-qml client/packaging/stage/
+          macdeployqt client/packaging/stage/hamdeck-qml -qmldir=client/qml || true
+          VER="${GITHUB_REF_NAME#v}"
+          # ⚠️ --noInst: a signed .pkg needs a Developer ID INSTALLER certificate, which is
+          # a second certificate. Apple caps Developer ID certs at 5 per account, so this
+          # ships the signed .app rather than burning one for an installer nobody asked for.
+          vpk pack --packId HamDeckRemote --packVersion "$VER" \
+                   --packDir client/packaging/stage \
+                   --mainExe hamdeck-qml \
+                   --packTitle "HamDeck Remote" --packAuthors "WA0O" \
+                   --outputDir client/packaging/Releases \
+                   --noInst \
+                   --signAppIdentity "Developer ID Application: henry Wussler (V829EBE8HH)" \
+                   --signEntitlements client/packaging/entitlements.plist \
+                   --notaryProfile hamdeck-notary \
+                   --keychain "$KEYCHAIN"
+
+      # ⚠️ ASK THE OS, NOT THE BUILD LOG. A pack that quietly skipped signing and one that
+      # signed and notarised look the same in stdout. spctl is what Gatekeeper itself uses,
+      # and stapler proves the ticket is attached rather than merely issued - an app that
+      # is notarised but not stapled still warns when the machine is offline.
+      - name: Prove it is signed, notarised and stapled
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        run: |
+          set -euo pipefail
+          APP=$(find client/packaging/Releases -name "*.app" -maxdepth 3 | head -1)
+          [ -n "$APP" ] || { echo "vpk produced no .app"; exit 1; }
+          echo "== codesign =="   && codesign --verify --deep --strict --verbose=2 "$APP"
+          echo "== signer =="     && codesign -dvv "$APP" 2>&1 | grep -E "Authority|TeamIdentifier|Runtime"
+          echo "== gatekeeper ==" && spctl --assess --type execute --verbose=4 "$APP"
+          echo "== staple =="     && xcrun stapler validate "$APP"
+
+      - name: Attach it to the release
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd client/packaging/Releases
+          # The .app is a directory; ship it zipped, preserving symlinks and the signature.
+          APP=$(find . -name "*.app" -maxdepth 2 | head -1)
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "HamDeckRemote-macOS.zip"
+          gh release upload "${GITHUB_REF_NAME}" HamDeckRemote-macOS.zip --clobber
+
+      - name: Destroy the keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN" 2>/dev/null || true
 
   # ⚠️ WITHOUT THIS THERE IS NO PERMANENT DOWNLOAD. Actions artifacts expire in
   # 90 days and are reachable only by someone logged in who can find the right
