@@ -93,15 +93,49 @@ Under a crash-restart loop it would have stood down **forever**, silently, becau
 deferring and working look identical from Wavelog. Fixed at both ends: the host reports
 `same_user_clients` so a caller can subtract its own, and the pusher logs out on exit.
 
+## The window
+
+It answers **one** question: *is my log following my radio?* So it shows both readouts side
+by side — RADIO and IN THE LOG — with one line of plain English underneath. The log readout
+lights amber when it matches the radio and dims when it does not, so "the log is behind" is
+visible without reading a word.
+
+Three states that must never look alike, and do not:
+
+| on screen | means |
+|---|---|
+| **LOGGING** (green) | Wavelog is current |
+| **STANDING BY** (amber) | a remote client is operating; not publishing **on purpose** |
+| **NOT LOGGING** (red) | it tried and failed — with the server's own words |
+
+Brand tokens are taken verbatim from `~/hamdeck-site/brand/BRAND.md`. Tk only: no
+third-party GUI dependency, so the licence surface stays clean for code signing.
+
+## Installing on Windows
+
+The installer is built by CI and attached to the GitHub Release for each tag — the repo is
+private, so the release is too.
+
+    https://github.com/jwussler/hamdeck-cpp/releases/latest
+
+⚠️ **Unsigned.** SmartScreen will warn on first run. Saying so is the honest position.
+
+Settings live in `%APPDATA%\HamDeckPusher\settings.json` and the installer **never touches
+them**, so an update cannot overwrite the API key. "Start when I sign in" is an unchecked
+task, not a default — something that writes to a logbook on every boot is the operator's
+decision.
+
 ## Still to build
 
 - **The Stream Deck endpoint** (`deck_port`). Design is settled — a loopback-only listener
   that maps short button paths onto host routes using the session this already holds — but
   it is not written. `deck_port: 0` disables it, and that is the default because a no-auth
   endpoint must be opted into, never defaulted on.
-- Tray icon + settings GUI, PyInstaller bundle, Inno installer. The
-  `netlogger-wavelog-sync` build (`build.ps1`: tests → freeze → `--selftest` on the frozen
-  exe → installer) is the pattern to copy; `--selftest` exists here for exactly that step.
+- **A tray icon.** The window minimises to the taskbar today. A real tray icon needs
+  `pystray` (LGPL) or Win32 `Shell_NotifyIcon` via ctypes; the first dirties the licence
+  surface for SignPath, so it was not taken on a whim.
 - **Mode strings are passed through as the rig reports them.** Wavelog normalised `CW-R`
   to `CW` on its own during the live run. Worth checking the full set the FTDX-101 emits
   before trusting every one of them.
+- **Bandmap → QSY** (the C#'s HTTP :54321). Not built, and **ask first**: it is
+  unauthenticated remote control of the VFO, and the C# bound it to the whole LAN.
