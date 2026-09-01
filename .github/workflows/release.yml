@@ -148,6 +148,22 @@ jobs:
         run: python tools/check_exe_icon.py client\build\Release\hamdeck-qml.exe packaging\icons\hamdeck-256.png
         shell: cmd
 
+      # ⚠️ THE ARM64 KIT HAS NO DEPLOYMENT TOOLS. It is a CROSS-COMPILED kit, so
+      # windeployqt lives in the HOST (x64) Qt, not the target - which is why resolving it
+      # inside QT_ROOT_DIR found nothing. Qt's documented answer is a host installation
+      # alongside the target one.
+      #
+      # Installed to a separate directory so it cannot shadow the arm64 kit the build just
+      # used, and only on the arm64 leg - the x64 kit already has its own.
+      - uses: jurplel/install-qt-action@v4
+        if: ${{ matrix.arch == 'arm64' }}
+        with:
+          host: windows
+          arch: win64_msvc2022_64
+          version: '6.8.1'
+          dir: ${{ github.workspace }}/QtHost
+          set-env: false
+
       - name: Stage the Qt runtime beside the binary
         shell: pwsh
         run: |
@@ -162,9 +178,31 @@ jobs:
           # missing tool rather than a PATH that differs between kits. QT_ROOT_DIR is set
           # by install-qt-action for whichever kit was installed, so this is correct for
           # both legs rather than a special case for one.
+          # ⚠️ Print what the kit ACTUALLY contains before deciding it is missing something.
+          # The previous failure said "not found" and left the reason to inference; a
+          # listing turns the next surprise into a fact.
+          Write-Host "-- $env:QT_ROOT_DIR\bin --"
+          Get-ChildItem "$env:QT_ROOT_DIR\bin" -Filter "*deploy*" -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "   $($_.Name)" }
+
           $wdq = Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"
-          if (-not (Test-Path $wdq)) { throw "windeployqt not found at $wdq" }
-          & $wdq --qmldir client\qml --release packaging\deploy\hamdeck-qml.exe
+          if (-not (Test-Path $wdq)) {
+            # Cross-compiled kit: fall back to the host Qt installed above.
+            $hostWdq = Get-ChildItem "${{ github.workspace }}/QtHost" -Recurse -Filter windeployqt.exe -ErrorAction SilentlyContinue |
+                       Select-Object -First 1
+            if (-not $hostWdq) { throw "windeployqt found in neither the target kit ($wdq) nor the host install" }
+            $wdq = $hostWdq.FullName
+            Write-Host "using host windeployqt: $wdq"
+          }
+          # ⚠️ --qtpaths points the HOST tool at the TARGET kit. Without it the host tool
+          # deploys x64 Qt DLLs beside an arm64 exe: it succeeds, and the app fails to
+          # start on the machine it was built for.
+          $qtpaths = Join-Path $env:QT_ROOT_DIR "bin\qtpaths.exe"
+          if (Test-Path $qtpaths) {
+            & $wdq --qtpaths $qtpaths --qmldir client\qml --release packaging\deploy\hamdeck-qml.exe
+          } else {
+            & $wdq --qmldir client\qml --release packaging\deploy\hamdeck-qml.exe
+          }
       - name: Run it again from the staged directory
         shell: pwsh
         run: |
