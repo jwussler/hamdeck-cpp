@@ -138,11 +138,19 @@ jobs:
         run: python -m hamdeck_pusher --selftest
       - name: Freeze
         working-directory: pusher
+        # ⚠️ THE ICON PATH IS ABSOLUTE ON PURPOSE. PyInstaller resolves --icon relative to
+        # --specpath, NOT to the working directory, so a sensible-looking
+        # `..\packaging\icons\hamdeck.ico` became `pusher\packaging\..\packaging\...`
+        # and the build died with "Icon input file not found".
+        #
+        # ⚠️ And a Linux freeze CANNOT catch this: PyInstaller never opens the .ico when
+        # the output is an ELF binary, so the dry run passed with the wrong path. A local
+        # freeze proves the bundle is not empty. It does not prove the packaging.
         run: |
           pip install pyinstaller
           pyinstaller --noconfirm --clean --onedir --windowed ^
             --name hamdeck-pusher ^
-            --icon ..\packaging\icons\hamdeck.ico ^
+            --icon "%GITHUB_WORKSPACE%\packaging\icons\hamdeck.ico" ^
             --paths . ^
             --distpath packaging\dist ^
             --workpath packaging\work ^
