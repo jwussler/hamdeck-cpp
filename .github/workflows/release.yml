@@ -159,7 +159,7 @@ jobs:
         # both paths wrong. A local freeze proves the bundle is not empty. It proves
         # nothing at all about Windows packaging inputs.
         run: |
-          pip install pyinstaller
+          pip install pyinstaller velopack
           pyinstaller --noconfirm --clean --onedir --windowed ^
             --name hamdeck-pusher ^
             --icon "%GITHUB_WORKSPACE%\packaging\icons\hamdeck.ico" ^
@@ -230,29 +230,72 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      - name: Installer
-        working-directory: pusher
-        run: iscc packaging\hamdeck-pusher.iss
-        shell: cmd
+      # ⚠️ VELOPACK, NOT INNO. Velopack builds the installer AND an update channel from
+      # the same command, which is the point: the operator's friends install once and
+      # every later version arrives by itself, instead of another download that has to
+      # survive SmartScreen on its own.
+      #
+      # It requires PyInstaller --onedir, which this build already produces.
+      - name: Install vpk
+        run: dotnet tool install -g vpk
+        shell: pwsh
 
-      - name: Sign the installer
+      # ⚠️ Velopack signs through Azure Artifact Signing NATIVELY, with a metadata file
+      # rather than the signing action - so the exe is signed by vpk as part of packing,
+      # and the separate "Sign the app" step above no longer has to reach inside the
+      # output folder. Auth is DefaultAzureCredential, which picks the service principal
+      # up out of the environment below.
+      - name: Pack and sign with Velopack
         if: ${{ env.AZURE_CLIENT_ID != '' }}
-        uses: azure/trusted-signing-action@v0
-        with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}\pusher\packaging\\Output
-          files-folder-filter: exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
+        working-directory: pusher
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          # ⚠️ UTF-8 WITHOUT A BOM. Velopack's docs are explicit about this, and
+          # PowerShell's default Out-File writes a BOM that makes the JSON unparseable.
+          $meta = [ordered]@{
+            Endpoint               = "${{ secrets.AZURE_SIGNING_ENDPOINT }}"
+            CodeSigningAccountName = "${{ secrets.AZURE_SIGNING_ACCOUNT }}"
+            CertificateProfileName = "${{ secrets.AZURE_SIGNING_PROFILE }}"
+          } | ConvertTo-Json
+          [IO.File]::WriteAllText("$PWD\packaging\azuresign.json", $meta, (New-Object Text.UTF8Encoding $false))
+
+          # ⚠️ The tag carries a leading v; SemVer here must not.
+          $ver = "${{ github.ref_name }}" -replace '^v',''
+          if ($ver -notmatch '^\d+\.\d+\.\d+') { $ver = "0.0.0-dev" }
+          "packing version $ver"
+
+          vpk pack --packId HamDeckPusher --packVersion $ver `
+                   --packDir packaging\dist\hamdeck-pusher `
+                   --mainExe hamdeck-pusher.exe `
+                   --packTitle "HamDeck Wavelog Pusher" `
+                   --packAuthors "WA0O" `
+                   --icon ..\packaging\icons\hamdeck.ico `
+                   --outputDir packaging\Releases `
+                   --azureTrustedSignFile packaging\azuresign.json
+          Remove-Item packaging\azuresign.json -Force
+
+      - name: The installer is actually signed
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        working-directory: pusher
+        shell: pwsh
+        run: |
+          # ⚠️ Ask the OS, not the build log. A packer that silently skipped signing and a
+          # packer that signed both look identical in stdout; Authenticode status does not.
+          $setup = Get-ChildItem packaging\Releases\*Setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "vpk produced no Setup.exe" }
+          $sig = Get-AuthenticodeSignature $setup.FullName
+          "Setup    : $($setup.Name)"
+          "Status   : $($sig.Status)"
+          "Signer   : $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "installer signature is $($sig.Status), not Valid" }
+          if ($sig.SignerCertificate.Subject -notmatch 'Wussler') { throw "unexpected signer" }
 
       - uses: actions/upload-artifact@v4
-        with: { name: hamdeck-pusher-windows-installer, path: pusher/packaging/Output/*.exe }
+        with: { name: hamdeck-pusher-windows-installer, path: pusher/packaging/Releases/* }
 
   macos:
     # ⚠️ NOT VERIFIED BY ANYONE. Nobody in this project has a Mac to run the

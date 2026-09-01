@@ -199,6 +199,12 @@ def _gui_selftest(emit=print) -> int:
 
 
 def main(argv=None) -> int:
+    # ⚠️ FIRST, before argument parsing, any window, or any network call. Velopack
+    # re-invokes this exe with hook arguments during install and update and expects it to
+    # act and exit; anything that starts up before this turns an update into a hang.
+    from .updates import run_startup_hooks
+    run_startup_hooks()
+
     ap = argparse.ArgumentParser(prog="hamdeck-pusher",
                                  description="Push HamDeck rig state to Wavelog.")
     ap.add_argument("--config", type=Path, default=None)
