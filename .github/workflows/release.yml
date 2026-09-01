@@ -161,6 +161,11 @@ jobs:
           host: windows
           arch: win64_msvc2022_64
           version: '6.8.1'
+          # ⚠️ THE SAME MODULES AS THE TARGET KIT. windeployqt resolves module DLLs
+          # through its own installation, so a host Qt without qtwebsockets fails with
+          # "Unable to find dependent libraries ... Qt6WebSockets.dll" - pointing at the
+          # HOST path, which reads as the target kit being broken.
+          modules: 'qtwebsockets qtmultimedia'
           dir: ${{ github.workspace }}/QtHost
           set-env: false
 
@@ -199,9 +204,35 @@ jobs:
           # start on the machine it was built for.
           $qtpaths = Join-Path $env:QT_ROOT_DIR "bin\qtpaths.exe"
           if (Test-Path $qtpaths) {
+            Write-Host "deploying against target kit via $qtpaths"
             & $wdq --qtpaths $qtpaths --qmldir client\qml --release packaging\deploy\hamdeck-qml.exe
           } else {
+            Write-Host "no qtpaths in the target kit - deploying with the host tool alone"
             & $wdq --qmldir client\qml --release packaging\deploy\hamdeck-qml.exe
+          }
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with $LASTEXITCODE" }
+
+          # ⚠️ THE DEPLOYED DLLs MUST MATCH THE EXE'S ARCHITECTURE.
+          #
+          # A host windeployqt will happily copy x64 Qt DLLs beside an arm64 binary and
+          # report success. The result installs, launches, and dies immediately - a
+          # failure that reaches a user because nothing in a build log looks wrong. So the
+          # PE machine type is read straight out of the file rather than assumed.
+          function Get-PEMachine($path) {
+            $fs = [IO.File]::OpenRead($path)
+            try {
+              $br = New-Object IO.BinaryReader($fs)
+              $fs.Position = 0x3C
+              $fs.Position = $br.ReadInt32() + 4      # PE signature, then COFF header
+              return $br.ReadUInt16()
+            } finally { $fs.Dispose() }
+          }
+          $want = Get-PEMachine "packaging\deploy\hamdeck-qml.exe"
+          $core = Get-PEMachine "packaging\deploy\Qt6Core.dll"
+          $names = @{ 0x8664 = "x64"; 0xAA64 = "arm64"; 0x14C = "x86" }
+          Write-Host ("exe={0} Qt6Core={1}" -f $names[[int]$want], $names[[int]$core])
+          if ($want -ne $core) {
+            throw "architecture mismatch: exe is $($names[[int]$want]) but Qt6Core.dll is $($names[[int]$core]) - the app would not start"
           }
       - name: Run it again from the staged directory
         shell: pwsh
