@@ -25,8 +25,8 @@
 int main() {
   setvbuf(stdout, nullptr, _IONBF, 0);
   AuthService a(480);
-  a.AddUser("pusher", AuthService::HashPassword("pw1"), false, true);
-  a.AddUser("op",     AuthService::HashPassword("pw2"), false, true);
+  a.AddUser("pusher", AuthService::HashPassword("pw1"), false, true, false);
+  a.AddUser("op",     AuthService::HashPassword("pw2"), false, true, false);
 
   // ── The desktop pusher logs in, and is the only thing on the host ────────
   const auto pusher = a.Login("pusher", "pw1");

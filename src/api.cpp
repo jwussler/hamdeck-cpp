@@ -2032,7 +2032,10 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       }
       // ⚠️ Hashed here, immediately. A plaintext password must never reach the
       // config file, and the only way to guarantee that is never to store one.
-      auth->AddUser(user, AuthService::HashPassword(pass), is_admin, can_tx);
+      // ⚠️ A new account is never a station account. Granting it is a separate,
+      // named act - /api/admin/user/station/enable/<user>.
+      auth->AddUser(user, AuthService::HashPassword(pass), is_admin, can_tx,
+                    /*is_station=*/false);
       std::string err;
       if (!persist_users(err)) {
         WriteJson(res, 500,

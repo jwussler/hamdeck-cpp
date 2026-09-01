@@ -49,9 +49,16 @@ class AuthService {
   static std::string HashPassword(const std::string& password);
   static bool VerifyPassword(const std::string& password, const std::string& stored);
 
+  // ⚠️ NO DEFAULT ARGUMENTS, deliberately. is_station shipped with `= false` for
+  // exactly one build, and main.cpp's config loader - which never passed it -
+  // compiled cleanly and dropped the right on every startup. The config said the
+  // operator had it, the running host said they did not, and nothing warned.
+  //
+  // A missing right must be a COMPILE ERROR, not a silent false. Every call site
+  // states all three, so adding a fourth right breaks the build until each caller
+  // has decided what it means.
   void AddUser(const std::string& username, const std::string& password_hash,
-               bool is_admin = false, bool can_transmit = true,
-               bool is_station = false);
+               bool is_admin, bool can_transmit, bool is_station);
 
   bool IsConfigured() const;
 

@@ -46,7 +46,8 @@ cat > "$CFG" <<JSON
   "dashboard_port": $DASH,
   "web_users": [
     {"username":"boss",    "password_hash":"$HASH","is_admin":true, "can_transmit":true,"is_station":false},
-    {"username":"deckop",  "password_hash":"$HASH","is_admin":false,"can_transmit":true,"is_station":false}
+    {"username":"deckop",  "password_hash":"$HASH","is_admin":false,"can_transmit":true,"is_station":false},
+    {"username":"cfgop",   "password_hash":"$HASH","is_admin":false,"can_transmit":true,"is_station":true}
   ]
 }
 JSON
@@ -75,6 +76,25 @@ code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 DECK=$(login deckop)
 BOSS=$(login boss)
 [ -n "$DECK" ] && [ -n "$BOSS" ] || { say "could not log in - check $DIR/host.log"; exit 2; }
+
+say "0. the right arrives from the CONFIG FILE, not only from an admin call"
+# â ï¸ THE CHECK THAT WAS MISSING, and its absence shipped a broken host.
+# Every other step here grants the right through the admin API, which exercises
+# SetIsStation on a RUNNING host. The other way in - config -> AuthService at
+# startup - was never touched, and main.cpp did not pass is_station to AddUser at
+# all. A default argument of `false` made that compile silently, so the file said
+# the operator had the right and the running host said they did not.
+# Two mechanisms are two tests. cfgop gets it from the file and nothing else.
+CFG_TOK=$(login cfgop)
+b=$(curl -s "http://127.0.0.1:$DASH/api/tune/amp/probe?token=$CFG_TOK")
+c=$(code "http://127.0.0.1:$DASH/api/tune/amp/probe?token=$CFG_TOK")
+[ "$c" != "403" ] && ok "config-declared station right reached the running host" \
+                  || bad "is_station in the config did not load (HTTP $c): $b"
+# and /api/auth/status must agree, since that is what a client greys the button on
+printf '%s' "$(curl -s "http://127.0.0.1:$DASH/api/auth/status?token=$CFG_TOK")" \
+  | grep -q '"is_station":true' \
+  && ok "/api/auth/status reports it too" \
+  || bad "/api/auth/status does not report is_station for a station account"
 
 say "1. no station right"
 c=$(code "http://127.0.0.1:$DASH/api/tune/amp?token=$DECK")
