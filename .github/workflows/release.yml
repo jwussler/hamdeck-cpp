@@ -585,17 +585,52 @@ jobs:
           echo "== gatekeeper ==" && spctl --assess --type execute --verbose=4 "$APP"
           echo "== staple =="     && xcrun stapler validate "$APP"
 
+      # ⚠️ A DMG WITH AN APPLICATIONS ALIAS - the idiomatic macOS install, and safer than a
+      # zip in practice: an unzipped .app tends to get run from Downloads, where quarantine
+      # behaves differently and the app is one cleanup away from vanishing. A DMG steers
+      # people to install it properly.
+      #
+      # Velopack does not build DMGs - it produces the .app and a .pkg, and a signed .pkg
+      # would need a second Developer ID INSTALLER certificate against Apple's cap of 5.
+      # So this wraps vpk's already-signed .app rather than replacing it.
+      - name: Build a DMG
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        run: |
+          set -euo pipefail
+          APP=$(find client/packaging/Releases -name "*.app" -maxdepth 3 | head -1)
+          [ -n "$APP" ] || { echo "no .app to package"; exit 1; }
+          STAGE="$RUNNER_TEMP/dmg"
+          rm -rf "$STAGE" && mkdir -p "$STAGE"
+          cp -R "$APP" "$STAGE/"
+          # The alias is what makes drag-to-install obvious without a background image or
+          # the .DS_Store fiddling that tends to break on a headless runner.
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "HamDeck Remote" -srcfolder "$STAGE" \
+                         -ov -format UDZO "$RUNNER_TEMP/HamDeckRemote-macOS.dmg"
+          echo "DMG=$RUNNER_TEMP/HamDeckRemote-macOS.dmg" >> "$GITHUB_ENV"
+
+      # ⚠️ THE DMG ITSELF MUST BE SIGNED, NOTARISED AND STAPLED, not just the app inside.
+      # A stapled app in an unstapled DMG still makes Gatekeeper phone home on first open,
+      # which fails on a machine that is offline - the exact case a downloaded disk image
+      # is most likely to hit.
+      - name: Sign, notarise and staple the DMG
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        run: |
+          set -euo pipefail
+          codesign --sign "Developer ID Application: henry Wussler (V829EBE8HH)" \
+                   --timestamp --keychain "$KEYCHAIN" "$DMG"
+          xcrun notarytool submit "$DMG" --keychain-profile hamdeck-notary \
+                --keychain "$KEYCHAIN" --wait
+          xcrun stapler staple "$DMG"
+          echo "== verifying the DMG itself =="
+          spctl --assess --type open --context context:primary-signature -v "$DMG"
+          xcrun stapler validate "$DMG"
+
       - name: Attach it to the release
         if: ${{ env.APPLE_CERT_P12 != '' }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          cd client/packaging/Releases
-          # The .app is a directory; ship it zipped, preserving symlinks and the signature.
-          APP=$(find . -name "*.app" -maxdepth 2 | head -1)
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "HamDeckRemote-macOS.zip"
-          gh release upload "${GITHUB_REF_NAME}" HamDeckRemote-macOS.zip --clobber
+        run: gh release upload "${GITHUB_REF_NAME}" "$DMG" --clobber
 
       - name: Destroy the keychain
         if: always()
