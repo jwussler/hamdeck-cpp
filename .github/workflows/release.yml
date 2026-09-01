@@ -423,18 +423,24 @@ jobs:
     # two risks.
     needs: [publish]
     if: startsWith(github.ref, 'refs/tags/')
-    # ⚠️ macos-15-intel, NOT macos-13. GitHub RETIRED macos-13 on 12/04/2025, and a job
-    # targeting a retired label does not fail - it queues FOREVER. This one sat "queued"
-    # looking like a slow pool while never being scheduled at all, which is worse than an
-    # error because it reads as patience rather than breakage.
+    # ⚠️ ARM64 RUNNER, UNIVERSAL BINARY. Not Intel.
     #
-    # macos-15-intel is GitHub's documented migration target for macos-13. Intel is itself
-    # on a clock: Apple has dropped x86_64 and GitHub retires the last Intel image in
-    # autumn 2027, so the arm64 leg is not optional forever.
+    # macos-13 was RETIRED 12/04/2025, and a job targeting a retired label does not fail -
+    # it queues forever, which is how this job spent months looking patient rather than
+    # broken. macos-14 is no better (deprecating now, unsupported 11/02).
     #
-    # ⚠️ macos-14 is NOT the answer either - it began deprecation 07/06 and is fully
-    # unsupported from 11/02.
-    runs-on: macos-15-intel
+    # Intel was the wrong target regardless: Apple stopped selling Intel Macs in 2023,
+    # every Mac since 2020 is Apple Silicon, and Rosetta 2 is being wound down. An
+    # Intel-only build would run EMULATED on the only Mac available to test it.
+    #
+    # Qt ships UNIVERSAL macOS binaries, so one arm64 runner produces a binary that is
+    # native on both architectures - which is better than choosing, and better than a
+    # matrix that would need two signings and two notarisations.
+    #
+    # ⚠️ The old comment here claimed arm64 had dropped the AGL framework Qt links
+    # against. That was written when this label was ALREADY DEAD, so it was never
+    # verified. It is not treated as a known obstacle; if it is real, this build says so.
+    runs-on: macos-latest
     permissions:
       contents: write
     env:
@@ -451,11 +457,23 @@ jobs:
 
       - name: Build
         run: |
-          cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release
+          cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
           cmake --build client/build
 
       - name: Run the binary
         run: QT_QPA_PLATFORM=offscreen ./client/build/hamdeck-qml --selftest
+
+      # ⚠️ ASK THE BINARY, NOT THE FLAG. CMAKE_OSX_ARCHITECTURES is a request, and if Qt
+      # on this runner is single-architecture the link quietly produces a thin binary
+      # anyway. A thin arm64 build looks perfect on an arm64 runner and fails on the one
+      # Intel Mac somebody still owns - the sort of thing found by a user, not by CI.
+      - name: It is actually universal
+        run: |
+          set -euo pipefail
+          echo "architectures: $(lipo -archs client/build/hamdeck-qml)"
+          lipo -archs client/build/hamdeck-qml | grep -q arm64  || { echo "missing arm64";  exit 1; }
+          lipo -archs client/build/hamdeck-qml | grep -q x86_64 || { echo "missing x86_64"; exit 1; }
 
       # ⚠️ A TEMPORARY KEYCHAIN, not the login keychain. The runner is shared
       # infrastructure; importing a signing identity into the default keychain leaves it
