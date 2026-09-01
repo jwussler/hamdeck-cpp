@@ -110,6 +110,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jurplel/install-qt-action@v4
         with:
+          # ⚠️ host MUST be `windows`, even on the arm64 runner.
+          #
+          # The action infers the host from the machine, so on windows-11-arm it asked for
+          # host `windows_arm64` - and Qt does not publish desktop kits under that host at
+          # all. The failure names the packages rather than the host:
+          #   "The packages ['qt_base','qtmultimedia','qtwebsockets'] were not found"
+          # which reads like the modules are wrong when the repository being searched is.
+          #
+          # Qt ships the arm64 kit under the ordinary `windows` host, which is the same
+          # fact as its name - win64_msvc2022_arm64_CROSS_COMPILED. The host tools are x64
+          # and run under emulation on this runner.
+          host: windows
           arch: ${{ matrix.qtarch }}
           version: '6.8.1'
           # ⚠️ NOT qtdeclarative. Qt Quick is part of the BASE install in Qt 6,
