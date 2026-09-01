@@ -145,21 +145,26 @@ jobs:
         run: python -m hamdeck_pusher --selftest
       - name: Freeze
         working-directory: pusher
-        # ⚠️ THE ICON PATH IS ABSOLUTE ON PURPOSE. PyInstaller resolves --icon relative to
-        # --specpath, NOT to the working directory, so a sensible-looking
-        # `..\packaging\icons\hamdeck.ico` became `pusher\packaging\..\packaging\...`
-        # and the build died with "Icon input file not found".
+        # ⚠️ EVERY PATH INPUT HERE IS ABSOLUTE, AND THAT IS THE RULE, NOT A PREFERENCE.
         #
-        # ⚠️ And a Linux freeze CANNOT catch this: PyInstaller never opens the .ico when
-        # the output is an ELF binary, so the dry run passed with the wrong path. A local
-        # freeze proves the bundle is not empty. It does not prove the packaging.
+        # PyInstaller resolves --icon and --version-file relative to --specpath, NOT to the
+        # working directory. Both were written relative and both broke, on separate days:
+        #   --icon         ..\packaging\icons\hamdeck.ico  -> pusher\packaging\..\packaging\...
+        #   --version-file packaging\version_info.txt       -> pusher\packaging\packaging\...
+        # The second one landed AFTER the first was fixed, because the fix was applied to
+        # the one flag that had failed rather than to the class of mistake.
+        #
+        # ⚠️ A LINUX FREEZE CANNOT CATCH EITHER. PyInstaller never opens the .ico or the
+        # version resource when the output is an ELF binary, so a local dry run passes with
+        # both paths wrong. A local freeze proves the bundle is not empty. It proves
+        # nothing at all about Windows packaging inputs.
         run: |
           pip install pyinstaller
           pyinstaller --noconfirm --clean --onedir --windowed ^
             --name hamdeck-pusher ^
             --icon "%GITHUB_WORKSPACE%\packaging\icons\hamdeck.ico" ^
             --paths . ^
-            --version-file packaging\version_info.txt ^
+            --version-file "%GITHUB_WORKSPACE%\pusher\packaging\version_info.txt" ^
             --distpath packaging\dist ^
             --workpath packaging\work ^
             --specpath packaging ^
@@ -180,6 +185,24 @@ jobs:
         working-directory: pusher
         run: python ..\tools\check_exe_icon.py packaging\dist\hamdeck-pusher\hamdeck-pusher.exe ..\packaging\icons\hamdeck-256.png
         shell: cmd
+
+      # ⚠️ AND THE VERSION RESOURCE IS ACTUALLY IN THE EXE.
+      #
+      # Same reason the icon has its own check: a path handed to PyInstaller can be wrong
+      # in a way that produces a perfectly good binary missing the thing you asked for.
+      # --version-file pointed at the wrong path for a whole release and the only symptom
+      # would have been an exe with no company or product name - which is precisely the
+      # shape the Defender heuristic scores badly, i.e. the thing it was added to fix.
+      - name: The version resource is actually in the exe
+        shell: pwsh
+        run: |
+          $exe = "pusher\packaging\dist\hamdeck-pusher\hamdeck-pusher.exe"
+          $vi = (Get-Item $exe).VersionInfo
+          "ProductName : $($vi.ProductName)"
+          "CompanyName : $($vi.CompanyName)"
+          "FileVersion : $($vi.FileVersion)"
+          if ($vi.ProductName -ne 'HamDeck Wavelog Pusher') { throw "version resource missing or wrong: ProductName='$($vi.ProductName)'" }
+          if ([string]::IsNullOrWhiteSpace($vi.CompanyName)) { throw "version resource has no CompanyName" }
       # ⚠️ SIGN THE FROZEN EXE **AND** THE INSTALLER, in that order.
       #
       # The 09/01/2026 detection (Trojan:Win32/Bearfoos.A!ml) was on the INSTALLER, with
