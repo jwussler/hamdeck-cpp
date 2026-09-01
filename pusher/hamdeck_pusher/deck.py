@@ -37,6 +37,9 @@ from .hostclient import HostClient, HostError
 #: The port the existing buttons use. Changing this means editing 44 buttons.
 DEFAULT_PORT = 5001
 
+#: Filled in by DeckProxy so the WSAEACCES advice can name the real port.
+PORT_HINT = DEFAULT_PORT
+
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "HamDeckPusher"
@@ -86,6 +89,32 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
 
+def _explain(e: OSError) -> str:
+    """Turn a bind failure into the sentence that names the actual fix.
+
+    ⚠️ WSAEACCES IS THE ONE THAT MISLEADS. Windows words it "an attempt was made to
+    access a socket in a way forbidden by its access permissions", which reads like a
+    firewall or an antivirus problem and sends the operator to the wrong place entirely.
+    It almost never is. On Windows, Hyper-V, WSL and Docker Desktop reserve large blocks
+    of TCP ports, and NOTHING can bind inside them - the port is not in use, it is
+    spoken for. `netsh interface ipv4 show excludedportrange protocol=tcp` shows the
+    blocks, and reserving the port back is the fix.
+
+    That matters more here than usual: the port cannot simply be changed, because 44
+    Stream Deck buttons are pointed at 5001.
+    """
+    win = getattr(e, "winerror", None)
+    if win == 10013:            # WSAEACCES
+        return ("Windows refuses this port (WSAEACCES). It is usually RESERVED by "
+                "Hyper-V / WSL / Docker, not in use. Check with:  netsh interface ipv4 "
+                "show excludedportrange protocol=tcp  - and reserve it back with:  "
+                "net stop winnat  /  netsh int ipv4 add excludedportrange protocol=tcp "
+                f"startport={PORT_HINT} numberofports=1 store=persistent  /  net start winnat")
+    if win == 10048 or getattr(e, "errno", None) == 98:   # WSAEADDRINUSE / EADDRINUSE
+        return "already in use - another program has it, very often an older copy of this one"
+    return str(e.strerror or e)
+
+
 class _Server6(ThreadingHTTPServer):
     """The IPv6 loopback half. See DeckProxy.start."""
     address_family = socket.AF_INET6
@@ -131,6 +160,8 @@ class DeckProxy:
 
     def start(self) -> str:
         """Returns a human sentence about what happened. Never raises."""
+        global PORT_HINT
+        PORT_HINT = self.port
         try:
             # ⚠️ 127.0.0.1, never 0.0.0.0. This port has no authentication at all; the
             # bind address IS the security.
@@ -139,7 +170,7 @@ class DeckProxy:
             # ⚠️ Say WHICH port and WHY. "Failed to start" sends somebody to read code;
             # "port 5001 is already in use" sends them to close the other program - and
             # the other program is very often an older copy of this one.
-            return f"Stream Deck endpoint OFF - port {self.port}: {e.strerror or e}"
+            return f"Stream Deck endpoint OFF - port {self.port}: {_explain(e)}"
         self._srv.proxy = self  # type: ignore[attr-defined]
         self._serve(self._srv)
 

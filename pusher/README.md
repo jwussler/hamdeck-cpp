@@ -111,6 +111,23 @@ Three states that must never look alike, and do not:
 Brand tokens are taken verbatim from `~/hamdeck-site/brand/BRAND.md`. Tk only: no
 third-party GUI dependency, so the licence surface stays clean for code signing.
 
+## ⚠️ Windows Defender flags the installer — it is a false positive
+
+An unsigned **PyInstaller** build gets flagged by Defender's machine-learning heuristics
+(usually `Wacatac` or `Wacapew`). The heuristic keys on the **packer**, not on anything in
+the code, and code signing is the only real cure — SignPath Foundation is free but requires
+a public repo, and this one is private.
+
+**So there is a second download with no packer at all: `HamDeckPusher-source.zip`** (33 KB).
+The app is pure standard library, so it runs directly on the Python already on the station
+PC. Unzip anywhere and use:
+
+| script | what it does |
+|---|---|
+| `Run HamDeck Pusher.cmd` | normal launch, no console window |
+| `Run with console (shows errors).cmd` | same app in a visible console — **use this when something is wrong**, because a windowed build has nowhere to print a traceback |
+| `Diagnose.cmd` | settings, selftest, and one pass against the real host |
+
 ## Installing on Windows
 
 The installer is built by CI and attached to the GitHub Release for each tag — the repo is
@@ -152,6 +169,26 @@ first**. A client that does not fall back to IPv4 gets connection refused from a
 running perfectly well on 127.0.0.1 — the app reports the endpoint as up and every button
 fails. The C# used `HttpListener`, whose `localhost` prefix covers both families, so this
 never surfaced there. `::1` is as local as `127.0.0.1`, so the security model is unchanged.
+
+### ⚠️ "An attempt was made to access a socket in a way forbidden by its access permissions"
+
+That is Winsock **WSAEACCES (10013)** on bind, and Windows' wording is actively
+misleading — it reads like a firewall or antivirus fault and it almost never is.
+**Hyper-V, WSL and Docker Desktop reserve large blocks of TCP ports**, and nothing can
+bind inside one. The port is not in use; it is spoken for.
+
+Check, in an **Administrator** prompt:
+
+    netsh interface ipv4 show excludedportrange protocol=tcp
+
+If 5001 falls inside a listed range, reserve it back:
+
+    net stop winnat
+    netsh int ipv4 add excludedportrange protocol=tcp startport=5001 numberofports=1 store=persistent
+    net start winnat
+
+⚠️ **Do not just pick another port.** 44 Stream Deck buttons are pointed at 5001; moving
+the endpoint means editing all of them. Reserving the port is the smaller job.
 
 ⚠️ **Windows will show a firewall prompt the first time. Click Cancel.** Loopback traffic
 is not filtered by Windows Firewall at all, so denying it leaves every button working,

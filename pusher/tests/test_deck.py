@@ -147,3 +147,46 @@ class PortInUse(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class BindFailureMessages(unittest.TestCase):
+    """⚠️ WSAEACCES is worded by Windows as an access-permission problem, which reads
+    like a firewall or antivirus fault and sends the operator to the wrong place. It
+    almost never is one: Hyper-V, WSL and Docker reserve blocks of TCP ports and nothing
+    can bind inside them. The port is not in use - it is spoken for.
+
+    That distinction matters more here than usual, because the port cannot just be
+    changed: 44 Stream Deck buttons are pointed at 5001.
+    """
+
+    @staticmethod
+    def explain(winerror=None, errno=None, strerror="something"):
+        from hamdeck_pusher.deck import _explain
+        e = OSError(strerror)
+        e.strerror = strerror
+        if winerror is not None:
+            e.winerror = winerror
+        if errno is not None:
+            e.errno = errno
+        return _explain(e)
+
+    def test_wsaeacces_names_the_reservation_not_a_permission(self):
+        msg = self.explain(winerror=10013)
+        self.assertIn("RESERVED", msg)
+        self.assertIn("excludedportrange", msg)
+        # ⚠️ It must NOT send them to the firewall, which is the natural misreading.
+        self.assertNotIn("firewall", msg.lower())
+
+    def test_wsaeacces_advice_names_the_actual_port(self):
+        from hamdeck_pusher.deck import DeckProxy
+        p = DeckProxy(None, port=5001)
+        p.start()          # succeeds here; the point is PORT_HINT being set
+        p.stop()
+        self.assertIn("startport=5001", self.explain(winerror=10013))
+
+    def test_address_in_use_says_another_copy(self):
+        self.assertIn("older copy", self.explain(winerror=10048))
+        self.assertIn("older copy", self.explain(errno=98))
+
+    def test_anything_else_falls_back_to_the_os_wording(self):
+        self.assertEqual(self.explain(strerror="Permission denied"), "Permission denied")
