@@ -1194,3 +1194,73 @@ exactly the same whether the audio is a voice or digital silence. That cost a ni
    is not a remote.
 3. **The `joe` test credential is deliberately stable** while testing — Joe rotates it himself
    when done. Do not change it unasked (`tools/set_password.py`).
+
+---
+
+## 11. The Wavelog data pusher (09/01/2026)
+
+A desktop helper on the station PC: publishes rig state to Wavelog, stands down while a
+remote client is operating, and (not built yet) holds the host session so a Stream Deck
+can work. `pusher/`, Python. `AUDIT-WAVELOG.md` is the walk-down of the C# it replaces —
+read that before touching this.
+
+### Why a desktop app and not the host
+Joe's call, 08/31: the pusher is not on 24/7, and when the remote client is closed the
+local push takes over. Recorded here because the host is the always-on box and would
+otherwise look like the obvious home for it.
+
+### ⚠️ Stream Deck does not work against this host at all today — MEASURED
+From the station PC:
+
+    GET :5002/api/status    -> 401
+    GET :5002/api/agc/fast  -> 401 "Authentication required"
+    GET :5001/api/status    -> unreachable (control listener is loopback-only)
+
+A Stream Deck HTTP plugin cannot log in and cannot keep a session alive. The C# repo's
+entire Stream Deck implementation is one README line — *"install the API Ninja plugin and
+point buttons at"* the REST API — so **there is nothing to port**, and the helper holding
+a session is what makes the deck work, not a convenience.
+
+### ⚠️ The bug the live run found: deferring to its own ghost
+Run the pusher, let it exit, run it again inside the 15s window and it reported *"a remote
+client is operating the station"* — with nothing connected but its own previous session.
+Token exclusion cannot catch it: the leftover session genuinely is a different one. Under a
+crash-restart loop it would have stood down **forever**, and deferring looks exactly like
+working from Wavelog's side.
+
+Fixed at both ends: `/api/remote/status` now reports **`same_user_clients`** so a caller can
+subtract its own leftovers, and the pusher **logs out on exit**. A count and not a username —
+the caller only needs to know how many are its own.
+
+### ⚠️ Two of the six gates did not fail when their bug was put back
+So they were not gates. One test checked only the instant after a change, which let a wrong
+trigger slip past as "still settling"; one mutation was a no-op that proved nothing. Both
+fixed and re-proven. **Run the mutation, do not trust a green suite.**
+
+### Ordering that is not arbitrary
+- The settle window is tracked **while deferring**. Starting that clock when a client closes
+  would delay the handoff at the worst moment — nothing has been published for the length of
+  the deferral, so the log is most stale exactly then.
+- A **stale** reading does not start the settle clock. It cannot; we do not know it is real.
+  The first fresh reading after staleness is therefore a new candidate and waits its window.
+  (`--selftest` was written wrong on this and failed against correct code — the right way round.)
+- `record_published` is called **only on success**. Recording an attempt resets the heartbeat
+  and the change test, so a rejected post is never retried and the pusher believes the log is
+  current.
+
+### Proven live, 09/01/2026
+Real rig, real Wavelog, row read back **out of the database** rather than inferred from a 200:
+`HamDeck-pusher-test / 7189300 / CW / 100W`. Test key and rows deleted afterwards.
+⚠️ Wavelog normalised `CW-R` to `CW` on its own — check the full set of mode strings the
+FTDX-101 emits before trusting every one.
+
+### Open
+- **The Stream Deck endpoint is not written.** `deck_port: 0` disables it and that is the
+  default: a no-auth loopback endpoint must be opted into, never defaulted on.
+- Tray icon, settings GUI, PyInstaller + Inno installer — copy the `netlogger-wavelog-sync`
+  build (tests → freeze → `--selftest` on the FROZEN exe → installer).
+- The `pusher` host account exists (no admin, **no transmit**) but its password is not one
+  Joe knows yet: `tools/set_password.py pusher`, then restart the host.
+- Bandmap→QSY (the reverse direction, HTTP :54321 in the C#) is **not** built. Ask before
+  building it: it is unauthenticated remote control of the VFO and the C# bound it to the
+  whole LAN with `Allow-Origin: *`.
