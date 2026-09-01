@@ -683,11 +683,21 @@ jobs:
           spctl --assess --type open --context context:primary-signature -v "$DMG"
           xcrun stapler validate "$DMG"
 
+      # ⚠️ MUST TARGET THE SAME REPO THE PUBLISH JOB USED. This job runs after publish and
+      # attaches to an existing release; aiming it at the private repo while the release
+      # lives in the public one produces a macOS build that succeeds and lands where
+      # nobody can see it.
       - name: Attach it to the release
         if: ${{ env.APPLE_CERT_P12 != '' }}
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${GITHUB_REF_NAME}" "$DMG" --clobber
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ secrets.RELEASES_TOKEN }}" ]; then
+            gh release upload "${GITHUB_REF_NAME}" "$DMG" --repo jwussler/hamdeck-releases --clobber
+          else
+            gh release upload "${GITHUB_REF_NAME}" "$DMG" --clobber
+          fi
 
       - name: Destroy the keychain
         if: always()
@@ -717,6 +727,7 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           set -e
           find dist -type f | sort
@@ -769,9 +780,30 @@ jobs:
           # SAME release. Publishing only Setup.exe produces a release that installs fine and
           # can never update anything - and nothing about it looks wrong until an update is
           # expected and silently does not arrive.
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "HamDeck ${GITHUB_REF_NAME}" \
-            --notes-file notes.md \
-            $(find dist -name '*Setup.exe') $(find dist -name '*.deb') \
-            $(find dist -name '*.nupkg') $(find dist -name 'RELEASES') \
-            $(find dist -name 'releases.*.json')
+          # ⚠️ PUBLISH TO THE PUBLIC RELEASES REPO, NOT THIS ONE.
+          #
+          # This repository is private, so a release here is reachable by exactly one
+          # person - and Velopack's updater cannot read it either, because GithubSource
+          # needs an access token and embedding one puts a credential in every copy handed
+          # to a friend, where it can be read straight back out.
+          #
+          # jwussler/hamdeck-releases is public and holds no source, so nothing has to be
+          # audited for station detail before it can be seen.
+          #
+          # Falls back to publishing here when RELEASES_TOKEN is absent, so a build before
+          # the token exists still produces a release rather than failing - and says which
+          # it did, because silently publishing somewhere nobody is looking is worse than
+          # an error.
+          FILES="$(find dist -name '*Setup.exe') $(find dist -name '*.dmg') $(find dist -name '*.deb') $(find dist -name '*.nupkg') $(find dist -name 'RELEASES') $(find dist -name 'releases.*.json')"
+          if [ -n "${RELEASES_TOKEN:-}" ]; then
+            echo "publishing to jwussler/hamdeck-releases (public)"
+            GH_TOKEN="$RELEASES_TOKEN" gh release create "${GITHUB_REF_NAME}" \
+              --repo jwussler/hamdeck-releases \
+              --title "HamDeck ${GITHUB_REF_NAME}" \
+              --notes-file notes.md $FILES
+          else
+            echo "RELEASES_TOKEN not set - publishing to this PRIVATE repo, which nobody else can reach"
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "HamDeck ${GITHUB_REF_NAME}" \
+              --notes-file notes.md $FILES
+          fi
