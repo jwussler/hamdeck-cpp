@@ -28,8 +28,8 @@ line-by-line walk of that file and every rule this app is built to.
 | **Wavelog publishing** | ✅ **WORKING IN PRODUCTION.** Confirmed by reading `hamlog.io`'s own `cat` table: `HamDeck / 7192000 / LSB / 100W`, matching the rig. |
 | **The window** | ✅ working — radio vs log readouts, in-sync colouring, plain-English state |
 | **Handoff to the remote client** | ✅ working, incl. not deferring to its own ghost session |
-| **Stream Deck endpoint** | 🔴 **BLOCKED — this is the job.** See §4. |
-| **Installer (PyInstaller)** | ⚠️ builds and runs, but **Defender flags it**. See §5. |
+| **Stream Deck endpoint** | ✅ **WORKING 09/01/2026** — bound on 5001 (v4+v6), all three loopback URLs answer, the deck plugin is polling it. See §4. |
+| **Installer** | ⚠️ works, but Defender flags the **Inno setup exe** (not the PyInstaller build). Installs and runs anyway. See §5. |
 | Tray icon | not built; the window minimises to the taskbar |
 | Bandmap → QSY | not built, **ask before building** — unauthenticated VFO control |
 
@@ -74,7 +74,7 @@ Unzip anywhere. Python 3.12+ is already on this PC at
 
 ---
 
-## 4. 🔴 THE OPEN PROBLEM — the Stream Deck endpoint will not bind
+## 4. ✅ SOLVED 09/01/2026 — and the cause was NOT a port reservation
 
 Observed on the PC:
 
@@ -83,31 +83,67 @@ Observed on the PC:
 
 That is Winsock **WSAEACCES (10013)**.
 
-⚠️ **Windows words it like a permissions failure and it almost never is one.** It is not
-the firewall and not Defender. Hyper-V, WSL and Docker Desktop reserve large blocks of TCP
-ports, and **nothing can bind inside one**. The port is not in use — it is spoken for.
+🔴 **The Hyper-V / WSL / Docker guess in the original draft of this section was WRONG.**
+It was written from the Linux side without measuring, and it was plausible enough to survive
+review. The real holder was **the old C# HamDeck host, still running on this very PC.**
 
-### Diagnose (Administrator)
-    netsh interface ipv4 show excludedportrange protocol=tcp
+### What it actually was — measured on the station PC, 09/01/2026
+- `netstat -ano | findstr :5001` → `0.0.0.0:5001` and `[::]:5001` LISTENING, owner **PID 4**.
+  PID 4 is `System`, i.e. the **http.sys** kernel driver — which is exactly what a .NET
+  `HttpListener` binds through. That is a .NET host's signature, not a NAT reservation.
+- `netsh http show servicestate view=requestq` → **`HTTP://+:5001/`** and **`HTTP://+:5002/`**
+  registered. Those are precisely the C# host's two documented listeners.
+- `Get-Process` → **`HamDeck.exe` PID 37868**, `C:\Program Files\HamDeck\HamDeck.exe`,
+  auto-started at logon from `shell:startup`.
+- `curl http://127.0.0.1:5001/api/health` →
+  `{"status":"ok","service":"HamDeck API (C#)","version":"3.4.14","rig_connected":false}`
+- **`winnat` was `Stopped`.** No `LxssManager`, no Docker service installed. There was nothing
+  running behind the Hyper-V theory at all.
 
-Look for a range containing **5001**.
+### ⚠️ THE TRAP THAT MADE THE WRONG ANSWER LOOK RIGHT
+`netsh interface ipv4 show excludedportrange protocol=tcp` **did list 5001** — and 5002:
 
-### Fix, if it is reserved (Administrator)
-    net stop winnat
-    netsh int ipv4 add excludedportrange protocol=tcp startport=5001 numberofports=1 store=persistent
-    net start winnat
+    Start Port    End Port
+    ----------    --------
+          5001        5001
+          5002        5002
+          5357        5357
+         50000       50059     *
+    * - Administered port exclusions.
 
-⚠️ **Do NOT solve this by choosing another port.** All 44 Stream Deck buttons target
-`localhost:5001` (C# `AUDIT.md` §11). Reserving the port is far less work than editing 44
-buttons, and the buttons are the thing this feature exists to preserve.
+So step 1 of §11 answered **"yes, 5001 is reserved"** — and following that answer to its
+prescribed fix would have been a disaster. **An http.sys registration appears in this list
+too.** Note `5357` sitting right beside it: that is WSDAPI, also http.sys, also not Hyper-V.
 
-### If it is NOT in an excluded range
-Then find who holds it, and say so rather than guessing:
+**The tell is the `*`.** Only `50000-50059` is an *administered* (deliberately reserved)
+range. Non-administered single-port rows that happen to match your own application's
+listeners are your application.
 
-    netstat -ano | findstr :5001
-    Get-Process -Id <pid>
+**Proof, not inference:** stopping `HamDeck.exe` made the **5001 and 5002 rows vanish from
+`show excludedportrange` immediately**. A winnat/Hyper-V reservation does not behave that way.
 
-An older copy of this app is a very common answer.
+### 🔴 DO NOT RUN THE OLD "FIX" — it would have made this permanent
+    net stop winnat                                            # winnat was not even running
+    netsh int ipv4 add excludedportrange protocol=tcp \
+          startport=5001 numberofports=1 store=persistent      # <-- HARMFUL
+
+That creates an **administered** exclusion for 5001, after which **nothing can bind it —
+including this pusher**. It converts a transient process conflict into a permanent one, and
+`store=persistent` means it survives reboots. It was never run here. Do not run it.
+
+### The actual fix
+Stop the legacy C# host. Checks done first, so this is safe rather than hopeful:
+`rig_connected:false` (the rig lives on **deck**, `192.168.40.64` now), and the local
+cloudflared tunnel that used to publish its `:5002` as `radio.wa0o.com` **is not running on
+this PC** — so nothing public depends on it.
+
+    Stop-Process -Name HamDeck -Force
+    Stop-Process -Name hamdeck-pusher -Force        # then relaunch it, so it retries the bind
+    Start-Process "C:\Program Files\HamDeckPusher\hamdeck-pusher.exe"
+
+🔴 **`HamDeck.lnk` is STILL in `shell:startup`.** The C# host comes back at the next logon
+and takes 5001 again, and the deck dies again with the same misleading error. Removing that
+shortcut is what makes this fix outlive one session — see §11.
 
 ### Proving it once it binds
     curl http://127.0.0.1:5001/api/status
@@ -120,18 +156,67 @@ from a listener running perfectly well on 127.0.0.1. The app binds both families
 exactly this reason; the C# used `HttpListener`, whose `localhost` prefix covered both, so
 it never surfaced there.
 
+**✅ Confirmed 09/01/2026 — all three returned HTTP 200 from the live rig:**
+`{"connected":true,"freq":7192000,"mode":"LSB","vfo":"A","power":100,"tx":false,...}`
+Both families bound by one pusher PID: `127.0.0.1:5001` + `[::1]:5001`.
+
+### ⚠️ One belief this disproved
+The BarRaider **API Ninja** plugin (`com.barraider.apininja.exe`, PID 34676) had been
+polling `localhost:5001` the whole time — and **getting HTTP 200s from the stale C# host.**
+So "the rig moved and that URL became nothing, which is why the deck went dead" is *not*
+what happened. The URL answered fine; it was a host with no radio behind it.
+
+**A 200 on `/api/status` is not proof you reached the right host.** Check `service` and
+`rig_connected` in `/api/health` before concluding anything about who is listening.
+
 ---
 
-## 5. ⚠️ Defender flags the installer — false positive, and what to do
+## 5. ⚠️ Defender flags the installer — measured 09/01/2026
 
-Unsigned **PyInstaller** builds get flagged by Defender's ML heuristics (`Wacatac`,
-`Wacapew`). The heuristic keys on the **packer**, not on anything in the code.
+**It is a false positive, and the app ran anyway. Both halves of that matter.**
 
-- **Short answer: use the source zip.** No packer, nothing to flag.
-- Code signing is the only real cure. SignPath Foundation is free **but requires a public
-  repo**, and `hamdeck-cpp` is private — see `[[hamdeck-code-signing]]`.
-- If Defender **quarantined** the exe, the app never ran at all, which looks identical to
-  a bug in the app. Check Windows Security → Protection history before chasing anything.
+### What Defender actually did — read from the machine, not assumed
+    Get-MpThreatDetection | Select InitialDetectionTime, ThreatID, Resources
+    Get-MpThreat          | Select ThreatName, SeverityID, IsActive
+
+- **`Trojan:Win32/Bearfoos.A!ml`**, severity 5, `IsActive: False` (remediated).
+  The `!ml` suffix is the giveaway: a machine-learning heuristic verdict, not a signature match.
+  ⚠️ The earlier guess in this doc was `Wacatac`/`Wacapew` — same family of ML heuristics,
+  **wrong name**. Read the real one; the name is how you file a false-positive report.
+- **Three detections, 08/31/2026 19:47 / 20:58 / 21:09 — all on
+  `HamDeckPusher-0.1.0-setup.exe`**, in `D:\Data\Personal\Downloads` and a WinRAR temp dir.
+- 🔴 **ZERO detections on `hamdeck-pusher.exe`** — the PyInstaller output itself was never
+  touched.
+
+### ⚠️ So the flag is on the INNO SETUP INSTALLER, not on the PyInstaller build
+That reverses this section's original advice. The usual PyInstaller mitigations were
+**already in place and did not help**: `.github/workflows/release.yml` builds `--onedir`
+(not `--onefile`, so there is no self-extracting stub), uses **no UPX**, and embeds a real
+icon. The heuristic is keying on *an unsigned Inno installer that drops an unsigned
+freeze* — not on the packer this section blamed.
+
+### 🔴 "Quarantined ⇒ the app never ran" is NOT a safe inference
+When this session started, **`hamdeck-pusher.exe` was running** (PID 48848, started
+08/31 20:58:34 — the same second as the second detection). The install completed and
+launched; Defender then removed the leftover *setup* file. The app had been running for
+hours while the working theory was that it had never started.
+
+**Check `Get-Process`, not just Protection history.** They answer different questions.
+
+### Making it clean for someone who is not Joe — the options, ranked
+The source zip sidesteps this for us, but it is not an answer for another operator.
+
+| option | cost | reality |
+|---|---|---|
+| **Report the false positive to Microsoft** | free | <https://www.microsoft.com/en-us/wdsi/filesubmission>, as *software developer*. Reclassified in ~1-3 days and it clears for **everyone**. ⚠️ **Per file hash — every new release must be resubmitted.** The realistic near-term fix. |
+| **Azure Trusted Signing** | ~$10/mo | The real cure. Cheapest genuine code-signing path. ⚠️ Confirm individual/indie eligibility before relying on it. |
+| SignPath Foundation | free | 🔴 **BLOCKED for this repo**: it requires a *public* repo under an OSI-approved licence. `hamdeck-cpp` is **private with no licence file**. (The C# `HamDeck` repo is public/MIT — different repo, different answer.) |
+| `--version-file` metadata | free | Adds company/product/version resources to the frozen exe. Lowers the heuristic score a little. Not currently passed; cheap to add, do not expect it to be sufficient alone. |
+| Source zip | free | Already the recommendation, and it genuinely never flags — but it needs Python on the target PC. |
+
+⚠️ **An OV certificate does not silence SmartScreen immediately** — reputation accrues per
+certificate over downloads and time. Early downloads still warn. That is normal, not a
+broken cert. See `[[hamdeck-code-signing]]`.
 
 ### The firewall prompt is a separate thing, and the answer is Cancel
 Windows Defender Firewall prompts the first time anything listens on a socket.
@@ -246,9 +331,34 @@ that failed to compile has been observed alongside "100% tests passed".
 
 ## 11. What to do first, in order
 
-1. **`netsh interface ipv4 show excludedportrange protocol=tcp`** — is 5001 reserved?
-2. If yes, reserve it back (§4) and restart the app.
-3. Confirm all three URLs answer (§4), then press a real Stream Deck button.
-4. Report which buttons work. Expect CW, voice memories and RX antenna to fail — those are
-   known unported features, not new bugs.
-5. If Defender quarantined anything, say so before anything else is diagnosed.
+**Updated 09/01/2026 — steps 1-3 of the original list are DONE, and step 1 was actively
+misleading. Do not re-run it as written; read §4 first.**
+
+### Done on the station PC 09/01/2026
+1. ✅ Defender history read (§5) — `Bearfoos.A!ml` on the **setup exe** three times; the
+   PyInstaller exe was never flagged, and **the app was running the whole time**.
+2. ✅ Cause of the bind failure found (§4) — **the legacy C# host `HamDeck.exe` held
+   `HTTP://+:5001/`**, not a Hyper-V/WSL reservation. `winnat` was stopped.
+3. ✅ Legacy host stopped; pusher restarted; **all three loopback URLs answer 200** with
+   live rig state, on both `127.0.0.1` and `[::1]`.
+
+### Next, in order
+1. 🔴 **Remove `HamDeck.lnk` from `shell:startup`** (or the C# host retakes 5001 at the next
+   logon and the deck dies again with the same misleading error). Joe's call, because it also
+   ends the local `radio.wa0o.com` origin — which is already dead here anyway, since
+   `cloudflared` is not running on this PC.
+2. **Press real Stream Deck buttons and report which work.** Expect **CW keyer**, **voice
+   memories** and **RX antenna** to fail — known unported features (§6), not new bugs.
+3. **File the Microsoft false-positive report** for the installer (§5) so the next person to
+   install it does not get a scary red box. Free, ~1-3 days, must be redone per release.
+4. Decide the signing path — Azure Trusted Signing is the only unblocked real cure while
+   `hamdeck-cpp` stays private (§5).
+
+### ⚠️ The lesson worth carrying back to the Linux side
+This section originally opened with *"`netsh ... show excludedportrange` — is 5001
+reserved?"* It **was** listed, so the answer was "yes" — and the prescribed follow-up would
+have created an administered reservation that permanently blocked the pusher from its own
+port. **The diagnostic was right, its interpretation was wrong, and a confident doc written
+from measurements taken on the *other* machine is exactly how that happens.**
+Same rule as `[[prove-the-gate-fails]]`: a check that cannot distinguish two causes is not
+a check. Match the *owner*, not the presence of a row.
