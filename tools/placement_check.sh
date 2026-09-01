@@ -46,16 +46,51 @@ window_geometry=@Rect(0 0 900 800)
 INI
 fi
 
+# ⚠️ WAIT FOR THINGS, DO NOT SLEEP AT THEM.
+#
+# This used to be `sleep 2` / `sleep 2` / `sleep 5` and then a SINGLE attempt to find the
+# window. That is a guess about how fast a shared CI runner is, and on a loaded one it is
+# wrong: the job fails with "no window found" for a window that was about to appear. It
+# cost a release build, and it would have gone on costing them intermittently - the worst
+# kind of failure, because it looks like a real regression in whatever was last changed.
+#
+# Polling is also FASTER in the normal case: it proceeds the moment each thing is ready
+# instead of always paying the worst case.
+wait_for() {  # wait_for <seconds> <description> <command...>
+  local deadline=$(( $(date +%s) + $1 )); local what="$2"; shift 2
+  until "$@" >/dev/null 2>&1; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      echo "$SCREEN $CASE: FAIL timed out waiting for $what"
+      return 1
+    fi
+    sleep 0.25
+  done
+}
+
 Xvfb $DISP -screen 0 ${W}x${H}x24 >/dev/null 2>&1 &
 XVFB=$!
-sleep 2
+wait_for 20 "the X display" env DISPLAY=$DISP xdpyinfo || { kill $XVFB 2>/dev/null; exit 1; }
+
 DISPLAY=$DISP openbox --sm-disable >/dev/null 2>&1 &
 OB=$!
-sleep 2
+# openbox owns a WM selection once it is actually managing the screen; that is the honest
+# signal that a window can be mapped and decorated, rather than a guess at its startup time.
+wait_for 20 "the window manager" env DISPLAY=$DISP xprop -root _NET_SUPPORTING_WM_CHECK \
+  || { kill $OB $XVFB 2>/dev/null; exit 1; }
 
 DISPLAY=$DISP "$CLIENT" >/dev/null 2>&1 &
 APP=$!
-sleep 5
+
+# ⚠️ Poll for the window rather than assuming it has appeared. A Qt app on a 2-vCPU
+# runner can take well over five seconds to map its first window.
+wait_for 45 "the HamDeck window" \
+  env DISPLAY=$DISP xdotool search --name "^HamDeck$" \
+  || { kill $APP $OB $XVFB 2>/dev/null; exit 1; }
+
+# ⚠️ Found is not the same as SETTLED. The window manager may still be applying its
+# geometry, and this script measures geometry - so give the mapped window a moment to
+# stop moving before reading it.
+sleep 1
 
 WID=$(DISPLAY=$DISP xdotool search --name "^HamDeck$" | head -1)
 if [ -z "$WID" ]; then echo "$SCREEN $CASE: FAIL no window found"; kill $APP $OB $XVFB 2>/dev/null; exit 1; fi
