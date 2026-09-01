@@ -47,6 +47,23 @@ struct HostState {
 // reference gates exactly these; test_transmit_gate asserts the same set.
 bool IsTransmitRoute(const std::string& path);
 
+// ── CW keyer ────────────────────────────────────────────────────────────────
+//: Longest payload the KM memory command accepts.
+inline constexpr size_t kCwMaxLength = 50;
+
+// Uppercase, drop anything the keyer cannot send, cap at kCwMaxLength, trim.
+// ⚠️ Empty result means SEND NOTHING - never an empty CAT command.
+std::string SanitizeCwText(const std::string& text);
+
+// ⚠️ Memory 1-5 plays back on CAT channel 6-A on this radio, NOT 1-5. See the comment in
+// cw_text.cpp - the reference host has this wrong. Returns 0 for an invalid slot.
+char CwPlaybackChannel(int memory);
+
+// Percent-decode a URL path segment.
+// ⚠️ Without it "CQ%20CQ" reaches the keyer as "CQ20CQ" - the percent is dropped and the
+// hex digits are legal CW, so the corruption survives every check and goes on the air.
+std::string UrlDecode(const std::string& in);
+
 struct ApiDeps {
   RadioPoller* poller = nullptr;
   AuthService* auth = nullptr;

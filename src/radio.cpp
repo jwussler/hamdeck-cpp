@@ -34,7 +34,17 @@ void RadioPoller::Stop() {
 void RadioPoller::Enqueue(const std::string& cat_command) {
   {
     std::lock_guard<std::mutex> lock(queue_mu_);
-    queue_.push_back(cat_command);
+    // ⚠️ ONE QUEUE, IN SUBMISSION ORDER. A plain command is just a task that sends it.
+    //
+    // This used to be a second deque drained AFTER tasks_, so a read submitted after a
+    // write still ran BEFORE it: /api/cw/memory/3 then /api/cw/status reported the state
+    // from before the play, every time. Every read-after-write was one call stale, on any
+    // route, and it looked like a radio that had not responded yet rather than a bug.
+    //
+    // The original reason for two queues - "a compound sequence should not have a loose
+    // command land in the middle of it" - still holds here, and more simply: a sequence is
+    // a single task, so a loose command runs before it or after it, never inside it.
+    tasks_.push_back([cat_command](CatTransport& cat) { cat.Send(cat_command); });
   }
   // ⚠️ Any command may have moved a slow-polled field, so force a full re-read on
   // the next cycle instead of waiting up to a second for the scheduled one.
@@ -56,8 +66,8 @@ void RadioPoller::EnqueueTask(std::function<void(CatTransport&)> task) {
 }
 
 void RadioPoller::DrainQueue() {
-  // Tasks first: a compound sequence should not have a loose command land in
-  // the middle of it.
+  // ⚠️ STRICT SUBMISSION ORDER. Writes and reads share one queue precisely so that a read
+  // submitted after a write observes it. See Enqueue.
   for (;;) {
     std::function<void(CatTransport&)> task;
     {
@@ -67,16 +77,6 @@ void RadioPoller::DrainQueue() {
       tasks_.pop_front();
     }
     task(*cat_);
-  }
-  for (;;) {
-    std::string cmd;
-    {
-      std::lock_guard<std::mutex> lock(queue_mu_);
-      if (queue_.empty()) return;
-      cmd = queue_.front();
-      queue_.pop_front();
-    }
-    cat_->Send(cmd);   // on the poller thread, where serial access belongs
   }
 }
 

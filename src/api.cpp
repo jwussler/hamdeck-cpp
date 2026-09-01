@@ -1496,12 +1496,42 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       return std::format(R"({{"status":"ok","tuning":{},"available":{}}})",
                          JsonBool(amp && amp->IsActive()), JsonBool(amp != nullptr)); }});
 
-  // ── CW keyer: present on the reference Linux host, not ported yet ─────────
-  generated.push_back({"/api/cw/status", [](bool) {
-      return std::string(R"({"status":"ok","playing":false,"available":false,)"
-                         R"("reason":"CW keyer is not implemented in the C++ host yet"})"); }});
-  generated.push_back({"/api/cw/stop", [](bool) {
-      return std::string(R"({"status":"ok","cw":"stopped","available":false})"); }});
+  // ── CW keyer ──────────────────────────────────────────────────────────────
+  // ⚠️ Every route here PUTS A SIGNAL ON THE AIR, so all of them are in
+  // IsTransmitRoute and refused for an account without transmit rights.
+  generated.push_back({"/api/cw/status", [rig](bool) {
+      // KY; answers KY1; while a memory is playing, KY0; when idle.
+      //
+      // ⚠️ THE PORT IS OWNED BY THE POLLER THREAD, so this is a real round trip through
+      // it rather than a guess. And if the answer does not come back, `playing` is
+      // reported as NULL, not false.
+      //
+      // That distinction is the whole lesson of /api/remote-tx/status, which invented all
+      // three of its fields behind a comment claiming it read through: a confident wrong
+      // answer gets believed and sends the next person to the wrong end of the chain.
+      if (!rig) return std::string(R"({"status":"ok","playing":null,"available":false})");
+      auto promise = std::make_shared<std::promise<std::optional<bool>>>();
+      auto future = promise->get_future();
+      rig->EnqueueTask([promise](CatTransport& cat) {
+        const auto r = cat.Exchange("KY;");
+        promise->set_value(r && r->size() >= 3
+                               ? std::optional<bool>((*r)[2] == '1')
+                               : std::nullopt);
+      });
+      // One poll cycle is 200ms; 800ms is four of them. Timing out is a real answer here,
+      // not a reason to make one up.
+      if (future.wait_for(std::chrono::milliseconds(800)) != std::future_status::ready) {
+        return std::string(R"({"status":"ok","playing":null,"available":true,)"
+                           R"("reason":"the radio did not answer KY; in time"})");
+      }
+      const auto v = future.get();
+      if (!v) return std::string(R"({"status":"ok","playing":null,"available":true,)"
+                                 R"("reason":"the radio's answer to KY; was unreadable"})");
+      return std::format(R"({{"status":"ok","playing":{},"available":true}})",
+                         *v ? "true" : "false"); }});
+  generated.push_back({"/api/cw/stop", [rig](bool) {
+      if (rig) rig->Enqueue("KY0;");
+      return std::string(R"({"status":"ok","cw":"stopped"})"); }});
 
   // ── Prefix routes ──────────────────────────────────────────────────────────
   auto bad_request = [](HttpResponse& res, const std::string& msg) {
@@ -1721,8 +1751,33 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                             what));
     };
   };
-  server.GetPrefix("/api/cw/memory/", keyer_absent("CW"));
-  server.GetPrefix("/api/cw/send/", keyer_absent("CW"));
+  server.GetPrefix("/api/cw/memory/", [rig, parse_int, bad_request](
+      const std::string& slot, const HttpRequest&, HttpResponse& res) {
+    int n = 0;
+    // ⚠️ REFUSE rather than clamp. Clamping a bad slot onto a valid one transmits
+    // something nobody asked for, from a route that answered 200.
+    const char chan = parse_int(slot, n) ? CwPlaybackChannel(n) : '\0';
+    if (chan == '\0') { bad_request(res, "cw memory must be 1-5"); return; }
+    // ⚠️ KY6..KYA, not KY1..KY5 - see CwPlaybackChannel. The reference host has this
+    // wrong for this radio.
+    if (rig) rig->Enqueue(std::string("KY") + chan + ";");
+    WriteJson(res, 200, std::format(R"({{"status":"ok","memory":{},"channel":"{}"}})",
+                                    n, chan));
+  });
+
+  server.GetPrefix("/api/cw/send/", [rig, bad_request](
+      const std::string& raw, const HttpRequest&, HttpResponse& res) {
+    const std::string text = SanitizeCwText(UrlDecode(raw));
+    // Empty means nothing sendable survived. Sending KM1; with no payload is a command
+    // with no argument, not a no-op.
+    if (text.empty()) { bad_request(res, "no sendable CW characters in that text"); return; }
+    if (rig) {
+      // Load memory 1, then key it. Two commands, in this order - hamlib does the same.
+      rig->Enqueue("KM1" + text + ";");
+      rig->Enqueue(std::string("KY") + CwPlaybackChannel(1) + ";");
+    }
+    WriteJson(res, 200, std::format(R"({{"status":"ok","sent":"{}"}})", text));
+  });
   server.GetPrefix("/api/voice/play/", keyer_absent("Voice"));
 
   for (const auto& route : generated) {

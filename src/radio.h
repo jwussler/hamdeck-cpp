@@ -161,7 +161,9 @@ class RadioPoller {
 
   std::atomic<bool> full_dirty_{true};
   std::mutex queue_mu_;
-  std::deque<std::string> queue_;
+  // ⚠️ NO SEPARATE COMMAND QUEUE. A plain command is pushed onto tasks_ as a send, so
+  // writes and reads keep strict submission order - a second deque drained afterwards
+  // made every read-after-write one call stale. See RadioPoller::Enqueue.
   std::deque<std::function<void(CatTransport&)>> tasks_;
 
   std::atomic<int> ptt_timeout_s_{kDefaultPttTimeoutSeconds};

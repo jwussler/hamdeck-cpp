@@ -37,6 +37,10 @@ class SimulatedRig : public CatTransport {
   int  mode_code_   = 2;         // 2 = USB in the FTDX-101 MD table
   int  power_       = 5;         // a real station is not running 5 W
   bool tx_          = false;
+  // CW keyer state. cw_memory1_ is kept so a test can read back what KM1 loaded rather
+  // than only that the command was accepted.
+  bool cw_playing_ = false;
+  std::string cw_memory1_;
   bool split_       = false;
   bool vfo_b_       = false;
   bool lock_        = false;

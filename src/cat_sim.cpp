@@ -20,6 +20,13 @@ std::optional<std::string> SimulatedRig::Exchange(const std::string& cmd) {
   // ID; is the ONLY safe probe. CARRYOVER.md section 9: probing with a control
   // route once changed the operating mode mid-session. 0682 is the FTDX-101MP.
   if (cmd == "ID;")  return "ID0682;";
+  // ⚠️ CW KEYER. Modelled because a route that CANNOT be exercised is a route nobody has
+  // tested - /api/cw/status was reduced to reporting null against a simulator that did
+  // not know the verb, which proves the honesty of the null and nothing about the parse.
+  //
+  // Playback channels are 6-A for memories 1-5 on this radio (hamlib newcat_send_morse
+  // names the FTDX-101MP explicitly); 1-5 is the FT-710 exception. KY0; stops.
+  if (cmd == "KY;")  return std::string("KY") + (cw_playing_ ? "1" : "0") + ";";
 
   if (cmd == "FA;")  return "FA" + Pad(freq_a_, 9) + ";";
   if (cmd == "FB;")  return "FB" + Pad(freq_b_, 9) + ";";
@@ -67,6 +74,21 @@ std::optional<std::string> SimulatedRig::Exchange(const std::string& cmd) {
 bool SimulatedRig::Send(const std::string& cmd) {
   std::lock_guard<std::mutex> lock(mu_);
 
+  // ⚠️ KY<channel>; starts playback, KY0; stops it. Channels 6-A are memories 1-5 on this
+  // radio - NOT 1-5, which is the FT-710 exception the reference host wrongly applies
+  // everywhere. Anything outside 0 and 6-A is rejected rather than quietly accepted, so a
+  // wrong channel fails loudly here instead of on the air.
+  if (cmd.rfind("KY", 0) == 0 && cmd.size() == 4 && cmd[3] == ';') {
+    const char ch = cmd[2];
+    if (ch == '0') { cw_playing_ = false; return true; }
+    if ((ch >= '6' && ch <= '9') || ch == 'A') { cw_playing_ = true; return true; }
+    return false;
+  }
+  // KM1<text>; loads keyer memory 1. Stored so a test can read back what was loaded.
+  if (cmd.rfind("KM1", 0) == 0 && cmd.size() >= 4 && cmd.back() == ';') {
+    cw_memory1_ = cmd.substr(3, cmd.size() - 4);
+    return true;
+  }
   if (cmd.rfind("FA", 0) == 0 && cmd.size() == 12) {
     freq_a_ = std::stoll(cmd.substr(2, 9));
     return true;
