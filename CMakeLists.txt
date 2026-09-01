@@ -82,6 +82,10 @@ add_test(NAME tx_audio COMMAND test_tx_audio)
 add_executable(test_rig_cal tests/test_rig_cal.cpp src/rig_cal.cpp)
 add_test(NAME rig_cal COMMAND test_rig_cal)
 
+add_executable(test_remote_active tests/test_remote_active.cpp src/auth.cpp)
+target_link_libraries(test_remote_active PRIVATE OpenSSL::Crypto)
+add_test(NAME remote_active COMMAND test_remote_active)
+
 add_executable(test_admin tests/test_admin.cpp src/auth.cpp)
 target_link_libraries(test_admin PRIVATE OpenSSL::Crypto)
 add_test(NAME admin COMMAND test_admin)

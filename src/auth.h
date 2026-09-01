@@ -68,6 +68,16 @@ class AuthService {
   struct UserRow { std::string username; bool is_admin; bool can_transmit; };
   std::vector<UserRow> ListUsers() const;
 
+  // ⚠️ How many OTHER sessions have touched the host within `within_seconds`.
+  //
+  // THE EXCLUSION IS THE WHOLE POINT. Every authenticated request refreshes its
+  // own session's last_activity, so a helper that polls "is anyone else
+  // operating the station?" refreshes itself a millisecond before it asks, and
+  // without the exclusion the answer is permanently, confidently yes. It would
+  // then stand down forever in favour of a client that is not there.
+  int ActiveSessionsExcluding(const std::string& exclude_token,
+                              int within_seconds) const;
+
   struct SessionRow {
     std::string token_short, username;
     bool is_admin, can_transmit;

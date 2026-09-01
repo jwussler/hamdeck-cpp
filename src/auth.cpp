@@ -262,6 +262,22 @@ std::vector<AuthService::SessionRow> AuthService::ListSessions() const {
   return out;
 }
 
+int AuthService::ActiveSessionsExcluding(const std::string& exclude_token,
+                                         int within_seconds) const {
+  std::lock_guard<std::mutex> lock(mu_);
+  const auto now = std::chrono::steady_clock::now();
+  int n = 0;
+  for (const auto& [token, s] : sessions_) {
+    // An empty exclude_token excludes nothing - a caller with no session of its
+    // own (the loopback control listener) still gets an honest count.
+    if (!exclude_token.empty() && token == exclude_token) continue;
+    const auto idle = std::chrono::duration_cast<std::chrono::seconds>(
+                          now - s.last_activity).count();
+    if (idle <= within_seconds) ++n;
+  }
+  return n;
+}
+
 int AuthService::AdminCount() const {
   std::lock_guard<std::mutex> lock(mu_);
   int n = 0;

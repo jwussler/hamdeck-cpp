@@ -242,6 +242,15 @@ std::string Pad(long long v, int width) {
 constexpr int kMaxDrainMs = 1200;
 
 constexpr int kLocalPowerCap = 100;
+// ⚠️ How recently another session must have touched the host to count as "in
+// use". The Qt client polls status about once a second, so 15s survives a
+// stalled poll or a brief network hiccup without declaring the operator gone,
+// and still lets a closed client release the station inside a quarter minute.
+//
+// This is a WINDOW, not a login check. A session lives for hours; being logged
+// in is not the same as sitting at the radio, and the whole point of this route
+// is telling those two apart.
+constexpr int kRemoteActiveWindowSeconds = 15;
 constexpr int kMaxWatts      = 200;
 
 }  // namespace
@@ -467,6 +476,38 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                   JsonBool(real_sink),
                   JsonBool(tx && !tx->Holder().empty()),
                   JsonBool(tx && !tx->Holder().empty())));
+  });
+
+  // ⚠️ IS SOMEBODY ELSE OPERATING THE STATION RIGHT NOW?
+  //
+  // This exists because the flag everything reaches for first is the wrong one.
+  // `client_connected` on /api/tx-audio/status above means SOMEONE IS HOLDING
+  // THE TX AUDIO - it is the transmit holder under another name. An operator
+  // listening remotely on RX, spinning the VFO, working nobody, reads false
+  // there. A helper that stood down on that flag would fight the very client it
+  // was supposed to yield to, and only while that client was receiving.
+  //
+  // Two independent signals, because they fail in different directions:
+  //   - a recently active session that is NOT the caller's (covers RX-only use)
+  //   - the TX audio holder (covers a long transmission, where the session's
+  //     last_activity can go quiet for the length of the over)
+  server.Get("/api/remote/status", [&deps](const HttpRequest& req, HttpResponse& res) {
+    AuthService* auth = deps.auth;
+    TxAudioReceiver* tx = deps.tx_audio;
+    const std::string holder = tx ? tx->Holder() : std::string();
+    // ⚠️ Excluding the CALLER's own session is what makes this answerable. See
+    // AuthService::ActiveSessionsExcluding - a poller refreshes itself on the
+    // way in and would otherwise always find somebody home.
+    const int others =
+        auth ? auth->ActiveSessionsExcluding(ExtractToken(req),
+                                             kRemoteActiveWindowSeconds)
+             : 0;
+    const bool active = (others > 0) || !holder.empty();
+    WriteJson(res, 200,
+              std::format(R"({{"status":"ok","active":{},"other_clients":{},)"
+                          R"("tx_holder":"{}","window_seconds":{}}})",
+                          JsonBool(active), others, holder,
+                          kRemoteActiveWindowSeconds));
   });
 
   // The meter scale, so a client draws a calibrated face without hard-coding a
@@ -1876,7 +1917,17 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
         return;
       }
       std::string err;
-      persist_users(err);
+      // ⚠️ A password change that is not saved is the worst of the three: the
+      // operator sets a new one, it works, and the OLD password comes back at
+      // the next restart - with the new one having been believed and written
+      // down somewhere. See the note on /api/admin/user/remove/.
+      if (!persist_users(err)) {
+        WriteJson(res, 500,
+                  std::format(R"({{"status":"error","message":"password changed on the )"
+                              R"(running host but NOT saved - the old one returns on )"
+                              R"(restart: {}"}})", err));
+        return;
+      }
       WriteJson(res, 200,
                 std::format(R"({{"status":"ok","message":"Password changed for '{}'"}})",
                             user));
@@ -1904,7 +1955,20 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
         return;
       }
       std::string err;
-      persist_users(err);
+      // ⚠️ REPORT A FAILED SAVE. This used to discard `err` and answer "ok"
+      // regardless, so a removal that never reached disk looked identical to one
+      // that did - and the user walked back in at the next restart, which on a
+      // station host is the next power cut. /api/admin/user/add has always
+      // checked this; these routes did not, which is the worse half: an account
+      // you believe is gone is not the same kind of mistake as one you believe
+      // is missing.
+      if (!persist_users(err)) {
+        WriteJson(res, 500,
+                  std::format(R"({{"status":"error","message":"user removed from the )"
+                              R"(running host but NOT saved - it returns on restart: {}"}})",
+                              err));
+        return;
+      }
       WriteJson(res, 200,
                 std::format(R"({{"status":"ok","message":"User '{}' removed"}})", user));
     });
@@ -1931,7 +1995,16 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
         return;
       }
       std::string err;
-      persist_users(err);
+      // ⚠️ Same reason as the two routes above - and here the unsaved change is
+      // a TRANSMIT right. Revoking one that quietly returns at the next restart
+      // is a permission you believe you took away and did not.
+      if (!persist_users(err)) {
+        WriteJson(res, 500,
+                  std::format(R"({{"status":"error","message":"transmit right changed on )"
+                              R"(the running host but NOT saved - it reverts on restart: )"
+                              R"({}"}})", err));
+        return;
+      }
       WriteJson(res, 200,
                 std::format(R"({{"status":"ok","username":"{}","can_transmit":{}}})",
                             user, JsonBool(allow)));

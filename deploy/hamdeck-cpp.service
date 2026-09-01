@@ -53,5 +53,19 @@ SupplementaryGroups=dialout audio
 # failing closed on a hardening flag is a worse outcome than the flag's benefit.
 ProtectSystem=full
 
+# ⚠️ WITHOUT THIS, ProtectSystem=full MAKES THE CONFIG READ-ONLY - and the host
+# DOES write there: every admin change (add a user, change a password, revoke a
+# transmit right) is saved back to its own config file.
+#
+# The failure was silent and outlasted a restart. The routes answered
+# {"status":"ok"} while the save underneath them failed, so a removed user was
+# gone from the running host and back again after the next restart - which on a
+# station box is the next power cut, not a maintenance window. The routes now
+# report a failed save; this is what stops there being one to report.
+#
+# Named as a directory, not the file: the config is written temp-file-then-rename,
+# which needs to CREATE a sibling, and that is permission on the directory.
+ReadWritePaths=/etc/hamdeck-cpp
+
 [Install]
 WantedBy=multi-user.target
