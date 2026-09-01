@@ -115,8 +115,19 @@ jobs:
       - name: It is actually universal
         run: |
           set -euo pipefail
-          echo "architectures: $(lipo -archs client/build/hamdeck-qml)"
-          lipo -archs client/build/hamdeck-qml | grep -q arm64  || { echo "missing arm64";  exit 1; }
-          lipo -archs client/build/hamdeck-qml | grep -q x86_64 || { echo "missing x86_64"; exit 1; }
+          # ⚠️ THE BINARY IS INSIDE AN .app ON macOS. qt_add_executable produces a bundle,
+          # so client/build/hamdeck-qml does not exist - the tools report "no such file",
+          # which reads as a build that produced nothing rather than a path that is wrong.
+          BIN=client/build/hamdeck-qml.app/Contents/MacOS/hamdeck-qml
+          [ -f "$BIN" ] || BIN=client/build/hamdeck-qml
+          echo "architectures: $(lipo -archs "$BIN")"
+          lipo -archs "$BIN" | grep -q arm64  || { echo "missing arm64";  exit 1; }
+          lipo -archs "$BIN" | grep -q x86_64 || { echo "missing x86_64"; exit 1; }
       - name: Run it
-        run: QT_QPA_PLATFORM=offscreen ./client/build/hamdeck-qml --selftest
+        run: |
+          # ⚠️ THE BINARY IS INSIDE AN .app ON macOS. qt_add_executable produces a bundle,
+          # so client/build/hamdeck-qml does not exist - the tools report "no such file",
+          # which reads as a build that produced nothing rather than a path that is wrong.
+          BIN=client/build/hamdeck-qml.app/Contents/MacOS/hamdeck-qml
+          [ -f "$BIN" ] || BIN=client/build/hamdeck-qml
+          QT_QPA_PLATFORM=offscreen "$BIN" --selftest
