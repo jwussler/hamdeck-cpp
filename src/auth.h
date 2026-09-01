@@ -75,8 +75,20 @@ class AuthService {
   // operating the station?" refreshes itself a millisecond before it asks, and
   // without the exclusion the answer is permanently, confidently yes. It would
   // then stand down forever in favour of a client that is not there.
-  int ActiveSessionsExcluding(const std::string& exclude_token,
-                              int within_seconds) const;
+  struct ActiveCount {
+    int others = 0;     // recently active sessions that are not the caller's
+    // ⚠️ ...of which THIS MANY belong to the caller's own username.
+    //
+    // A program that restarts leaves its previous session behind, alive until it
+    // ages out. Token exclusion cannot see that: it is genuinely a different
+    // session. So a helper that restarts finds "somebody else is operating the
+    // station", stands down, and if it is crash-looping it stands down forever -
+    // deferring to its own ghost. Counting the caller's own username separately
+    // is what lets it tell its ghost from an operator.
+    int same_user = 0;
+  };
+  ActiveCount ActiveSessionsExcluding(const std::string& exclude_token,
+                                      int within_seconds) const;
 
   struct SessionRow {
     std::string token_short, username;

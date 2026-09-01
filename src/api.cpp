@@ -498,15 +498,26 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
     // ⚠️ Excluding the CALLER's own session is what makes this answerable. See
     // AuthService::ActiveSessionsExcluding - a poller refreshes itself on the
     // way in and would otherwise always find somebody home.
-    const int others =
+    const AuthService::ActiveCount n =
         auth ? auth->ActiveSessionsExcluding(ExtractToken(req),
                                              kRemoteActiveWindowSeconds)
-             : 0;
-    const bool active = (others > 0) || !holder.empty();
+             : AuthService::ActiveCount{};
+    const bool active = (n.others > 0) || !holder.empty();
+    // ⚠️ same_user_clients is reported so a caller can recognise ITS OWN GHOST.
+    // A helper that restarts leaves its previous session alive until it ages out;
+    // that session is not the caller's token, so it counts as somebody else and
+    // the helper stands down against itself - permanently, if it is restarting in
+    // a loop. Measured: a second run within the window read active=true with
+    // nothing but the previous run on the host.
+    //
+    // A COUNT, not a username: the caller only needs to know how many of these
+    // are its own, and a session list is not something a non-admin route should
+    // hand out.
     WriteJson(res, 200,
               std::format(R"({{"status":"ok","active":{},"other_clients":{},)"
-                          R"("tx_holder":"{}","window_seconds":{}}})",
-                          JsonBool(active), others, holder,
+                          R"("same_user_clients":{},"tx_holder":"{}",)"
+                          R"("window_seconds":{}}})",
+                          JsonBool(active), n.others, n.same_user, holder,
                           kRemoteActiveWindowSeconds));
   });
 
