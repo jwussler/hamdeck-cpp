@@ -66,3 +66,41 @@ jobs:
       - name: Selftest, including the real window
         working-directory: pusher
         run: xvfb-run -a python -m hamdeck_pusher --selftest
+
+  macos-universal:
+    # ⚠️ A FAST FEEDBACK LOOP FOR THE ONE ASSUMPTION THE MAC RELEASE RESTS ON.
+    #
+    # The release job builds a universal binary, which only works if the Qt kit aqt
+    # downloads is itself universal. Qt's documentation covers building Qt universal from
+    # source; it does not say the prebuilt macOS kit is fat, and that is the thing being
+    # relied on. Finding out from a release run means burning a tag per attempt.
+    #
+    # This runs on every push and answers it in minutes. No signing, no notarisation - it
+    # exists to answer one question.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.1'
+          modules: 'qtwebsockets qtmultimedia'
+      - name: Is the Qt kit itself universal
+        run: |
+          # ⚠️ Ask before building. If Qt is thin, the app link fails with an error about
+          # missing symbols for x86_64, which reads as a code problem and is not one.
+          LIB=$(find "$QT_ROOT_DIR/lib" -name "QtCore" -type f | head -1)
+          echo "QtCore: ${LIB:-not found}"
+          [ -n "$LIB" ] && lipo -archs "$LIB" || true
+      - name: Build universal
+        run: |
+          cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          cmake --build client/build
+      - name: It is actually universal
+        run: |
+          set -euo pipefail
+          echo "architectures: $(lipo -archs client/build/hamdeck-qml)"
+          lipo -archs client/build/hamdeck-qml | grep -q arm64  || { echo "missing arm64";  exit 1; }
+          lipo -archs client/build/hamdeck-qml | grep -q x86_64 || { echo "missing x86_64"; exit 1; }
+      - name: Run it
+        run: QT_QPA_PLATFORM=offscreen ./client/build/hamdeck-qml --selftest
