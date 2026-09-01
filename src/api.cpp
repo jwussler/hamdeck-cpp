@@ -732,10 +732,16 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
     WriteJson(res, 200,
               std::format(
                   R"({{"status":"ok","authenticated":{},"is_admin":{},"can_transmit":{},)"
-                  R"("username":{},"token":null}})",
+                  R"("is_station":{},"username":{},"token":null}})",
                   JsonBool(ok || trusted),
                   JsonBool(ok && deps.auth->IsAdmin(token)),
                   JsonBool(ok && deps.auth->CanTransmit(token)),
+                  // ⚠️ So a client can GREY THE AMP TUNE BUTTON instead of showing a
+                  // live one that answers 403. CARRYOVER.md section 2: "a button that
+                  // always errors is worse than a missing one" - and it is also the
+                  // only way to confirm the right is live without keying an amplifier
+                  // to find out.
+                  JsonBool(trusted || (ok && deps.auth->IsStation(token))),
                   user ? "\"" + *user + "\"" : "null"));
   });
 

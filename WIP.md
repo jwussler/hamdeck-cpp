@@ -1305,14 +1305,28 @@ the bug being guarded against refuses with **200** — so the assertion could no
 working build from the broken one. It now checks the body came from the amp route. This is
 the same failure the fix itself addresses, reproduced inside its own test within the hour.
 
-### Open — needs Joe
-The last step is one grant, and it needs a fact only he has: **which account the pusher logs
-in as**, and whether that account should hold transmit rights. The host log records the login
-path but not the username, so it cannot be read off the box.
+### Closed 09/01/2026 — granted to `wa0o`
+Joe: the pusher logs in as **`wa0o`**, which already held `can_transmit`, so this was the
+station grant alone and widened nothing else. Config edited in place (backup
+`config.json.bak-station-*`, temp+rename, every unknown key preserved), host restarted, and
+the pusher reconnected on its own.
+
+    joe        tx=True  station=False
+    listener   tx=False station=False
+    pusher     tx=False station=False
+    wa0o       tx=True  station=True
+
+⚠️ **The last step is a button press, and it is Joe's.** `rig_connected` went true during this
+work, and `/api/tune/amp` keys the transmitter for ten seconds - so it was NOT fired from here
+to "confirm". The binary is proven by `amp_gate_check.sh` against the simulator on both build
+hosts; the live path is proven by pressing the button.
 
     joe        admin  tx  station=false
     listener          --  station=false
     pusher            --  station=false     <- tx denied
     wa0o              tx  station=false
 
-Deployed to the VM: build `a4a5e239426f`, 16/16 tests green there.
+Deployed to the VM: build `41d38d6ba96c`, 16/16 tests green there.
+
+`/api/auth/status` now carries `is_station`, so a client can grey the button out rather than
+show a live one that answers 403 - and so the right can be confirmed without keying an amp.
