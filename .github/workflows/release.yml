@@ -457,7 +457,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.1'
+          # ⚠️ 6.9.2 HERE, 6.8.1 ON WINDOWS - a deliberate skew, not drift.
+          #
+          # Qt 6.8.1 cannot link on macos-latest: `ld: framework 'AGL' not found`. AGL is
+          # Apple's long-removed OpenGL framework, Qt's Gui dependency asks CMake for it,
+          # and the Xcode 26 SDK does not have it. 6.9.2 builds cleanly - measured, on a
+          # run that got as far as a successful universal build.
+          #
+          # Windows stays on 6.8.1 because it works there. Moving a platform that builds
+          # to chase consistency is how a working target becomes an unknown one.
+          version: '6.9.2'
           # ⚠️ NOT qtdeclarative. Qt Quick is part of the BASE install in Qt 6,
           # and naming it as an add-on makes aqt fail to parse the package XML -
           # which kills the whole step before a single line is compiled.
