@@ -118,6 +118,13 @@ jobs:
         with: { name: hamdeck-windows-installer, path: packaging/Output/*.exe }
 
   pusher-windows:
+    # ⚠️ JOB LEVEL, NOT STEP LEVEL. A step's own `env:` is not in scope for that same
+    # step's `if:` - the env context there resolves workflow- and job-level values only.
+    # Defined on the step, the signing gate would read empty and the signing steps would
+    # ALWAYS SKIP, shipping an unsigned installer while the log looked deliberate. That is
+    # the exact failure this gate exists to prevent, so it is worth the odd placement.
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
     # The Wavelog data pusher: a Python/Tk desktop app, frozen with PyInstaller.
     #
     # ⚠️ THE ORDER OF THESE STEPS IS THE POINT. Tests run before the freeze, and then
@@ -186,8 +193,6 @@ jobs:
       # hides its own failure is how an unsigned build ships believing it was signed.
       - name: Sign the app
         if: ${{ env.AZURE_CLIENT_ID != '' }}
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         uses: azure/trusted-signing-action@v0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -209,8 +214,6 @@ jobs:
 
       - name: Sign the installer
         if: ${{ env.AZURE_CLIENT_ID != '' }}
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
         uses: azure/trusted-signing-action@v0
         with:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}

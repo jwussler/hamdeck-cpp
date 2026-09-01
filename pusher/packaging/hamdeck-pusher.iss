@@ -25,6 +25,14 @@ PrivilegesRequiredOverridesAllowed=dialog
 SetupIconFile=..\..\packaging\icons\hamdeck.ico
 ArchitecturesInstallIn64BitMode=x64compatible
 
+; ⚠️ THE UNINSTALLER IS GENERATED AT INSTALL TIME AND IS NOT COVERED BY SIGNING THE
+; INSTALLER. Inno writes unins000.exe onto the target machine from a stub, so the signature
+; applied to this setup.exe in CI never reaches it - and an unsigned executable appearing in
+; Program Files is exactly the shape the heuristic that flagged us is trained on.
+; SignedUninstaller signs that stub at compile time instead. It is a no-op unless a
+; SignTool is configured, so it is safe to leave on while signing is not yet wired.
+SignedUninstaller=yes
+
 [Files]
 ; ⚠️ The whole onedir tree, not just the exe. A PyInstaller onedir build needs its
 ; _internal directory beside the binary or it dies at launch with no message.
