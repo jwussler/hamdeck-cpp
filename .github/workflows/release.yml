@@ -117,6 +117,60 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: hamdeck-windows-installer, path: packaging/Output/*.exe }
 
+  pusher-windows:
+    # The Wavelog data pusher: a Python/Tk desktop app, frozen with PyInstaller.
+    #
+    # ⚠️ THE ORDER OF THESE STEPS IS THE POINT. Tests run before the freeze, and then
+    # --selftest runs AGAINST THE FROZEN EXE - because the two failures this has to catch
+    # happen at different stages. A logic bug fails the first; PyInstaller bundling an
+    # empty package, or missing tkinter, only fails the second. A bundle that starts is
+    # not a bundle that works.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Tests
+        working-directory: pusher
+        run: python -m unittest discover -s tests -v
+      - name: Selftest, from source
+        working-directory: pusher
+        run: python -m hamdeck_pusher --selftest
+      - name: Freeze
+        working-directory: pusher
+        run: |
+          pip install pyinstaller
+          pyinstaller --noconfirm --clean --onedir --windowed ^
+            --name hamdeck-pusher ^
+            --icon ..\packaging\icons\hamdeck.ico ^
+            --paths . ^
+            --distpath packaging\dist ^
+            --workpath packaging\work ^
+            --specpath packaging ^
+            packaging\entry.py
+        shell: cmd
+      - name: Selftest, on the FROZEN exe
+        working-directory: pusher
+        shell: pwsh
+        run: |
+          # ⚠️ A --windowed exe has NO stdout, so the report goes to a file. Without this
+          # a failing frozen build gives CI an exit code and nothing to act on - and that
+          # is the one occasion the detail matters.
+          $p = Start-Process -FilePath "packaging\dist\hamdeck-pusher\hamdeck-pusher.exe" `
+               -ArgumentList "--selftest","--report","selftest.txt" -PassThru -Wait
+          if (Test-Path selftest.txt) { Get-Content selftest.txt }
+          if ($p.ExitCode -ne 0) { throw "frozen selftest failed: $($p.ExitCode)" }
+      - name: The icon is actually in the exe
+        working-directory: pusher
+        run: python ..\tools\check_exe_icon.py packaging\dist\hamdeck-pusher\hamdeck-pusher.exe ..\packaging\icons\hamdeck-256.png
+        shell: cmd
+      - name: Installer
+        working-directory: pusher
+        run: iscc packaging\hamdeck-pusher.iss
+        shell: cmd
+      - uses: actions/upload-artifact@v4
+        with: { name: hamdeck-pusher-windows-installer, path: pusher/packaging/Output/*.exe }
+
   macos:
     # ⚠️ NOT VERIFIED BY ANYONE. Nobody in this project has a Mac to run the
     # result on, and CARRYOVER.md section 8 is about shipping a binary nobody
@@ -156,7 +210,10 @@ jobs:
   # ⚠️ needs linux+windows ONLY. The macos job sits queued for hours on this
   # runner pool; gating the release on it would mean never publishing at all.
   publish:
-    needs: [linux, windows]
+    # ⚠️ pusher-windows is in `needs` so a broken pusher build BLOCKS the release rather
+    # than publishing a set of artifacts with one quietly missing. The guard below only
+    # checks that SOME .exe exists, which a missing pusher installer would still satisfy.
+    needs: [linux, windows, pusher-windows]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     permissions:

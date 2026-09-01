@@ -8,6 +8,7 @@ this whole project was written to stop shipping.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from .runner import Runner
 from .state import Phase, PushResult
 
 
-def _selftest() -> int:
+def _selftest(emit=print) -> int:
     """Drive the decision path end to end with no network. Prints what it proved."""
     from .policy import Reading
 
@@ -44,7 +45,7 @@ def _selftest() -> int:
 
     fails = []
     def check(label, cond):
-        print(f"  {'ok  ' if cond else 'FAIL'}  {label}")
+        emit(f"  {'ok  ' if cond else 'FAIL'}  {label}")
         if not cond:
             fails.append(label)
 
@@ -95,11 +96,105 @@ def _selftest() -> int:
     r.tick()
     check("recovers once the key is fixed", r.state.publishing)
 
-    print()
+    emit("")
     if fails:
-        print(f"SELFTEST FAILED: {len(fails)} check(s)")
+        emit(f"SELFTEST FAILED: {len(fails)} check(s)")
         return 1
-    print("selftest: all checks passed")
+    emit("decision path: all checks passed")
+    return 0
+
+
+def _gui_selftest(emit=print) -> int:
+    """Build the REAL window offscreen and read values back out of the widgets.
+
+    ⚠️ This exists because of 0.1.12 and the sliders: a UI that loads is not a UI that
+    works, and a frozen bundle that starts is not one that has tkinter in it. PyInstaller
+    has shipped an empty bundle on this fleet before - the app "ran" and did nothing.
+    """
+    try:
+        import tkinter as tk
+        from .gui import App
+    except Exception as e:  # noqa: BLE001
+        emit(f"  FAIL  tkinter is not available in this build: {e}")
+        return 1
+    try:
+        root = tk.Tk()
+    except Exception as e:  # noqa: BLE001
+        # ⚠️ A SKIP HERE ALMOST SHIPPED AS A PASS.
+        #
+        # A bundle with tkinter but no Tk RUNTIME imports fine and then throws TclError
+        # from Tk() - which is indistinguishable from "this machine has no display"
+        # unless you check. The first version returned 0 for both, so removing the Tk
+        # data from the frozen bundle still exited 0 and CI would have shipped a window
+        # that cannot open. Proven by deleting _tk_data and watching it pass.
+        #
+        # So: no display is a skip ONLY where there genuinely is no display. Anywhere a
+        # window could have opened - Windows always, Linux with DISPLAY set - this is a
+        # broken build and it fails.
+        headless = (os.name != "nt"
+                    and not os.environ.get("DISPLAY")
+                    and not os.environ.get("WAYLAND_DISPLAY"))
+        if headless:
+            emit(f"  skip  no display on this machine, window not built ({type(e).__name__})")
+            return 0
+        emit(f"  FAIL  Tk is present but will not start - the bundle is broken: {e}")
+        return 1
+
+    from .state import Phase, State
+    fails = []
+
+    def check(label, cond):
+        emit(f"  {'ok  ' if cond else 'FAIL'}  {label}")
+        if not cond:
+            fails.append(label)
+
+    try:
+        root.withdraw()
+        app = App(root, Settings(radio_name="SELFTEST"), None)
+        st = State()
+        st.observed_freq, st.observed_mode = 14074000, "USB"
+        st.published_freq, st.published_mode = 14074000, "USB"
+        st.note(Phase.PUBLISHING, "14.074000 MHz USB")
+        st.published_at = __import__("time").time()
+        app._paint(st)
+        root.update_idletasks()
+        check("the window builds and paints", app.state_lbl.cget("text") == "LOGGING")
+        check("the radio readout shows the frequency",
+              "14.0740" in app.rig_freq.cget("text"))
+        check("in sync -> the log readout is lit amber",
+              app.log_freq.cget("fg").lower() == "#ffb020")
+
+        st.published_freq = 7190000          # log now behind the radio
+        app._paint(st)
+        root.update_idletasks()
+        check("out of sync -> the log readout is dimmed",
+              app.log_freq.cget("fg").lower() == "#8a6320")
+        check("and it says so in words", "behind the radio" in app.why.cget("text"))
+
+        st.note(Phase.FAILING, "403 rejected - check the Wavelog API key")
+        app._paint(st)
+        root.update_idletasks()
+        check("a rejected key paints red, not green",
+              app.state_lbl.cget("text") == "NOT LOGGING"
+              and app.state_lbl.cget("fg").lower() == "#b4232a")
+
+        st.note(Phase.DEFERRED, "a remote client is operating the station")
+        app._paint(st)
+        root.update_idletasks()
+        # ⚠️ Deferring must NOT look like a failure. From Wavelog they are identical;
+        # on screen they must not be.
+        check("standing down is amber, not red",
+              app.state_lbl.cget("fg").lower() == "#ffb020")
+    finally:
+        try:
+            root.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if fails:
+        emit(f"GUI SELFTEST FAILED: {len(fails)} check(s)")
+        return 1
+    emit("window: all checks passed")
     return 0
 
 
@@ -110,10 +205,30 @@ def main(argv=None) -> int:
     ap.add_argument("--once", action="store_true", help="one pass, print the state, exit")
     ap.add_argument("--status", action="store_true", help="print settings (redacted) and exit")
     ap.add_argument("--selftest", action="store_true", help="prove the decision path offline")
+    ap.add_argument("--gui", action="store_true", help="the window (default when frozen)")
+    ap.add_argument("--report", type=Path, default=None,
+                    help="write --selftest output here as well as stdout")
+    ap.add_argument("--shot", type=Path, default=None,
+                    help="--gui: render, save nothing but exit after N ms (see --shot-ms)")
+    ap.add_argument("--shot-ms", type=int, default=1500)
     args = ap.parse_args(argv)
 
     if args.selftest:
-        return _selftest()
+        lines: list[str] = []
+        rc = _selftest(lines.append)
+        rc |= _gui_selftest(lines.append)
+        text = "\n".join(lines)
+        # ⚠️ A WINDOWED exe HAS NO stdout. PyInstaller --noconsole discards prints
+        # entirely, so CI would see an exit code and nothing else - and the one time
+        # that matters is when it fails. --report is how the frozen build says why.
+        if args.report:
+            args.report.write_text(text + "\n")
+        print(text)
+        return rc
+
+    if args.gui or getattr(sys, "frozen", False):
+        from .gui import run
+        return run(args.config, shot=args.shot, shot_ms=args.shot_ms)
 
     settings = Settings.load(args.config)
     if args.status:

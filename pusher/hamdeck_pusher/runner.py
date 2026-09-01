@@ -42,6 +42,10 @@ class Runner:
         except HostError as e:
             host_error = e.detail
 
+        if reading is not None and reading.connected and reading.freq:
+            self.state.observed_freq = reading.freq
+            self.state.observed_mode = reading.mode
+
         decision = self.policy.evaluate(reading, remote_active, now, host_error)
         if not decision.publish:
             self.state.note(decision.phase, decision.reason)

@@ -55,6 +55,18 @@ class State:
     published_at: float | None = None
     last_result: PushResult | None = None
     consecutive_failures: int = 0
+    #: Last reading OBSERVED on the radio, published or not. Kept separate from the
+    #: published pair on purpose: the whole question this app answers is whether the log
+    #: is following the radio, and you cannot see that from one number.
+    observed_freq: int | None = None
+    observed_mode: str | None = None
+
+    @property
+    def in_sync(self) -> bool:
+        """Does Wavelog currently match the radio?"""
+        return (self.observed_freq is not None
+                and (self.observed_freq, self.observed_mode)
+                == (self.published_freq, self.published_mode))
 
     def note(self, phase: Phase, reason: str) -> None:
         self.phase = phase

@@ -2,3 +2,11 @@ build/
 */build/
 # Station-specific operational detail. NEVER commit this - the repo is public.
 SITE.md
+
+# Python bytecode. These were tracked once; a .pyc in a diff is noise at best and a
+# stale import at worst.
+__pycache__/
+*.pyc
+# PyInstaller output
+pusher/packaging/dist/
+pusher/packaging/Output/

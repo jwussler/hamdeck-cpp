@@ -45,3 +45,24 @@ jobs:
             echo "FAIL: unknown flag was accepted"; exit 1
           fi
           echo "ok: unknown flag rejected"
+
+  pusher:
+    # ⚠️ Runs on every push, not only on a tag. The .NET client's whole five-release
+    # evening happened because 49 tests existed and CI never called them.
+    #
+    # Linux, deliberately: this catches logic and import breaks on every commit and costs
+    # seconds. The FROZEN bundle can only be proven on Windows, and that runs in
+    # release.yml - a green run here says the code is right, never that the installer is.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: tkinter, for the window selftest
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+      - name: Tests
+        working-directory: pusher
+        run: python -m unittest discover -s tests -v
+      - name: Selftest, including the real window
+        working-directory: pusher
+        run: xvfb-run -a python -m hamdeck_pusher --selftest
