@@ -409,7 +409,11 @@ jobs:
           find dist -type f | sort
           # ⚠️ Refuse to publish without an installer. An empty release is worse
           # than none: it looks like the build shipped when nothing did.
-          test -n "$(find dist -name '*.exe' -print -quit)" || {
+          # ⚠️ *Setup.exe, not *.exe. The client's staged tree is among the artifacts now,
+          # so a bare *.exe glob uploads hamdeck-qml.exe as a loose file - an executable
+          # that cannot run without the Qt DLLs beside it, published next to the real
+          # installer where somebody will reasonably try it.
+          test -n "$(find dist -name '*Setup.exe' -print -quit)" || {
             echo "no installer among the artifacts - refusing to publish"; exit 1; }
           cat > notes.md <<'NOTES'
           ## HamDeck — download `HamDeckPusher-win-Setup.exe`
@@ -455,6 +459,6 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "HamDeck ${GITHUB_REF_NAME}" \
             --notes-file notes.md \
-            $(find dist -name '*.exe') $(find dist -name '*.deb') \
+            $(find dist -name '*Setup.exe') $(find dist -name '*.deb') \
             $(find dist -name '*.nupkg') $(find dist -name 'RELEASES') \
             $(find dist -name 'releases.*.json')
