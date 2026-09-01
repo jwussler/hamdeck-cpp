@@ -378,16 +378,44 @@ jobs:
           test -n "$(find dist -name '*.exe' -print -quit)" || {
             echo "no installer among the artifacts - refusing to publish"; exit 1; }
           cat > notes.md <<'NOTES'
-          Windows installer and Linux `.deb`.
+          ## HamDeck Wavelog Pusher — download `HamDeckPusher-win-Setup.exe`
 
-          **The Windows installer is unsigned**, so SmartScreen warns on first run:
-          *More info* then *Run anyway*.
+          The other files are the separate HamDeck Qt client, plus the update manifest the
+          app reads. You only need the Setup.
 
-          Every CI job runs the binary before packaging it, the panel placement is
-          checked at seven screen sizes, and the application icon is verified to be
-          embedded in the executable.
+          ### Windows will warn you. Here is exactly what to do.
+
+          You will see **"Windows protected your PC"**. Click **More info** → **Run anyway**.
+
+          **Check the Publisher line first. It must say `Henry Wussler`.** The installer is
+          code-signed through Microsoft's Artifact Signing service, so Windows can tell you
+          who built it. If it says Unknown or another name, stop — that file is not this one.
+
+          **Why the warning happens:** SmartScreen asks "have I seen this file before?", not
+          "is this safe?". New releases from small publishers always start at no. It clears
+          as people install it. Microsoft removed the certificate-based bypass in 2024, so
+          there is no way to skip that queue.
+
+          ### What it does
+          - Publishes your rig's frequency and mode to **Wavelog**, so the log follows the radio
+          - **Stands down** while a remote client is operating the station
+          - Serves the HamDeck REST API on `localhost:5001` so **Stream Deck buttons work**
+
+          Settings live in `%APPDATA%\HamDeckPusher` and updates never touch them.
+
+          ### Known gaps
+          CW keyer, voice memories and RX antenna are not implemented on the C++ host yet.
+          Those buttons say so plainly rather than failing silently.
           NOTES
+          # ⚠️ UPLOAD THE VELOPACK FILES, NOT JUST THE .exe.
+          #
+          # The updater reads releases.win.json / RELEASES and downloads the .nupkg from the
+          # SAME release. Publishing only Setup.exe produces a release that installs fine and
+          # can never update anything - and nothing about it looks wrong until an update is
+          # expected and silently does not arrive.
           gh release create "${GITHUB_REF_NAME}" \
             --title "HamDeck ${GITHUB_REF_NAME}" \
             --notes-file notes.md \
-            $(find dist -name '*.exe') $(find dist -name '*.deb')
+            $(find dist -name '*.exe') $(find dist -name '*.deb') \
+            $(find dist -name '*.nupkg') $(find dist -name 'RELEASES') \
+            $(find dist -name 'releases.*.json')
