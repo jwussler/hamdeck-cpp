@@ -80,9 +80,19 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      # ⚠️ NEWER QT THAN THE OTHER PLATFORMS, ON PURPOSE AND UNDER TEST.
+      #
+      # Qt 6.8.1 fails to link on this runner: `ld: framework 'AGL' not found`. AGL is
+      # Apple's long-removed OpenGL framework, and Qt's Gui dependency asks CMake for it;
+      # the Xcode 26 SDK on macos-latest does not have it. Qt 6.8.1 predates that SDK.
+      #
+      # ⚠️ This is the AGL problem the old macos-13 comment described. I dismissed it as
+      # unverified because the comment was written against an already-retired runner - the
+      # provenance was bad, the claim was true. Being unable to check something is not
+      # evidence it is false.
       - uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.1'
+          version: '6.9.2'
           modules: 'qtwebsockets qtmultimedia'
       - name: Is the Qt kit itself universal
         run: |
