@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -85,6 +86,12 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
 
+class _Server6(ThreadingHTTPServer):
+    """The IPv6 loopback half. See DeckProxy.start."""
+    address_family = socket.AF_INET6
+    allow_reuse_address = os.name != "nt"
+
+
 class _Server(ThreadingHTTPServer):
     # ⚠️ WINDOWS LETS A SECOND PROCESS BIND A PORT THAT IS ALREADY IN USE.
     #
@@ -110,7 +117,8 @@ class DeckProxy:
         self.failures = 0
         self.last_error: str | None = None
         self._srv: ThreadingHTTPServer | None = None
-        self._thread: threading.Thread | None = None
+        self._srv6: ThreadingHTTPServer | None = None
+        self._threads: list[threading.Thread] = []
 
     def note_ok(self):
         self.requests += 1
@@ -133,12 +141,40 @@ class DeckProxy:
             # the other program is very often an older copy of this one.
             return f"Stream Deck endpoint OFF - port {self.port}: {e.strerror or e}"
         self._srv.proxy = self  # type: ignore[attr-defined]
-        self._thread = threading.Thread(target=self._srv.serve_forever, daemon=True)
-        self._thread.start()
-        return f"Stream Deck endpoint on http://127.0.0.1:{self.port}/api/…"
+        self._serve(self._srv)
+
+        # ⚠️ AND ::1, BECAUSE THE BUTTONS SAY "localhost".
+        #
+        # The existing 44 buttons target http://localhost:5001/api/… and on Windows
+        # `localhost` resolves to ::1 FIRST. A client that does not fall back to IPv4 -
+        # and the Stream Deck plugin is one - gets connection refused from a listener
+        # that is running perfectly well on 127.0.0.1. The C# host used HttpListener,
+        # whose "localhost" prefix covers both families, so this never came up there.
+        #
+        # Still loopback-only, so the security model is unchanged: ::1 is as local as
+        # 127.0.0.1 is.
+        try:
+            self._srv6 = _Server6(("::1", self.port), _Handler)
+            self._srv6.proxy = self  # type: ignore[attr-defined]
+            self._serve(self._srv6)
+        except OSError:
+            # A box with IPv6 disabled is fine - 127.0.0.1 still answers. Not worth a
+            # warning, and definitely not worth failing the whole endpoint over.
+            self._srv6 = None
+
+        both = "127.0.0.1 and [::1]" if self._srv6 else "127.0.0.1 only (no IPv6)"
+        return f"Stream Deck endpoint on http://localhost:{self.port}/api/… — {both}"
+
+    def _serve(self, srv):
+        t = threading.Thread(target=srv.serve_forever, daemon=True)
+        t.start()
+        self._threads.append(t)
 
     def stop(self):
-        if self._srv:
-            self._srv.shutdown()
-            self._srv.server_close()
-            self._srv = None
+        for attr in ("_srv", "_srv6"):
+            srv = getattr(self, attr)
+            if srv:
+                srv.shutdown()
+                srv.server_close()
+                setattr(self, attr, None)
+        self._threads.clear()

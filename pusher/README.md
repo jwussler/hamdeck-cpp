@@ -146,6 +146,18 @@ halves are asserted in `tests/test_deck.py`.
 
 It shares the pusher's session, so one login serves both and one re-login fixes both.
 
+⚠️ **It listens on BOTH `127.0.0.1` and `[::1]`, and that is not belt-and-braces.** The
+buttons say `http://localhost:5001/…`, and on Windows **`localhost` resolves to `::1`
+first**. A client that does not fall back to IPv4 gets connection refused from a listener
+running perfectly well on 127.0.0.1 — the app reports the endpoint as up and every button
+fails. The C# used `HttpListener`, whose `localhost` prefix covers both families, so this
+never surfaced there. `::1` is as local as `127.0.0.1`, so the security model is unchanged.
+
+⚠️ **Windows will show a firewall prompt the first time. Click Cancel.** Loopback traffic
+is not filtered by Windows Firewall at all, so denying it leaves every button working,
+while allowing it opens the app to the network for no benefit whatsoever. The window says
+this too, where you are actually looking when the dialog appears.
+
 ⚠️ **Windows lets a second process bind a port that is already in use.** `http.server`
 sets `allow_reuse_address`, which on Linux only shortens TIME_WAIT and still refuses a
 live second listener — on Windows it means *share it*, so a second copy of this app would

@@ -14,6 +14,7 @@ licence surface stays clean for code signing.
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import tkinter as tk
@@ -188,6 +189,18 @@ class App:
 
         if self.runner:
             msg = self.runner.deck_status
+            # ⚠️ WINDOWS WILL ASK, AND THE ANSWER IS "CANCEL".
+            #
+            # Windows Defender pops a "allow this app to communicate on these networks"
+            # dialog the first time a program listens on a socket. It is easy to assume
+            # the Stream Deck needs that allowed - it does not. Loopback traffic is not
+            # filtered by the firewall at all, so DENYING the prompt leaves every button
+            # working and ALLOWING it opens the app to the network for no benefit.
+            #
+            # Saying so where the operator is already looking beats saying it in a README
+            # they will read after they have already clicked Allow.
+            if "endpoint on" in msg and os.name == "nt":
+                msg += "  ·  Windows firewall prompt? Cancel is safe — this is local only"
             # ⚠️ An endpoint that FAILED to start must be red, not grey. Grey reads as
             # "off on purpose", and a Stream Deck that does nothing looks identical to
             # one that was never switched on.

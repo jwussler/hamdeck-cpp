@@ -89,6 +89,45 @@ class Proxying(unittest.TestCase):
         self.assertEqual(self.proxy._srv.server_address[0], "127.0.0.1")
 
 
+class BothLoopbackFamilies(unittest.TestCase):
+    """⚠️ THE ONE THAT BROKE IT IN THE FIELD.
+
+    The 44 existing buttons target http://localhost:5001/api/… and on Windows `localhost`
+    resolves to ::1 BEFORE 127.0.0.1. A client that does not fall back to IPv4 gets
+    connection refused from a listener running perfectly well on 127.0.0.1 - so the app
+    reports the endpoint as up and every button fails. The C# host used HttpListener,
+    whose "localhost" prefix covers both families, so it never showed up there.
+    """
+
+    def setUp(self):
+        self.host = FakeHost()
+        # A fixed port, because the two listeners must share ONE port number - the whole
+        # point is that both families answer on the same URL.
+        import socket as _s
+        probe = _s.socket(); probe.bind(("127.0.0.1", 0))
+        self.port = probe.getsockname()[1]; probe.close()
+        self.proxy = DeckProxy(self.host, port=self.port)
+        msg = self.proxy.start()
+        self.assertNotIn("OFF", msg, msg)
+        self.addCleanup(self.proxy.stop)
+
+    def test_ipv4_loopback_answers(self):
+        self.assertEqual(get(self.port, "/api/status")[0], 200)
+
+    @unittest.skipUnless(__import__("socket").has_ipv6, "no IPv6 on this machine")
+    def test_ipv6_loopback_answers(self):
+        import urllib.request
+        with urllib.request.urlopen(
+                f"http://[::1]:{self.port}/api/status", timeout=3) as r:
+            self.assertEqual(r.status, 200)
+
+    @unittest.skipUnless(__import__("socket").has_ipv6, "no IPv6 on this machine")
+    def test_the_ipv6_listener_is_loopback_only(self):
+        """⚠️ ::1 is as local as 127.0.0.1. Binding :: would put an unauthenticated
+        transmitter control on every interface the box has."""
+        self.assertEqual(self.proxy._srv6.server_address[0], "::1")
+
+
 class PortInUse(unittest.TestCase):
     def test_a_taken_port_says_which_port_and_why(self):
         """⚠️ Very often the other program is an older copy of this one. 'Failed to
