@@ -156,7 +156,15 @@ jobs:
           # windeployqt pulls in the platform plugin, the QML modules and the
           # Qt DLLs. Without --qmldir it misses the QML imports entirely and the
           # app launches to a blank window.
-          windeployqt --qmldir client\qml --release packaging\deploy\hamdeck-qml.exe
+          #
+          # ⚠️ BY ABSOLUTE PATH. On the arm64 kit windeployqt is not on PATH, and the bare
+          # name fails with "not recognized as a name of a cmdlet" - which reads like a
+          # missing tool rather than a PATH that differs between kits. QT_ROOT_DIR is set
+          # by install-qt-action for whichever kit was installed, so this is correct for
+          # both legs rather than a special case for one.
+          $wdq = Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"
+          if (-not (Test-Path $wdq)) { throw "windeployqt not found at $wdq" }
+          & $wdq --qmldir client\qml --release packaging\deploy\hamdeck-qml.exe
       - name: Run it again from the staged directory
         shell: pwsh
         run: |
