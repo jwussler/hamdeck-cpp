@@ -73,9 +73,16 @@ class _Handler(BaseHTTPRequestHandler):
         except HostError as e:
             # ⚠️ 502, not 500, and it says the host is the problem. A button that fails
             # because the rig box is down must not look like a button that is wrong.
+            # ⚠️ RECORD FIRST, RESPOND SECOND. The other way round is a race: the client
+            # gets its answer while the handler THREAD has not yet touched the counter, so
+            # anything reading the counter right after a request can see a stale value.
+            # Caught by CI failing on Windows while passing on Linux - the same code, just
+            # a different thread-scheduling outcome, which is what makes it a race rather
+            # than a platform quirk. It would have shown up as an occasional wrong count
+            # in the window too.
+            proxy.note_failure(e.detail)
             self._json(502, '{"status":"error","message":"host unreachable: %s"}'
                        % e.detail.replace('"', "'"))
-            proxy.note_failure(e.detail)
             return
         proxy.note_ok()
         self._json(status, body)

@@ -8,6 +8,7 @@ both halves are asserted here rather than trusted to a bind string somebody may 
 import json
 import sys
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -73,7 +74,11 @@ class Proxying(unittest.TestCase):
         status, body = get(self.port, "/api/status")
         self.assertEqual(status, 502)
         self.assertIn("host unreachable", body)
+        # The counter is updated BEFORE the response is written, so by the time this
+        # assertion runs the handler has already recorded it. Asserting it at all is the
+        # point: it is what caught the reversed order.
         self.assertEqual(self.proxy.failures, 1)
+        self.assertIsNotNone(self.proxy.last_error)
 
     def test_non_api_paths_are_refused(self):
         """Not a web server. No index, no favicon, no static anything."""
@@ -87,6 +92,44 @@ class Proxying(unittest.TestCase):
         bind address is the entire security model. If it ever listens on 0.0.0.0, anyone
         on the LAN can key the transmitter."""
         self.assertEqual(self.proxy._srv.server_address[0], "127.0.0.1")
+
+
+class CounterUpdatedBeforeResponding(unittest.TestCase):
+    """⚠️ THE ORDERING, TESTED DETERMINISTICALLY.
+
+    The obvious test - fire a request, then read the counter - is a RACE. It passed 8/8 on
+    Linux with the bug present and failed on Windows, because it depends on whether the
+    handler thread gets scheduled before the assertion runs. A test that only fails on one
+    platform's scheduling is not a gate, it is a coin toss.
+
+    This one asks the actual question instead: at the moment the response is written, has
+    the counter already been updated? No threads, no timing, same answer everywhere.
+    """
+
+    def test_failure_is_recorded_before_the_response_is_written(self):
+        from hamdeck_pusher import deck as deck_mod
+
+        seen = {}
+        original = deck_mod._Handler._json
+
+        def spy(self, status, body):
+            # Snapshot the counter at the instant the response is produced.
+            seen['failures_at_response'] = self.server.proxy.failures
+            return original(self, status, body)
+
+        host = FakeHost()
+        host.raise_with = "ConnectionRefusedError: [Errno 111]"
+        proxy = DeckProxy(host, port=0)
+        proxy.start()
+        port = proxy._srv.server_address[1]
+        self.addCleanup(proxy.stop)
+
+        with mock.patch.object(deck_mod._Handler, '_json', spy):
+            get(port, "/api/status")
+
+        self.assertEqual(seen.get('failures_at_response'), 1,
+                         "the failure was recorded AFTER the response - anything reading "
+                         "the counter right after a request can see a stale value")
 
 
 class BothLoopbackFamilies(unittest.TestCase):
