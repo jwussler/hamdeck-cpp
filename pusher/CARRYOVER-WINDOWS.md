@@ -209,14 +209,29 @@ The source zip sidesteps this for us, but it is not an answer for another operat
 | option | cost | reality |
 |---|---|---|
 | **Report the false positive to Microsoft** | free | <https://www.microsoft.com/en-us/wdsi/filesubmission>, as *software developer*. Reclassified in ~1-3 days and it clears for **everyone**. ⚠️ **Per file hash — every new release must be resubmitted.** The realistic near-term fix. |
-| **Azure Trusted Signing** | ~$10/mo | The real cure. Cheapest genuine code-signing path. ⚠️ Confirm individual/indie eligibility before relying on it. |
+| **Azure Artifact Signing** | ~$9.99/mo | ✅ **THE LONG-TERM ANSWER — eligibility CONFIRMED 09/01/2026.** Renamed from *Azure Trusted Signing*; now GA. Individuals **are** supported, **USA + Canada only** — Joe qualifies. **No hardware token**, signs from CI. |
 | SignPath Foundation | free | 🔴 **BLOCKED for this repo**: it requires a *public* repo under an OSI-approved licence. `hamdeck-cpp` is **private with no licence file**. (The C# `HamDeck` repo is public/MIT — different repo, different answer.) |
 | `--version-file` metadata | free | Adds company/product/version resources to the frozen exe. Lowers the heuristic score a little. Not currently passed; cheap to add, do not expect it to be sufficient alone. |
 | Source zip | free | Already the recommendation, and it genuinely never flags — but it needs Python on the target PC. |
 
-⚠️ **An OV certificate does not silence SmartScreen immediately** — reputation accrues per
-certificate over downloads and time. Early downloads still warn. That is normal, not a
-broken cert. See `[[hamdeck-code-signing]]`.
+### ⚠️ Why a USB-token OV cert is the wrong shape for THIS project
+Since June 2023 the CA/Browser Forum requires an OV private key to live on an HSM or USB
+token. **A USB token cannot sign from a GitHub-hosted `windows-latest` runner**, and that is
+exactly where `release.yml` builds the installer. Azure Artifact Signing signs over a cloud
+API with no token, which is the only reason it fits the existing CI without redesigning it.
+
+⚠️ **Signing does NOT silence SmartScreen immediately** — reputation accrues per publisher
+identity over downloads and time, and Microsoft's own docs say AAS gives no instant trust.
+**EV certificates stopped bypassing SmartScreen in 2024**, so the EV premium buys nothing
+here. Early downloads still warn. That is normal, not a broken cert.
+
+**These two are sequenced, not either/or:** file the free false-positive report to clear the
+build that exists today; adopt AAS so each release inherits the last one's reputation instead
+of restarting from zero. See `[[hamdeck-code-signing]]`.
+
+⚠️ **Sign BOTH the frozen exe and the Inno installer.** Defender is flagging the installer,
+so signing only the PyInstaller output would leave the actual detection untouched. Inno has a
+`SignTool` directive for this.
 
 ### The firewall prompt is a separate thing, and the answer is Cancel
 Windows Defender Firewall prompts the first time anything listens on a socket.
