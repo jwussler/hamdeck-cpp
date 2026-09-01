@@ -6,6 +6,7 @@ import threading
 import time
 
 from .config import Settings
+from .deck import DeckProxy
 from .hostclient import HostClient, HostError
 from .policy import PushPolicy, Reading
 from .state import Phase, State
@@ -26,6 +27,12 @@ class Runner:
                                  heartbeat_seconds=settings.heartbeat_seconds,
                                  defer_to_remote=settings.defer_to_remote)
         self._stop = threading.Event()
+        # ⚠️ The proxy SHARES this runner's HostClient, and therefore its session. That
+        # is the entire point - a Stream Deck button cannot log in, so it borrows the
+        # session something else is already keeping alive. It also means one re-login
+        # serves both, rather than two racing to refresh the same account.
+        self.deck: DeckProxy | None = None
+        self.deck_status = "Stream Deck endpoint off"
 
     # ── one pass, so it can be tested and run once from the CLI ──────────────
     def tick(self) -> State:
@@ -84,7 +91,29 @@ class Runner:
                 - int(doc.get("same_user_clients", 0))) > 0
 
     # ── the long-running form ────────────────────────────────────────────────
+    def start_deck(self) -> str:
+        if self.deck or not self.settings.deck_port:
+            return self.deck_status
+        # ⚠️ Log in FIRST. Otherwise the first button press pays for the login, and an
+        # API Ninja button that times out looks like a dead button rather than a slow one.
+        try:
+            if not self.host.logged_in:
+                self.host.login()
+        except HostError as e:
+            self.deck_status = f"Stream Deck endpoint OFF - cannot log in: {e.detail}"
+            return self.deck_status
+        self.deck = DeckProxy(self.host, self.settings.deck_port)
+        self.deck_status = self.deck.start()
+        return self.deck_status
+
+    def stop_deck(self):
+        if self.deck:
+            self.deck.stop()
+            self.deck = None
+        self.deck_status = "Stream Deck endpoint off"
+
     def run(self, on_change=None) -> None:
+        self.start_deck()
         last = None
         while not self._stop.is_set():
             try:
@@ -99,4 +128,5 @@ class Runner:
 
     def stop(self) -> None:
         self._stop.set()
+        self.stop_deck()
         self.host.logout()

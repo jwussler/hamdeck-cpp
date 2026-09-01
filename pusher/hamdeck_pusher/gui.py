@@ -109,6 +109,12 @@ class App:
                             font=self.f_body, anchor="w", justify="left", wraplength=480)
         self.why.pack(fill="x", padx=18, pady=(0, 4))
 
+        # The Stream Deck line. Quiet when it is off, because most of the time it is -
+        # but never silent when it is meant to be on and is not.
+        self.deck_lbl = tk.Label(self.root, text="", bg=T.PANEL_DEEP, fg=T.DIM,
+                                 font=self.f_body, anchor="w")
+        self.deck_lbl.pack(fill="x", padx=18, pady=(0, 2))
+
         foot = tk.Frame(self.root, bg=T.PANEL_DEEP)
         foot.pack(fill="x", side="bottom", padx=16, pady=12)
         self._button(foot, "Settings", self.open_settings).pack(side="left")
@@ -180,6 +186,14 @@ class App:
             why += f" — the log is {int(age)}s behind the radio"
         self.why.config(text=why)
 
+        if self.runner:
+            msg = self.runner.deck_status
+            # ⚠️ An endpoint that FAILED to start must be red, not grey. Grey reads as
+            # "off on purpose", and a Stream Deck that does nothing looks identical to
+            # one that was never switched on.
+            self.deck_lbl.config(text=msg,
+                                 fg=T.TX_RED if "OFF -" in msg else T.DIM)
+
     # ── settings ──────────────────────────────────────────────────────────────
     def open_settings(self):
         SettingsDialog(self.root, self)
@@ -191,6 +205,7 @@ class SettingsDialog:
         ("host_password", "HOST PASSWORD", True),
         ("wavelog_url", "WAVELOG URL", False), ("wavelog_key", "WAVELOG API KEY", True),
         ("radio_name", "RADIO NAME (Wavelog's key for the row)", False),
+        ("deck_port", "STREAM DECK PORT (0 = off; 5001 matches existing buttons)", False),
     ]
 
     def __init__(self, parent, app: App):
@@ -204,7 +219,7 @@ class SettingsDialog:
         for key, label, secret in self.FIELDS:
             tk.Label(self.win, text=label, bg=T.PANEL_DEEP, fg=T.DIM,
                      font=app.f_label).pack(anchor="w", padx=16, pady=(10, 2))
-            v = tk.StringVar(value=getattr(app.settings, key))
+            v = tk.StringVar(value=str(getattr(app.settings, key)))
             e = tk.Entry(self.win, textvariable=v, bg=T.PANEL, fg=T.TEXT, width=46,
                          insertbackground=T.TEXT, relief="flat", font=app.f_body,
                          show="*" if secret else "")
@@ -223,7 +238,18 @@ class SettingsDialog:
 
     def save(self):
         for key, v in self.vars.items():
-            setattr(self.app.settings, key, v.get().strip())
+            val = v.get().strip()
+            if key == "deck_port":
+                # ⚠️ A typo must not quietly become port 0 - that reads as "turned off",
+                # and the operator then hunts a Stream Deck fault that does not exist.
+                try:
+                    val = int(val or 0)
+                except ValueError:
+                    messagebox.showerror("Not saved",
+                                         "Stream Deck port must be a number (0 turns it off)",
+                                         parent=self.win)
+                    return
+            setattr(self.app.settings, key, val)
         self.app.settings.defer_to_remote = self.defer.get()
         problems = self.app.settings.problems()
         if problems:

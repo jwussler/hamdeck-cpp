@@ -40,6 +40,13 @@ struct HostState {
   bool diversity = false;
 };
 
+// ⚠️ ROUTES THAT KEY THE TRANSMITTER, so `can_transmit` can actually gate them.
+//
+// Exposed rather than buried in a lambda because the failure mode is a MISSING
+// ENTRY, and a list nothing can test is a list that quietly goes stale. The C#
+// reference gates exactly these; test_transmit_gate asserts the same set.
+bool IsTransmitRoute(const std::string& path);
+
 struct ApiDeps {
   RadioPoller* poller = nullptr;
   AuthService* auth = nullptr;

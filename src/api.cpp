@@ -287,7 +287,31 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // on the LOCAL listener too. Local callers skip authentication because the
   // kernel vouches for where they came from, but "is this an admin" is a
   // question about a user, and there is no user on an unauthenticated port.
-  server.SetAdminGate([&deps](const HttpRequest& req, HttpResponse& res) -> bool {
+  server.SetAdminGate([&deps, trusted](const HttpRequest& req, HttpResponse& res) -> bool {
+    // ⚠️ TRANSMIT RIGHTS, checked in the same place and for the same reason: it is a
+    // question about the USER, not about the session, and running it before routing
+    // means a transmitting route added later is covered without anyone remembering.
+    //
+    // This host gated only /ws/tx, so can_transmit=false stopped an account feeding
+    // AUDIO and did not stop it keying the rig, sending CW, or playing a voice memory -
+    // while the comment beside /ws/tx said "a listener must not be able to key the rig
+    // just because they could log in". The reference host gates the set in
+    // IsTransmitRoute (ApiServer.cs ~789); it was simply never ported.
+    //
+    // Not on the trusted loopback listener: there is no user there, and that port is
+    // the local console. Same split the reference host makes.
+    if (!trusted && IsTransmitRoute(req.path)) {
+      const std::string tx_token = ExtractToken(req);
+      // Only refuse a VALID session that lacks the right. No session at all is a 401
+      // from the auth gate; answering 403 here would tell an anonymous caller which
+      // routes transmit.
+      if (deps.auth && deps.auth->ValidateSession(tx_token) &&
+          !deps.auth->CanTransmit(tx_token)) {
+        WriteJson(res, 403,
+                  R"({"status":"error","message":"Transmit not permitted for this account"})");
+        return false;
+      }
+    }
     if (req.path.rfind("/api/admin/", 0) != 0) return true;
     const std::string token = ExtractToken(req);
     if (deps.auth && deps.auth->IsAdmin(token)) return true;

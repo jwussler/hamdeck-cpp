@@ -125,12 +125,57 @@ them**, so an update cannot overwrite the API key. "Start when I sign in" is an 
 task, not a default — something that writes to a logbook on every boot is the operator's
 decision.
 
+## The Stream Deck endpoint
+
+⚠️ **It exists so EXISTING buttons keep working, not so new ones can be made.**
+
+From the C# host's `AUDIT.md` §11: *"Every Stream Deck button on this station targets
+`localhost:5001`; all 44 of them, with no LAN address anywhere."* That worked because the
+C# host **ran on the station PC**. The rig moved to its own box and that URL became
+nothing — which is why the deck went dead, and why the fix is to make the same URL answer
+again rather than to edit 44 buttons.
+
+Set `deck_port` to **5001** in Settings. Off by default (`0`), because a no-auth endpoint
+must be opted into.
+
+⚠️ **The loopback bind IS the security model, and nothing else.** Anything that can reach
+that port drives the radio with no password — exactly the deal the C# host made, on
+purpose, for the same reason. So it binds `127.0.0.1` explicitly (a kernel guarantee, not
+a check somebody can forget) *and* refuses a non-loopback peer if it ever finds one. Both
+halves are asserted in `tests/test_deck.py`.
+
+It shares the pusher's session, so one login serves both and one re-login fixes both.
+
+### What actually works — measured against a simulator, never your rig
+
+74 button routes from the C# README's table, fired at a **simulated** host (the walker
+refuses any target that does not answer `simulated: true`, and has no `--force`):
+
+| result | count |
+|---|---|
+| answered 200 | 71 |
+| answered but say they cannot | 3 |
+
+The three that will not work, and why — all known unported features, not surprises:
+
+- **CW keyer** (`/api/cw/send/*`, `/api/cw/memory/*`) — *"not implemented in the C++ host
+  yet"*. `Services/Keyers.cs`, 127 lines, still on the §10 list.
+- **Voice memories** (`/api/voice/play/*`) — same.
+- **RX antenna** (`/api/rxant/*`) — kmtronic hardware not on this host.
+
+⚠️ **`/api/att/toggle` DOES work.** A route-inventory diff flagged it as missing because
+the on/off/toggle variants are generated at runtime by string concatenation rather than
+written as literals. That is the repo's own warning — *comparing route inventories is not
+comparing behaviour* — landing in the opposite direction, as a false alarm.
+
+### ⚠️ Transmit rights are a separate thing from having an account
+`can_transmit=false` blocks `/api/ptt/*`, `/api/cw/*` and `/api/voice/play/*` with a 403,
+so PTT buttons are dead without it. That gate did not exist on this host until 09/01/2026 —
+only `/ws/tx` was gated, so an account marked receive-only could still key the rig. Ported
+from `ApiServer.cs` ~789 and guarded by `test_transmit_gate`.
+
 ## Still to build
 
-- **The Stream Deck endpoint** (`deck_port`). Design is settled — a loopback-only listener
-  that maps short button paths onto host routes using the session this already holds — but
-  it is not written. `deck_port: 0` disables it, and that is the default because a no-auth
-  endpoint must be opted into, never defaulted on.
 - **A tray icon.** The window minimises to the taskbar today. A real tray icon needs
   `pystray` (LGPL) or Win32 `Shell_NotifyIcon` via ctypes; the first dirties the licence
   surface for SignPath, so it was not taken on a whim.

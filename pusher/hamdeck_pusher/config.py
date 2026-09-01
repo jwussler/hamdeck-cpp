@@ -38,6 +38,10 @@ class Settings:
     defer_to_remote: bool = True
     #: The loopback port the Stream Deck fires at. 0 disables it entirely - the endpoint
     #: needs no auth, so it must be an opt-in, not something a default turns on.
+    #:
+    #: ⚠️ 5001 is not an arbitrary choice: it is the port the station's existing 44
+    #: Stream Deck buttons already target (C# AUDIT.md §11). Anything else means editing
+    #: 44 buttons.
     deck_port: int = 0
 
     @classmethod
