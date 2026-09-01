@@ -1330,3 +1330,36 @@ Deployed to the VM: build `41d38d6ba96c`, 16/16 tests green there.
 
 `/api/auth/status` now carries `is_station`, so a client can grey the button out rather than
 show a live one that answers 403 - and so the right can be confirmed without keying an amp.
+
+
+### 🔴 The grant that kept vanishing — an admin write flushes the WHOLE user list
+
+Granting `wa0o` the station right in the config file and restarting did not work, twice, and
+the second failure explained the first.
+
+1. `main.cpp` called `AddUser` without `is_station`. The `= false` default argument made that
+   compile cleanly, so **every startup dropped the right**. The file said the operator had it;
+   the running host said they did not.
+2. Worse, it did not just fail to load - it **erased the grant**. `persist_users` mirrors the
+   in-memory user list back over `config.json` on any admin write, so removing a temporary
+   account rewrote every user from memory, where `is_station` was already false. The grant was
+   overwritten by the cleanup step of the check that was verifying it.
+
+⚠️ **An admin write persists ALL users, not the one being changed.** A hand-edit to
+`config.json` on a running host survives only until the next admin call. Grant through the API,
+or edit and restart before anything else touches a user.
+
+⚠️ **`AddUser` has no default arguments now.** A missing right is a compile error, not a silent
+false. Removing them immediately surfaced seven call sites.
+
+⚠️ **`ctest` passed while the build was FAILING** during this work - it ran the stale binaries
+from the previous build. A green suite after a red build means nothing; read the build result.
+
+Live state, verified in the running host AND on disk after a flush:
+
+    joe        tx=True  station=False
+    listener   tx=False station=False
+    pusher     tx=False station=False
+    wa0o       tx=True  station=True
+
+Deployed: build `1c75acfd03ce`.
