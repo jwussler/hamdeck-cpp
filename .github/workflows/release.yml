@@ -15,7 +15,23 @@ on:
 
 jobs:
   linux:
-    runs-on: ubuntu-24.04
+    # ⚠️ NATIVE RUNNER PER ARCHITECTURE. NO CROSS-COMPILATION, EVER.
+    #
+    # This is the standing rule for every target in this workflow. Cross-compiling Qt is
+    # unpleasant, and PyInstaller cannot cross-compile AT ALL - there is no toolchain and
+    # no trick, which is why the pusher would have blocked arm64 forever. GitHub added
+    # arm64 standard runners for PRIVATE repositories on 01/29/2026 and they draw on the
+    # same free minutes, so the problem is dissolved rather than solved.
+    #
+    # ⚠️ Private-repo arm64 runners get TWO vCPUs where public gets four. Expect a
+    # noticeably longer wall clock, and do not read slowness as a hang.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
@@ -60,8 +76,16 @@ jobs:
           ./tools/placement_check.sh 1920x1080 saved-at-origin || exit 1
           ./tools/placement_check.sh 1920x1080 saved-offscreen || exit 1
           ./tools/placement_check.sh 1024x600  saved-at-origin || exit 1
+      # ⚠️ The artifact name carries the architecture. Two matrix legs uploading to one
+      # name is a race whose winner is arbitrary - you get one .deb, for whichever
+      # architecture happened to finish last, with nothing anywhere saying so.
       - uses: actions/upload-artifact@v4
-        with: { name: hamdeck-linux-deb, path: client/build/*.deb }
+        with:
+          # ⚠️ Block style, not `with: { ... }`. A ${{ }} expression inside a YAML FLOW
+          # mapping makes the parser choke on the braces - the workflow is then invalid in
+          # a way the editor shows but a quick eyeball does not.
+          name: hamdeck-linux-deb-${{ matrix.arch }}
+          path: client/build/*.deb
 
   windows:
     runs-on: windows-latest
