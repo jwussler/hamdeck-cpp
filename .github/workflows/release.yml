@@ -294,6 +294,24 @@ jobs:
           if ($sig.Status -ne 'Valid') { throw "installer signature is $($sig.Status), not Valid" }
           if ($sig.SignerCertificate.Subject -notmatch 'Wussler') { throw "unexpected signer" }
 
+          # ⚠️ AND IT MUST BE TIMESTAMPED. This is the check that matters most here and it
+          # is the least obvious.
+          #
+          # Azure Artifact Signing issues certificates that live SEVENTY-TWO HOURS - the
+          # one that signed this expires three days from now. The RFC3161 timestamp is the
+          # only reason the installer keeps working after that: it proves the signature was
+          # made while the certificate was valid. Without it the file is perfectly signed
+          # today and INVALID ON THURSDAY, on other people's machines, with nothing here
+          # showing anything wrong.
+          #
+          # vpk timestamps by default today. That is a behaviour of a third-party tool, not
+          # a guarantee, and the failure it would cause is silent and delayed - which is
+          # exactly the kind worth spending a check on.
+          $ts = $sig.TimeStamperCertificate
+          "Cert valid : $($sig.SignerCertificate.NotBefore) -> $($sig.SignerCertificate.NotAfter)"
+          if (-not $ts) { throw "NOT TIMESTAMPED - this signature dies with the 72-hour certificate" }
+          "Timestamper: $($ts.Subject)"
+
       - uses: actions/upload-artifact@v4
         with: { name: hamdeck-pusher-windows-installer, path: pusher/packaging/Releases/* }
 
