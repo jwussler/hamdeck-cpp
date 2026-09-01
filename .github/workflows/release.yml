@@ -411,7 +411,18 @@ jobs:
     # two risks.
     needs: [publish]
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: macos-13
+    # ⚠️ macos-15-intel, NOT macos-13. GitHub RETIRED macos-13 on 12/04/2025, and a job
+    # targeting a retired label does not fail - it queues FOREVER. This one sat "queued"
+    # looking like a slow pool while never being scheduled at all, which is worse than an
+    # error because it reads as patience rather than breakage.
+    #
+    # macos-15-intel is GitHub's documented migration target for macos-13. Intel is itself
+    # on a clock: Apple has dropped x86_64 and GitHub retires the last Intel image in
+    # autumn 2027, so the arm64 leg is not optional forever.
+    #
+    # ⚠️ macos-14 is NOT the answer either - it began deprecation 07/06 and is fully
+    # unsupported from 11/02.
+    runs-on: macos-15-intel
     permissions:
       contents: write
     env:
