@@ -88,11 +88,29 @@ jobs:
           path: client/build/*.deb
 
   windows:
-    runs-on: windows-latest
+    # ⚠️ THE ONE TARGET WHERE "NEVER CROSS-COMPILE" CANNOT FULLY HOLD.
+    #
+    # Qt's Windows arm64 kit is called win64_msvc2022_arm64_cross_compiled, and there is
+    # no native-host alternative - Qt builds it that way. The runner IS native arm64, so
+    # the compiler and the tests run natively, but the Qt kit itself is a cross build.
+    # Recorded rather than papered over: the rule is a default, and this is its exception.
+    #
+    # ⚠️ arm64 is an OPTIMISATION here, not enablement. Windows on ARM runs the x64 build
+    # under emulation already, so nothing is unreachable without this - which is also why
+    # the arm64 leg does not fail the whole matrix.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64,   runner: windows-latest,  qtarch: win64_msvc2022_64 }
+          - { arch: arm64, runner: windows-11-arm,  qtarch: win64_msvc2022_arm64_cross_compiled }
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
     steps:
       - uses: actions/checkout@v4
       - uses: jurplel/install-qt-action@v4
         with:
+          arch: ${{ matrix.qtarch }}
           version: '6.8.1'
           # ⚠️ NOT qtdeclarative. Qt Quick is part of the BASE install in Qt 6,
           # and naming it as an add-on makes aqt fail to parse the package XML -
@@ -141,7 +159,9 @@ jobs:
       # for the other. It is now packaged together with the pusher in one signed Velopack
       # package, so this job's job is to hand over a staged tree.
       - uses: actions/upload-artifact@v4
-        with: { name: hamdeck-client-deploy, path: packaging/deploy/** }
+        with:
+          name: hamdeck-client-deploy-${{ matrix.arch }}
+          path: packaging/deploy/**
 
   pusher-windows:
     # ⚠️ ONE PACKAGE, TWO APPLICATIONS. This job now needs the Qt client's staged tree,
@@ -237,7 +257,12 @@ jobs:
       - name: Bring in the Qt client
         uses: actions/download-artifact@v4
         with:
-          name: hamdeck-client-deploy
+          # ⚠️ EXPLICITLY x64. The client is a matrix now, and a bare artifact name would
+          # be ambiguous the moment a second architecture uploads one. The pusher is not
+          # built for arm64 yet, so pairing it with an arm64 client would produce a
+          # package whose two halves are different architectures - which installs and then
+          # fails at launch in a way nothing here would catch.
+          name: hamdeck-client-deploy-x64
           path: pusher/packaging/dist/hamdeck-pusher/client
 
       - name: Both applications are present before packing
