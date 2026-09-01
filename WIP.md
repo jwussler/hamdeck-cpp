@@ -1264,3 +1264,55 @@ FTDX-101 emits before trusting every one.
 - Bandmap→QSY (the reverse direction, HTTP :54321 in the C#) is **not** built. Ask before
   building it: it is unauthenticated remote control of the VFO and the C# bound it to the
   whole LAN with `Allow-Origin: *`.
+
+---
+
+## 09/01/2026 — the amp tune button, and why it was never "yanked"
+
+**Symptom:** the Stream Deck amp tune button does nothing. **Cause:** it has been refused
+since the rig moved to its own box, and the refusal was served as **HTTP 200**, which a deck
+button reads as success. Green tick, no carrier, no complaint, for weeks.
+
+The restriction was NOT added here. It is the reference host's, ported faithfully —
+`Services/ApiServer.cs`:
+
+    private object? AmpTuneOrDeny(bool isLocal)
+        => isLocal ? _amp.Tune() : ... "Amp tune is only available when connected locally."
+
+`isLocal` was correct *there* because the C# host ran on the station PC, so loopback proved
+an operator was present and all 44 deck buttons hitting `localhost:5001` were local. The gate
+never broke. It came to prove the wrong thing: loopback on the rig box means the caller is on
+the rig box, which is the one place nobody sits.
+
+**Fix:** ask WHO, not WHERE. Amp tune needs the loopback console, or a session whose account
+carries `is_station` **and** `can_transmit`. Refusals are 403.
+
+⚠️ **`is_station` is deliberately not implied by `can_transmit`.** "May key the rig, with a
+hand on it" and "may start a ten-second unattended carrier into an amplifier" are different
+claims. Default false, granted by an explicit admin act, so nothing gains it by upgrading.
+
+⚠️ **And `can_transmit` is required on top**, found by reading the live user list rather than
+assuming: the `pusher` account has `can_transmit=false`, and amp tune predates
+`IsTransmitRoute` so it is gated separately. Without that term, a station grant would have
+handed a carrier to an account explicitly denied transmit.
+
+### The test, and the hole in the first draft of the test
+`tools/amp_gate_check.sh` drives the real binary over HTTP on both listeners, refuses to run
+against anything that is not a simulator, and is wired into ctest.
+
+⚠️ **Its first version passed against the injected bug.** Step 3 asserted only "not 403", and
+the bug being guarded against refuses with **200** — so the assertion could not tell the
+working build from the broken one. It now checks the body came from the amp route. This is
+the same failure the fix itself addresses, reproduced inside its own test within the hour.
+
+### Open — needs Joe
+The last step is one grant, and it needs a fact only he has: **which account the pusher logs
+in as**, and whether that account should hold transmit rights. The host log records the login
+path but not the username, so it cannot be read off the box.
+
+    joe        admin  tx  station=false
+    listener          --  station=false
+    pusher            --  station=false     <- tx denied
+    wa0o              tx  station=false
+
+Deployed to the VM: build `a4a5e239426f`, 16/16 tests green there.
