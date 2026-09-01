@@ -111,13 +111,20 @@ jobs:
           $p = Start-Process -FilePath "packaging\deploy\hamdeck-qml.exe" `
                -ArgumentList "--selftest" -NoNewWindow -PassThru -Wait
           if ($p.ExitCode -ne 0) { throw "deployed selftest failed: $($p.ExitCode)" }
-      - name: Installer
-        run: iscc packaging\hamdeck.iss
-        shell: cmd
+      # ⚠️ NO INSTALLER HERE ANY MORE. The client used to ship its own unsigned Inno
+      # setup, which meant a second download, a second signature to arrange, and a second
+      # SmartScreen reputation starting from zero - while every download of one did nothing
+      # for the other. It is now packaged together with the pusher in one signed Velopack
+      # package, so this job's job is to hand over a staged tree.
       - uses: actions/upload-artifact@v4
-        with: { name: hamdeck-windows-installer, path: packaging/Output/*.exe }
+        with: { name: hamdeck-client-deploy, path: packaging/deploy/** }
 
   pusher-windows:
+    # ⚠️ ONE PACKAGE, TWO APPLICATIONS. This job now needs the Qt client's staged tree,
+    # because both ship inside a single signed Velopack package: one download, one
+    # signature, one update channel, and one SmartScreen reputation that both halves feed
+    # instead of two starting from zero and neither getting anywhere.
+    needs: [windows]
     # ⚠️ JOB LEVEL, NOT STEP LEVEL. A step's own `env:` is not in scope for that same
     # step's `if:` - the env context there resolves workflow- and job-level values only.
     # Defined on the step, the signing gate would read empty and the signing steps would
@@ -203,18 +210,38 @@ jobs:
           "FileVersion : $($vi.FileVersion)"
           if ($vi.ProductName -ne 'HamDeck Wavelog Pusher') { throw "version resource missing or wrong: ProductName='$($vi.ProductName)'" }
           if ([string]::IsNullOrWhiteSpace($vi.CompanyName)) { throw "version resource has no CompanyName" }
-      # ⚠️ SIGN THE FROZEN EXE **AND** THE INSTALLER, in that order.
+      - name: Bring in the Qt client
+        uses: actions/download-artifact@v4
+        with:
+          name: hamdeck-client-deploy
+          path: pusher/packaging/dist/hamdeck-pusher/client
+
+      - name: Both applications are present before packing
+        shell: pwsh
+        run: |
+          # ⚠️ Check BEFORE packing, not after. vpk will happily package a directory with a
+          # missing client and produce a perfectly valid installer that is quietly missing
+          # half the product - and nothing downstream would notice.
+          $root = "pusher\packaging\dist\hamdeck-pusher"
+          foreach ($f in @("$root\hamdeck-pusher.exe", "$root\client\hamdeck-qml.exe")) {
+            if (-not (Test-Path $f)) { throw "missing from the package: $f" }
+            "found $f"
+          }
+
+      # ⚠️ SIGN AFTER BOTH APPLICATIONS ARE STAGED, AND RECURSE.
       #
-      # The 09/01/2026 detection (Trojan:Win32/Bearfoos.A!ml) was on the INSTALLER, with
-      # zero detections on the PyInstaller output - so signing only the freeze would leave
-      # the actual detection untouched. The installer can only be signed after iscc builds
-      # it, which is why this is two steps around the Installer step rather than one.
+      # This used to run before the Qt client was fetched, so it signed the pusher and left
+      # the client - which is now inside the same package - unsigned. Signing half a
+      # package is the failure that looks entirely fine: the installer is signed, the app
+      # you launch is signed, and the other executable beside it is not.
       #
-      # Both are SKIPPED CLEANLY when the secrets are absent, so a build before the signing
-      # account exists still produces a working unsigned installer instead of failing.
-      # Gated with `if:` on the secret rather than a swallowed error - a signing step that
+      # files-folder-recurse is what reaches client\ ; without it the filter matches only
+      # the top level and the omission is silent.
+      #
+      # Skipped cleanly with no secrets, so a fork still builds an unsigned package rather
+      # than failing. Gated on `if:` rather than a swallowed error - a signing step that
       # hides its own failure is how an unsigned build ships believing it was signed.
-      - name: Sign the app
+      - name: Sign both applications
         if: ${{ env.AZURE_CLIENT_ID != '' }}
         uses: azure/trusted-signing-action@v0
         with:
@@ -224,18 +251,13 @@ jobs:
           endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}\pusher\packaging\\dist\\hamdeck-pusher
+          files-folder: ${{ github.workspace }}\pusher\packaging\dist\hamdeck-pusher
           files-folder-filter: exe,dll
+          files-folder-recurse: true
           file-digest: SHA256
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
-      # ⚠️ VELOPACK, NOT INNO. Velopack builds the installer AND an update channel from
-      # the same command, which is the point: the operator's friends install once and
-      # every later version arrives by itself, instead of another download that has to
-      # survive SmartScreen on its own.
-      #
-      # It requires PyInstaller --onedir, which this build already produces.
       - name: Install vpk
         run: dotnet tool install -g vpk
         shell: pwsh
@@ -312,6 +334,18 @@ jobs:
           if (-not $ts) { throw "NOT TIMESTAMPED - this signature dies with the 72-hour certificate" }
           "Timestamper: $($ts.Subject)"
 
+          # ⚠️ AND BOTH APPLICATIONS INSIDE THE PACKAGE, not just the installer around them.
+          # A signed installer carrying an unsigned executable is the shape that gets
+          # flagged after installation rather than during download - the worst time to find
+          # out, because by then it is on someone else's machine.
+          foreach ($rel in @("hamdeck-pusher.exe", "client\hamdeck-qml.exe")) {
+            $p = "packaging\dist\hamdeck-pusher\$rel"
+            $s2 = Get-AuthenticodeSignature $p
+            "$rel : $($s2.Status)"
+            if ($s2.Status -ne 'Valid') { throw "$rel is $($s2.Status), not Valid" }
+            if (-not $s2.TimeStamperCertificate) { throw "$rel is not timestamped" }
+          }
+
       - uses: actions/upload-artifact@v4
         with: { name: hamdeck-pusher-windows-installer, path: pusher/packaging/Releases/* }
 
@@ -378,10 +412,15 @@ jobs:
           test -n "$(find dist -name '*.exe' -print -quit)" || {
             echo "no installer among the artifacts - refusing to publish"; exit 1; }
           cat > notes.md <<'NOTES'
-          ## HamDeck Wavelog Pusher — download `HamDeckPusher-win-Setup.exe`
+          ## HamDeck — download `HamDeckPusher-win-Setup.exe`
 
-          The other files are the separate HamDeck Qt client, plus the update manifest the
-          app reads. You only need the Setup.
+          **One installer, both applications.** It installs the **Wavelog Pusher** and the
+          **HamDeck Remote** client together, and updates them together. The `.nupkg`,
+          `RELEASES` and `releases.win.json` beside it are the update manifest — leave them
+          there, they are what future versions install themselves from.
+
+          Everything inside is code-signed and timestamped: the installer, the pusher, and
+          the client.
 
           ### Windows will warn you. Here is exactly what to do.
 
