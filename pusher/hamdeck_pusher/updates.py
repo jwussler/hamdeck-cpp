@@ -94,18 +94,60 @@ def current_version() -> str | None:
         return None
 
 
+#: Where releases live. PUBLIC and source-free, which is the whole point: the app reads it
+#: with NO ACCESS TOKEN.
+RELEASES_URL = "https://github.com/jwussler/hamdeck-releases"
+
+
 def _source():
     """Where updates come from.
 
-    ⚠️ NOT WIRED YET, AND THAT IS A DECISION NOT AN OMISSION. `GithubSource` takes
-    (repo_url, access_token, prerelease) - and `hamdeck-cpp` is a PRIVATE repo, so an
-    anonymous client cannot read its releases. Shipping a token inside the binary to work
-    around that would put a credential in every copy handed to a friend, where it can be
-    read straight back out.
+    ⚠️ NO ACCESS TOKEN, AND THAT IS THE DESIGN. `GithubSource` accepts one, and using it
+    here would put a credential inside every copy handed to a friend - readable straight
+    back out of the package. The releases repository is public precisely so this argument
+    stays empty.
 
-    The same fact bites one step earlier than updates, too: a friend cannot download the
-    installer from a private repo at all. So the update source and the download location
-    are the same unanswered question, and it is Joe's to answer - make the repo public, or
-    host releases on his own domain (HttpSource takes any HTTPS directory).
+    The source repository stays private; only built artifacts are public. That also keeps
+    station detail out of view - the carryover doc alone carries a LAN address and account
+    names.
     """
-    raise NotImplementedError("update source not chosen yet - see the docstring")
+    return velopack.GithubSource(RELEASES_URL)
+
+
+def check() -> "tuple[bool, str]":
+    """(update_available, human explanation). NEVER raises.
+
+    ⚠️ An update check that throws takes the app down for a problem that is not the app's
+    job. A failed check means "carry on running", not "stop" - the pusher's actual work is
+    publishing to Wavelog, and it must survive GitHub being unreachable.
+    """
+    if not AVAILABLE:
+        return False, "updates unavailable (not an installed build)"
+    try:
+        mgr = velopack.UpdateManager(_source())
+        info = mgr.check_for_updates()
+        if info is None:
+            return False, f"up to date ({mgr.get_current_version()})"
+        return True, f"update available: {info.TargetFullRelease.Version}"
+    except Exception as e:  # noqa: BLE001
+        return False, f"update check failed: {type(e).__name__}: {e}"
+
+
+def download_and_apply() -> str:
+    """Download a pending update and restart into it. Returns why if it did not.
+
+    ⚠️ Only ever called from an explicit user action. An app that restarts itself
+    unprompted is an app that vanishes mid-transmission.
+    """
+    if not AVAILABLE:
+        return "updates unavailable (not an installed build)"
+    try:
+        mgr = velopack.UpdateManager(_source())
+        info = mgr.check_for_updates()
+        if info is None:
+            return "already up to date"
+        mgr.download_updates(info)
+        mgr.apply_updates_and_restart(info)
+        return "restarting"
+    except Exception as e:  # noqa: BLE001
+        return f"update failed: {type(e).__name__}: {e}"
