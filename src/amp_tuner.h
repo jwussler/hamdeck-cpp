@@ -18,9 +18,15 @@
 // of tuning the amplifier is to then operate through it. Restoring 5 W after
 // tuning an amplifier is not what anybody pressed the button for.
 //
-// ⚠️ LOCAL CALLERS ONLY, enforced by the route, not here: this keys the
-// transmitter for ten unattended seconds. "Local" means the request arrived on
-// the loopback listener - a kernel guarantee, not a header a caller can set.
+// ⚠️ THE OPERATOR MUST BE AT THE STATION, enforced by the route, not here: this
+// keys the transmitter for ten unattended seconds.
+//
+// The reference host proved that with "did the request arrive on the loopback
+// listener", which was a kernel guarantee and a correct one - while the host ran
+// ON the station PC. It does not any more: the rig has its own box, and loopback
+// there proves the caller is on the rig box, where nobody sits. So the route asks
+// the loopback console OR an account carrying is_station. Same restriction, a
+// question that still means what it says.
 //
 // ⚠️ Ten seconds is a long carrier. Every exit path unkeys: the stop flag is
 // checked every 100 ms, an exception unkeys and forces 100 W, and the

@@ -25,6 +25,9 @@ struct SessionInfo {
   std::string username;
   bool is_admin = false;
   bool can_transmit = true;
+  // Copied from the user at login, like the two above, so a right taken away
+  // reaches live sessions through the same path and cannot be left behind.
+  bool is_station = false;
   std::chrono::steady_clock::time_point created;
   std::chrono::steady_clock::time_point last_activity;
 };
@@ -33,6 +36,9 @@ struct UserInfo {
   std::string password_hash;
   bool is_admin = false;
   bool can_transmit = true;
+  // ⚠️ See ConfigUser::is_station. "The operator is at the station", which is
+  // what the amp tune's loopback test used to prove and no longer can.
+  bool is_station = false;
 };
 
 class AuthService {
@@ -44,7 +50,8 @@ class AuthService {
   static bool VerifyPassword(const std::string& password, const std::string& stored);
 
   void AddUser(const std::string& username, const std::string& password_hash,
-               bool is_admin = false, bool can_transmit = true);
+               bool is_admin = false, bool can_transmit = true,
+               bool is_station = false);
 
   bool IsConfigured() const;
 
@@ -55,6 +62,10 @@ class AuthService {
   bool ValidateSession(const std::string& token);   // sliding: refreshes last_activity
   bool IsAdmin(const std::string& token) const;
   bool CanTransmit(const std::string& token) const;
+  // ⚠️ NOT implied by CanTransmit, and deliberately so. Transmit is "may key the
+  // rig, with a hand on it". This is "may start a ten-second unattended carrier
+  // into an amplifier". The second is a strictly stronger claim.
+  bool IsStation(const std::string& token) const;
   std::optional<std::string> Username(const std::string& token) const;
   void Logout(const std::string& token);
   bool IsLockedOut(const std::string& username) const;
@@ -63,9 +74,13 @@ class AuthService {
   bool RemoveUser(const std::string& username);
   bool ChangePassword(const std::string& username, const std::string& new_hash);
   bool SetCanTransmit(const std::string& username, bool allow);
+  bool SetIsStation(const std::string& username, bool allow);
   int  KillUserSessions(const std::string& username);
 
-  struct UserRow { std::string username; bool is_admin; bool can_transmit; };
+  struct UserRow {
+    std::string username;
+    bool is_admin, can_transmit, is_station;
+  };
   std::vector<UserRow> ListUsers() const;
 
   // ⚠️ How many OTHER sessions have touched the host within `within_seconds`.
@@ -92,7 +107,7 @@ class AuthService {
 
   struct SessionRow {
     std::string token_short, username;
-    bool is_admin, can_transmit;
+    bool is_admin, can_transmit, is_station;
     long long idle_seconds;
   };
   std::vector<SessionRow> ListSessions() const;

@@ -57,6 +57,18 @@ one is `/api/tune/tgxl`. Keep them separate and name them in any confirmation.
 ⚠️ **`/api/tune/amp` refuses every remote caller** (`AmpTuneOrDeny(isLocal)`). Do not expose it
 remotely; a button that always errors is worse than a missing one.
 
+⚠️ **AND IT ANSWERS 200 WHEN IT REFUSES.** `AmpTuneOrDeny` returns an error *object*, not an
+error status, so a Stream Deck button reads the refusal as success: green tick, no tune. That
+is not a detail - it is why this went unnoticed for weeks after the host moved boxes.
+
+📌 **The C++ host deliberately diverges here, 09/01/2026.** `isLocal` was the right test on the
+reference host *because it ran on the station PC*, so loopback proved an operator was present
+and all 44 Stream Deck buttons hitting `localhost:5001` were local. Once the rig moved to its
+own box, loopback started proving the caller was on the **rig** box - the one place nobody
+sits - and amp tune became unreachable from the operating position. The C++ host therefore
+asks **who**, not **where**: the loopback console, or a session whose account carries
+`is_station`. It refuses with **403**. See `tools/amp_gate_check.sh`.
+
 ---
 
 ## 3. Audio — the whole reason a C++ port is interesting
@@ -181,7 +193,8 @@ Both lived only in the WPF host and were never ported to Linux. Check for more o
   needs a second receiver or a net report.
 - **WPF cannot be cross-compiled.** `Microsoft.NET.Sdk.WindowsDesktop` does not exist for Linux.
   (Irrelevant to a C++ client, but it is why the .NET client is built on a Windows CI runner.)
-- **Amp tune is local-only** — see §2.
+- **Amp tune is local-only** — see §2. (On the C++ host: local console *or* an `is_station`
+  account, and the refusal is a 403. The restriction did not go away; the question changed.)
 
 ---
 
