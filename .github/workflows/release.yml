@@ -186,8 +186,12 @@ jobs:
           # ⚠️ Print what the kit ACTUALLY contains before deciding it is missing something.
           # The previous failure said "not found" and left the reason to inference; a
           # listing turns the next surprise into a fact.
-          Write-Host "-- $env:QT_ROOT_DIR\bin --"
-          Get-ChildItem "$env:QT_ROOT_DIR\bin" -Filter "*deploy*" -ErrorAction SilentlyContinue |
+          # ⚠️ List the TOOLS the kit actually has. Filtering to *deploy* answered only the
+          # question I already knew the answer to; qtpaths.exe is the one that decides
+          # whether the host tool can resolve against this kit at all, and Qt's own
+          # guidance is explicit that no native arm64 windeployqt exists.
+          Write-Host "-- tools in $env:QT_ROOT_DIR\bin --"
+          Get-ChildItem "$env:QT_ROOT_DIR\bin" -Filter "*.exe" -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host "   $($_.Name)" }
 
           $wdq = Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"
