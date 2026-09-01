@@ -152,6 +152,7 @@ jobs:
             --name hamdeck-pusher ^
             --icon "%GITHUB_WORKSPACE%\packaging\icons\hamdeck.ico" ^
             --paths . ^
+            --version-file packaging\version_info.txt ^
             --distpath packaging\dist ^
             --workpath packaging\work ^
             --specpath packaging ^
@@ -172,10 +173,58 @@ jobs:
         working-directory: pusher
         run: python ..\tools\check_exe_icon.py packaging\dist\hamdeck-pusher\hamdeck-pusher.exe ..\packaging\icons\hamdeck-256.png
         shell: cmd
+      # ⚠️ SIGN THE FROZEN EXE **AND** THE INSTALLER, in that order.
+      #
+      # The 09/01/2026 detection (Trojan:Win32/Bearfoos.A!ml) was on the INSTALLER, with
+      # zero detections on the PyInstaller output - so signing only the freeze would leave
+      # the actual detection untouched. The installer can only be signed after iscc builds
+      # it, which is why this is two steps around the Installer step rather than one.
+      #
+      # Both are SKIPPED CLEANLY when the secrets are absent, so a build before the signing
+      # account exists still produces a working unsigned installer instead of failing.
+      # Gated with `if:` on the secret rather than a swallowed error - a signing step that
+      # hides its own failure is how an unsigned build ships believing it was signed.
+      - name: Sign the app
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\pusher\packaging\\dist\\hamdeck-pusher
+          files-folder-filter: exe,dll
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
       - name: Installer
         working-directory: pusher
         run: iscc packaging\hamdeck-pusher.iss
         shell: cmd
+
+      - name: Sign the installer
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\pusher\packaging\\Output
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
       - uses: actions/upload-artifact@v4
         with: { name: hamdeck-pusher-windows-installer, path: pusher/packaging/Output/*.exe }
 

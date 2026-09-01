@@ -113,20 +113,35 @@ third-party GUI dependency, so the licence surface stays clean for code signing.
 
 ## ⚠️ Windows Defender flags the installer — it is a false positive
 
-An unsigned **PyInstaller** build gets flagged by Defender's machine-learning heuristics
-(usually `Wacatac` or `Wacapew`). The heuristic keys on the **packer**, not on anything in
-the code, and code signing is the only real cure — SignPath Foundation is free but requires
-a public repo, and this one is private.
+**Measured 09/01/2026 on the station PC:** `Trojan:Win32/Bearfoos.A!ml`, three detections,
+**all on `HamDeckPusher-0.1.0-setup.exe`** and **zero on `hamdeck-pusher.exe`**. So the
+heuristic is keying on **the unsigned Inno installer**, not on the PyInstaller freeze — the
+usual packer mitigations (`--onedir`, no UPX, real icon) were already in place and did not
+help. The `!ml` suffix means a machine-learning verdict rather than a signature match.
 
-**So there is a second download with no packer at all: `HamDeckPusher-source.zip`** (33 KB).
-The app is pure standard library, so it runs directly on the Python already on the station
-PC. Unzip anywhere and use:
+### Making it clean for someone who is not the author — two sequenced steps
 
-| script | what it does |
-|---|---|
-| `Run HamDeck Pusher.cmd` | normal launch, no console window |
-| `Run with console (shows errors).cmd` | same app in a visible console — **use this when something is wrong**, because a windowed build has nowhere to print a traceback |
-| `Diagnose.cmd` | settings, selftest, and one pass against the real host |
+**1. File the false-positive report (free, ~1-3 days, clears it for everyone).**
+<https://www.microsoft.com/en-us/wdsi/filesubmission>, submitting as *software developer*.
+⚠️ **It is per file hash, so every release must be resubmitted** — which is exactly why it
+is a stopgap and not the answer.
+
+**2. Sign with Azure Artifact Signing (~$9.99/mo) — the real fix.**
+Eligibility confirmed: individuals supported, **USA + Canada only**. **No hardware token**,
+so it signs from a GitHub-hosted runner — which matters because since June 2023 an OV key
+must live on an HSM or USB token, and a token cannot sign from CI at all.
+
+`release.yml` is **already wired for it** and skips cleanly until the secrets exist. Add
+these repository secrets and the next tag ships signed, no code change:
+
+    AZURE_TENANT_ID  AZURE_CLIENT_ID  AZURE_CLIENT_SECRET
+    AZURE_SIGNING_ENDPOINT  AZURE_SIGNING_ACCOUNT  AZURE_SIGNING_PROFILE
+
+⚠️ **Both the frozen exe and the installer get signed**, in that order — signing only the
+freeze would leave the detection above untouched.
+⚠️ **Signing buys no instant SmartScreen trust.** Reputation accrues per publisher over
+downloads and time; EV certificates stopped bypassing SmartScreen in 2024, so the EV
+premium buys nothing. Early downloads still warn. That is normal, not a broken certificate.
 
 ## Installing on Windows
 
