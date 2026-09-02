@@ -62,7 +62,21 @@ jobs:
       - name: Run the binary
         run: QT_QPA_PLATFORM=offscreen timeout 60 ./client/build/hamdeck-qml --selftest
       - name: Package
-        run: cd client/build && cpack -G DEB
+        run: |
+          cd client/build && cpack -G DEB
+          # ⚠️ READ THE VERSION BACK OUT OF THE PACKAGE, not off the filename.
+          # The filename is what CPack chose to call it; the control field is
+          # what dpkg and apt actually compare when deciding whether an upgrade
+          # is an upgrade. They come from the same variable today - checking the
+          # one that MATTERS costs nothing and is the one that could silently
+          # diverge.
+          VER="${GITHUB_REF_NAME#v}"
+          case "$VER" in [0-9]*.[0-9]*.[0-9]*) ;; *) VER="0.0.0" ;; esac
+          for d in *.deb; do
+            got="$(dpkg-deb -f "$d" Version)"
+            echo "  $d: control Version=$got"
+            [ "$got" = "$VER" ] || { echo "  expected $VER - the release would ship a package that says it is something else"; exit 1; }
+          done
       # ⚠️ Verify the ARTIFACT, not the build: install the package and run what
       # it installed, from the path it installed to.
       - name: Install the package and run what it installed
@@ -720,6 +734,21 @@ jobs:
       # Velopack does not build DMGs - it produces the .app and a .pkg, and a signed .pkg
       # would need a second Developer ID INSTALLER certificate against Apple's cap of 5.
       # So this wraps vpk's already-signed .app rather than replacing it.
+      # ⚠️ THE DMG AND THE WINDOWS INSTALLER CARRY NO VERSION IN THEIR NAMES, so
+      # the publish job's filename check is blind to both. The bundle's own
+      # Info.plist is the only place the Mac build states what version it is -
+      # and it is what Finder's Get Info shows the operator.
+      - name: The bundle says it is the version being released
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          case "$VER" in [0-9]*.[0-9]*.[0-9]*) ;; *) VER="0.0.0" ;; esac
+          PLIST="$APP/Contents/Info.plist"
+          got="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")"
+          echo "  CFBundleShortVersionString=$got  (release $VER)"
+          [ "$got" = "$VER" ] || { echo "  the app would tell Get Info it is $got"; exit 1; }
+
       - name: Build a DMG
         if: ${{ env.APPLE_CERT_P12 != '' }}
         run: |
