@@ -52,6 +52,23 @@ Auth: session cookie, also accepted as `?token=` or `Bearer`. Since v3.4.14 stat
 audio require a session. `web_admin_only=true` makes `/` serve the admin page and 404s the old
 browser rig UI.
 
+🔴 **TRAILING SLASHES ARE TRIMMED ON `/api/` PATHS — `ApiServer.cs:764-766`:**
+
+```csharp
+if (path.StartsWith("/api/")) { var trimmed = path.TrimEnd('/'); ... }
+```
+
+**The Stream Deck sends them.** Its amp tune button requests `/api/tune/amp/`, and the C++ host
+matched that against the PREFIX route rather than the exact one — the not-configured catch-all,
+which answers 200 and never tunes. The button reported success and did nothing, independent of
+any permission.
+
+⚠️ **A route inventory cannot see this.** `AUDIT-CSHARP.md` ticked `/api/tune/amp` because the
+route exists, and the 71/74 sweep drove clean paths. How a path is MATCHED is part of the
+contract, not an implementation detail. Normalise where the request is built, so the gates and
+the router agree — at the router alone, `/api/ptt/on/` skips `IsTransmitRoute` and still
+dispatches.
+
 ⚠️ **`/api/tune` is the rig's INTERNAL ATU and is the wrong tuner for this station.** The right
 one is `/api/tune/tgxl`. Keep them separate and name them in any confirmation.
 ⚠️ **`/api/tune/amp` refuses every remote caller** (`AmpTuneOrDeny(isLocal)`). Do not expose it

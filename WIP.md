@@ -1363,3 +1363,27 @@ Live state, verified in the running host AND on disk after a flush:
     wa0o       tx=True  station=True
 
 Deployed: build `1c75acfd03ce`.
+
+
+### 🔴 ROOT CAUSE, found last instead of first: a trailing slash
+
+The amp button sends **`/api/tune/amp/`**. Read straight off the host's journal:
+
+    Sep 02 01:09:53 hamdeck-cpp hamdeck-host[18620]: dash GET /api/tune/amp/
+
+That matched the PREFIX route, not the exact one, so it hit the not-configured catch-all -
+200, no tune, no rights involved at all. The reference host trims trailing slashes on `/api/`
+paths (`ApiServer.cs:766`); this one did not.
+
+⚠️ **Process failure worth keeping.** Hours went into the permission gate - which was a real
+bug and did need fixing - while the thing actually breaking the button was routing. The first
+move should have been *what does the deck actually send, and what does the host answer*. One
+`journalctl | grep tune` answered it. Reasoning from the code found a true fact that was not
+the operative one.
+
+⚠️ **This may have been breaking other buttons silently.** The 71/74 route sweep used clean
+paths, so any button sending a trailing slash was never exercised.
+
+Verified live without transmitting: `/api/health/` and `/api/health//` now answer 200, and
+`/api/tune/amp/` answers 401 (the auth gate) instead of the catch-all's 200 - proving it now
+resolves to the real route. Build `ef607ca00190`.
