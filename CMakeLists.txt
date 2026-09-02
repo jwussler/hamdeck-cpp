@@ -38,7 +38,7 @@ FetchContent_Declare(nlohmann_json
   GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(nlohmann_json)
 
-add_executable(hamdeck-host src/main.cpp src/log.cpp src/amp_tuner.cpp src/api.cpp src/transmit_routes.cpp src/cw_text.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp src/tx_audio.cpp src/cat_proxy.cpp src/alsa_devices.cpp src/rig_cal.cpp src/alsa_audio.cpp src/tgxl.cpp src/recorder.cpp
+add_executable(hamdeck-host src/main.cpp src/log.cpp src/amp_tuner.cpp src/api.cpp src/transmit_routes.cpp src/cw_text.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp src/tx_audio.cpp src/cat_proxy.cpp src/alsa_devices.cpp src/rig_cal.cpp src/alsa_audio.cpp src/tgxl.cpp src/recorder.cpp src/qso_record.cpp
     src/session_stats.cpp)
 target_link_libraries(hamdeck-host PRIVATE civetweb-c-library OpenSSL::Crypto nlohmann_json::nlohmann_json asound)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
@@ -62,6 +62,9 @@ add_test(NAME audio_queue COMMAND test_audio_queue)
 
 add_executable(test_recorder tests/test_recorder.cpp src/recorder.cpp)
 add_test(NAME recorder COMMAND test_recorder)
+
+add_executable(test_qso_record tests/test_qso_record.cpp src/qso_record.cpp src/recorder.cpp)
+add_test(NAME qso_record COMMAND test_qso_record)
 
 add_executable(test_session_stats tests/test_session_stats.cpp src/session_stats.cpp)
 add_test(NAME session_stats COMMAND test_session_stats)

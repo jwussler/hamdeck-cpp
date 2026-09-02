@@ -22,6 +22,7 @@
 #include "auth.h"
 #include "alsa_audio.h"
 #include "cat_sim.h"
+#include "qso_record.h"
 #include "recorder.h"
 #include "session_stats.h"
 #include "tgxl.h"
@@ -219,6 +220,7 @@ int main(int argc, char** argv) {
     rx_audio.SetRecorder(&recorder);
   }
 
+
   rx_audio.Start();
 
   // TX audio. The null sink discards: the codec is on the reference host, so
@@ -273,6 +275,23 @@ int main(int argc, char** argv) {
   // callers only, enforced by the route on the loopback listener.
   AmpTuner amp(tgxl_rig);
   if (tgxl.configured()) std::cout << "TGXL: " << tgxl.Describe() << '\n' << std::flush;
+
+  // ⚠️ FED FROM THE POLL LOOP, NOT ITS OWN TIMER. QsoRecorder is what turns PTT
+  // into a recording, and it also hands the recorder the frequency and mode
+  // that go in every sidecar - so it is wired up even when auto-record is off.
+  // The tuner check is here rather than inside it because the amp and the TGXL
+  // are what know a tune is running, and keying for a tune is PTT to the rig.
+  QsoRecorder qso_record(&recorder, QsoRecorder::Options{
+      config.ptt_record_enabled, config.ptt_record_seconds,
+      static_cast<long long>(config.ptt_record_qsy_khz) * 1000});
+  poller.OnPoll([&](bool connected, long long freq, const std::string& mode, bool tx) {
+    const bool tuning = amp.IsActive() || tgxl.IsActive();
+    qso_record.Observe(connected, freq, mode, tx, tuning);
+  });
+  if (config.ptt_record_enabled && recorder.available()) {
+    std::cout << "ptt auto-record: on (" << config.ptt_record_seconds
+              << "s idle, " << config.ptt_record_qsy_khz << " kHz QSY)\n" << std::flush;
+  }
 
   HostState host_state;
 
