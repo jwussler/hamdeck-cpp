@@ -18,6 +18,11 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network WebSockets Multimedia Quick QuickControls2 Qml Test)
 qt_standard_project_setup()
 
+# ⚠️ ONE DEFINITION OF THE MAC APP NAME. It is the .app directory name, the executable
+# name inside it, CFBundleName, and the install destination of the licence texts - four
+# places that must agree or the bundle is subtly broken in a way only a Mac shows.
+set(MACOS_APP_NAME "HamDeck Remote")
+
 # ⚠️ The Qt Widgets front end was REMOVED here, not kept as a fallback.
 #
 # It worked and was screenshot-verified, but two front ends against one API
@@ -105,6 +110,41 @@ target_link_libraries(hamdeck-qml PRIVATE
 # from a terminal. CI depends on that output.
 set_target_properties(hamdeck-qml PROPERTIES WIN32_EXECUTABLE TRUE MACOSX_BUNDLE TRUE)
 
+# ── The macOS bundle: its name, its icon, and its microphone string ──────────
+# ⚠️ EVERYTHING VISIBLE ABOUT A MAC APP COMES FROM THE BUNDLE, NOT THE BINARY.
+# Left alone, CMake names the bundle after the TARGET and writes a stock Info.plist
+# with no icon key, so 0.1.29 shipped a signed, notarised, correctly working app that
+# Finder called "hamdeck-qml" and drew with the blank generic page. Nothing failed;
+# there is simply no default that could have been right.
+#
+# ⚠️ OUTPUT_NAME IS WHAT RENAMES THE .app - the target stays hamdeck-qml so add_test,
+# target_sources and every non-Apple path are untouched. It applies on APPLE only:
+# Linux ships an executable called hamdeck-qml that a .desktop file points at, and a
+# binary with a space in its name there would be a gratuitous break.
+if(APPLE)
+    set_target_properties(hamdeck-qml PROPERTIES
+        OUTPUT_NAME                          "${MACOS_APP_NAME}"
+        MACOSX_BUNDLE_INFO_PLIST             "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in"
+        MACOSX_BUNDLE_BUNDLE_NAME            "${MACOS_APP_NAME}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER         "com.wa0o.hamdeck.remote"
+        MACOSX_BUNDLE_BUNDLE_VERSION         "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING   "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_COPYRIGHT              "WA0O"
+        MACOSX_BUNDLE_ICON_FILE              "hamdeck.icns")
+
+    # ⚠️ THE ICNS IS A SOURCE FILE, NOT AN install(FILES). CFBundleIconFile names a file
+    # that must already be in Contents/Resources of the BUILT bundle - macdeployqt,
+    # codesign and notarisation all run against client/build before anything is
+    # installed, so an icon added at install time is signed into nothing and the .app in
+    # the DMG has no icon anyway. MACOSX_PACKAGE_LOCATION puts it there at build time.
+    set(HAMDECK_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/icons/hamdeck.icns")
+    if(NOT EXISTS "${HAMDECK_ICNS}")
+        message(FATAL_ERROR "packaging/icons/hamdeck.icns is missing - run brand/build.sh")
+    endif()
+    target_sources(hamdeck-qml PRIVATE "${HAMDECK_ICNS}")
+    set_source_files_properties("${HAMDECK_ICNS}" PROPERTIES MACOSX_PACKAGE_LOCATION "Resources")
+endif()
+
 # ⚠️ Embeds the .ico INTO the exe. Explorer, the taskbar and every shortcut read
 # the icon from the binary's own resource - the installer's SetupIconFile does
 # not give the installed app an icon, which is why it shipped blank.
@@ -166,9 +206,9 @@ endif()
 # Resources/, not a Unix docdir.
 if(APPLE)
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/OFL.txt
-            DESTINATION hamdeck-qml.app/Contents/Resources RENAME OFL-fonts.txt)
+            DESTINATION "${MACOS_APP_NAME}.app/Contents/Resources" RENAME OFL-fonts.txt)
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/README.md
-            DESTINATION hamdeck-qml.app/Contents/Resources RENAME FONTS.md)
+            DESTINATION "${MACOS_APP_NAME}.app/Contents/Resources" RENAME FONTS.md)
 else()
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/OFL.txt
             DESTINATION ${CMAKE_INSTALL_DOCDIR} RENAME OFL-fonts.txt)

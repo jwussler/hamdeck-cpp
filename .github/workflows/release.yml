@@ -553,11 +553,18 @@ jobs:
 
       - name: Run the binary
         run: |
-          # ⚠️ THE BINARY IS INSIDE AN .app ON macOS. qt_add_executable produces a bundle,
-          # so client/build/hamdeck-qml does not exist - the tools report "no such file",
-          # which reads as a build that produced nothing rather than a path that is wrong.
-          BIN=client/build/hamdeck-qml.app/Contents/MacOS/hamdeck-qml
-          [ -f "$BIN" ] || BIN=client/build/hamdeck-qml
+          # ⚠️ THE BINARY IS INSIDE AN .app ON macOS, UNDER THE DISPLAY NAME. The bundle
+          # is "HamDeck Remote.app" and the executable inside carries the same name, not
+          # the CMake target name - so every path here has a SPACE in it and must stay
+          # quoted. An unquoted one splits into "client/build/HamDeck" and reports "no
+          # such file", which reads as a build that produced nothing.
+          BIN="client/build/HamDeck Remote.app/Contents/MacOS/HamDeck Remote"
+          # ⚠️ NO FALLBACK TO A BARE client/build/hamdeck-qml. There used to be one, and
+          # it would now hide the thing most likely to break: if OUTPUT_NAME stops
+          # applying, the bundle is called hamdeck-qml.app again and a fallback would
+          # quietly build, test and ship the badly-named app that this rename exists to
+          # prevent. On APPLE the output is always a bundle, so a miss is a real fault.
+          [ -f "$BIN" ] || { echo "no binary at $BIN - the bundle is not named as expected"; ls client/build; exit 1; }
           QT_QPA_PLATFORM=offscreen "$BIN" --selftest
 
       # ⚠️ ASK THE BINARY, NOT THE FLAG. CMAKE_OSX_ARCHITECTURES is a request, and if Qt
@@ -567,14 +574,29 @@ jobs:
       - name: It is actually universal
         run: |
           set -euo pipefail
-          # ⚠️ THE BINARY IS INSIDE AN .app ON macOS. qt_add_executable produces a bundle,
-          # so client/build/hamdeck-qml does not exist - the tools report "no such file",
-          # which reads as a build that produced nothing rather than a path that is wrong.
-          BIN=client/build/hamdeck-qml.app/Contents/MacOS/hamdeck-qml
-          [ -f "$BIN" ] || BIN=client/build/hamdeck-qml
+          # ⚠️ THE BINARY IS INSIDE AN .app ON macOS, UNDER THE DISPLAY NAME. The bundle
+          # is "HamDeck Remote.app" and the executable inside carries the same name, not
+          # the CMake target name - so every path here has a SPACE in it and must stay
+          # quoted. An unquoted one splits into "client/build/HamDeck" and reports "no
+          # such file", which reads as a build that produced nothing.
+          BIN="client/build/HamDeck Remote.app/Contents/MacOS/HamDeck Remote"
+          # ⚠️ NO FALLBACK TO A BARE client/build/hamdeck-qml. There used to be one, and
+          # it would now hide the thing most likely to break: if OUTPUT_NAME stops
+          # applying, the bundle is called hamdeck-qml.app again and a fallback would
+          # quietly build, test and ship the badly-named app that this rename exists to
+          # prevent. On APPLE the output is always a bundle, so a miss is a real fault.
+          [ -f "$BIN" ] || { echo "no binary at $BIN - the bundle is not named as expected"; ls client/build; exit 1; }
           echo "architectures: $(lipo -archs "$BIN")"
           lipo -archs "$BIN" | grep -q arm64  || { echo "missing arm64";  exit 1; }
           lipo -archs "$BIN" | grep -q x86_64 || { echo "missing x86_64"; exit 1; }
+
+      # ⚠️ A BUILD IS NOT A BUNDLE. Everything above proves the binary is universal and
+      # runs; none of it looks at what macOS actually shows the operator. 0.1.29 passed
+      # every one of those checks and shipped an app Finder called "hamdeck-qml" with the
+      # blank generic icon, plus no microphone usage string - which SIGKILLs the app on
+      # the first PTT. This is the check that was missing.
+      - name: Is it a properly formed Mac application
+        run: python3 tools/check_macos_bundle.py "client/build/HamDeck Remote.app"
 
       # ⚠️ A TEMPORARY KEYCHAIN, not the login keychain. The runner is shared
       # infrastructure; importing a signing identity into the default keychain leaves it
@@ -631,7 +653,7 @@ jobs:
         if: ${{ env.APPLE_CERT_P12 != '' }}
         run: |
           set -euo pipefail
-          APP=client/build/hamdeck-qml.app
+          APP="client/build/HamDeck Remote.app"
           [ -d "$APP" ] || { echo "no .app was built at $APP"; exit 1; }
           macdeployqt "$APP" -qmldir=client/qml
           # ⚠️ --deep signs the frameworks macdeployqt just copied in. Signing only the
@@ -643,6 +665,13 @@ jobs:
                    --keychain "$KEYCHAIN" "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           echo "APP=$APP" >> "$GITHUB_ENV"
+
+      # ⚠️ AND AGAIN ON THE SIGNED BUNDLE. macdeployqt rewrites the bundle after the
+      # first check ran - it copies frameworks in and edits Info.plist - so the thing
+      # verified above is not the thing that goes into the DMG.
+      - name: Still a properly formed Mac application after macdeployqt
+        if: ${{ env.APPLE_CERT_P12 != '' }}
+        run: python3 tools/check_macos_bundle.py "$APP"
 
       # ⚠️ A DMG WITH AN APPLICATIONS ALIAS - the idiomatic macOS install, and safer than a
       # zip in practice: an unzipped .app tends to get run from Downloads, where quarantine
