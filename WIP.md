@@ -1597,3 +1597,40 @@ command line of the very shell issuing it. Cost a lost commit. Use `pkill -x ham
    cannot be fetched retroactively — the only source is `netlogger_poll.py`'s
    `netlogger_checkin` table, and only for the period it has actually been polling. Anything
    older is unattributable from the net side, permanently.
+
+### Identification, layer 1 — `tools/identify_recording.py` (09/02/2026)
+
+Takes a recording's sidecar and answers "who was that" from the log. Two layers that are
+deliberately **not** the same kind of claim: **LOGGED** is a fact (the operator wrote the
+callsign down); **ON THE NET** is a list of **candidates** (a check-in says present, not that
+they were the voice on the tape).
+
+⚠️ **The net name is ALREADY in the log** and needs no API at all. NetLogger-sourced QSOs carry
+it in `COL_COMMENT`, in the two encodings qsl-queue's README measured over 29,573 rows —
+`OMISS 40m SSB Net` and `MT/HI [OMISS 40m SSB Net]`. So layer 1 works **retroactively over the
+whole log**, unlike anything that depends on the NetLogger API. Bracket text is not always a
+net (`[New call sign May 2025]` is in there), so a bracketed token is only taken as one when it
+is net-shaped — verified against that exact row.
+
+⚠️ **Matching is on TIME ALONE, and the band is shown so a wrong match is visible.** Filtering
+by band would silently drop true matches whenever the sidecar's frequency is unreliable (rig
+disconnected, or a QSY between the exchange and the log entry), and a dropped true match is
+invisible in a way a flagged odd one is not. A QSO on another band in the same window is marked
+`⚠️ DIFFERENT BAND`, never hidden. Proven by re-running a real window with the band claim
+changed and watching both rows flag.
+
+⚠️ **A logged QSO is an INSTANT, not a span** — `COL_TIME_OFF == COL_TIME_ON` on every row, so
+the timestamp is when it was *logged*, usually the end of the exchange. Hence `--pad` (120 s
+default) and hence each match prints its offset into the recording, so an edge match reads as
+one instead of a bullseye.
+
+⚠️ **"Nothing found" is never printed as "nobody".** An unlogged QSO and a station heard but
+not worked look identical to this tool. A false negative stated as a finding is worse than no
+answer.
+
+Measured against the real log, not a fixture: a 26-minute window over the 07/26 80m net
+returned **N4GTO / N4TTU / W4ETA**, each with its offset into the recording and the net name
+parsed from the comment.
+
+⚠️ **Connection details come from the environment** (`WAVELOG_DB_*`, or `WAVELOG_DB_DOCKER`),
+never from the file — same rule as the rest of this repo.
