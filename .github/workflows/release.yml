@@ -1115,6 +1115,23 @@ jobs:
             echo "mirroring to jwussler/hamdeck-cpp (private source repo)"
             publish "$GITHUB_REPOSITORY" "$GH_TOKEN"
           else
-            echo "RELEASES_TOKEN not set - publishing ONLY to this PRIVATE repo, which nobody else can reach"
+            # ⚠️ A TAG BUILD WITH NO RELEASES_TOKEN IS A FAILURE, NOT A FALLBACK.
+            #
+            # This used to publish quietly to the private repo and exit 0. v0.1.30
+            # did exactly that: every installer built, signed and correct, attached
+            # to a release that exactly one person on earth can open - and the job
+            # went green. Meanwhile every installed copy points GithubSource at
+            # jwussler/hamdeck-releases and would never have been offered the
+            # update. Nothing looked wrong anywhere.
+            #
+            # The artifacts still get attached here first, so a token added later
+            # only needs a re-run rather than a rebuild. Then it stops.
+            echo "RELEASES_TOKEN is not set - attaching to this PRIVATE repo so the build is not wasted"
             publish "$GITHUB_REPOSITORY" "$GH_TOKEN"
+            echo ""
+            echo "REFUSING to call this a release. jwussler/hamdeck-releases is where"
+            echo "downloads live and where every installed copy looks for updates."
+            echo "Add a fine-grained PAT with contents:write on that repo as the"
+            echo "RELEASES_TOKEN secret, then re-run this job."
+            exit 1
           fi
