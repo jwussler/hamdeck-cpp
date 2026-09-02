@@ -8,7 +8,7 @@
 
 A parity walker that simply GETs every route would key the transmitter, change
 the operating mode and retune the amplifier on a live station - most of this API
-is state-changing, and many of those routes are GETs. CARRYOVER.md section 9
+is state-changing, and many of those routes are GETs. docs/internal/CARRYOVER.md section 9
 records that probing with a control route once changed the operating mode
 mid-session, with a human at the radio.
 

@@ -3,7 +3,7 @@
 ; ⚠️ THIS IS BUILT ON WINDOWS, NOT CROSS-COMPILED. Qt does not cross-compile
 ; comfortably, and more importantly a Windows binary that has never run on
 ; Windows is exactly the release the .NET client shipped that could not launch at
-; all while every test passed (CARRYOVER.md section 8). The CI job runs the
+; all while every test passed (docs/internal/CARRYOVER.md section 8). The CI job runs the
 ; binary on the runner before packaging it.
 ;
 ; ⚠️ UNSIGNED. Windows SmartScreen will warn on first run. Saying so is the

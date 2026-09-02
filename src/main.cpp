@@ -1,7 +1,7 @@
 // HamDeck C++ host.
 //
 // Route surface is in api.cpp; this file owns process startup and the listener
-// split. See WIP.md for the road map and CARRYOVER.md for the traps.
+// split. See docs/internal/WIP.md for the road map and docs/internal/CARRYOVER.md for the traps.
 
 #include <cstdlib>
 #include <filesystem>
@@ -56,7 +56,7 @@ void OnStopSignal(int) {
 // The control port trusting every caller is exactly why it must be bound to the
 // loopback address: the trust boundary is then enforced by the kernel, not by a
 // check somebody can forget to write. /api/tune/amp must refuse every remote
-// caller (CARRYOVER.md section 2), and "is this caller local" is answered by
+// caller (docs/internal/CARRYOVER.md section 2), and "is this caller local" is answered by
 // WHICH SOCKET ACCEPTED IT - never by a header, which the caller controls.
 constexpr const char* kControlAddr = "127.0.0.1";
 // ⚠️ DEFAULTS ONLY. The real values come from the config - api_port and
@@ -71,7 +71,7 @@ constexpr int         kDashPort    = 5002;
 }  // namespace
 
 // Walks the whole startup path - poller, audio, auth, both listeners - proves the
-// process actually serves a request, and exits. CARRYOVER.md section 8: the .NET
+// process actually serves a request, and exits. docs/internal/CARRYOVER.md section 8: the .NET
 // client shipped a release that could not launch at all while every test passed,
 // because CI built the artifact and never ran it.
 //
@@ -186,7 +186,7 @@ int main(int argc, char** argv) {
 
   // Synthetic RX audio: the codec is passed through to the reference host, so
   // there is no real capture device here. 22050 Hz mono/16-bit matches the wire
-  // format the client expects (CARRYOVER.md section 2).
+  // format the client expects (docs/internal/CARRYOVER.md section 2).
   // RX source: the real codec when one is named, a tone otherwise. A failure to
   // open a NAMED device is fatal, for the same reason a missing CAT device is:
   // a host that silently substitutes a test tone for the receiver would have the

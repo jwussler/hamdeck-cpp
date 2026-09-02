@@ -9,7 +9,7 @@
 // ⚠️ The queue MUST be bounded and MUST drop, not block or grow. An unbounded
 // queue does not avoid loss, it converts loss into ever-growing latency, and
 // latency on a receive stream is indistinguishable from a broken link to the
-// operator. CARRYOVER.md section 6 says it for the client side; it is just as
+// operator. docs/internal/CARRYOVER.md section 6 says it for the client side; it is just as
 // true here.
 //
 // Which end gets dropped matters. Dropping the OLDEST keeps the stream current:

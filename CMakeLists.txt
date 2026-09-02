@@ -43,7 +43,7 @@ add_executable(hamdeck-host src/main.cpp src/log.cpp src/amp_tuner.cpp src/api.c
 target_link_libraries(hamdeck-host PRIVATE civetweb-c-library OpenSSL::Crypto nlohmann_json::nlohmann_json asound)
 target_compile_options(hamdeck-host PRIVATE -Wall -Wextra)
 
-# CI must RUN things, not just build them (CARRYOVER.md section 8): the .NET
+# CI must RUN things, not just build them (docs/internal/CARRYOVER.md section 8): the .NET
 # client shipped a release that could not launch while every test passed.
 enable_testing()
 add_executable(test_staleness tests/test_staleness.cpp src/cat_sim.cpp src/radio.cpp src/session_stats.cpp)

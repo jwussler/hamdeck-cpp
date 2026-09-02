@@ -2,7 +2,7 @@
 //
 // The watchdog is the safety property in the whole host: if it does not fire,
 // a lost link or a slept laptop leaves the rig keyed with nobody watching
-// (CARRYOVER.md section 4b). So the test asserts the RADIO actually stopped
+// (docs/internal/CARRYOVER.md section 4b). So the test asserts the RADIO actually stopped
 // transmitting, read back through CAT - not merely that a trip counter moved.
 // A counter is a claim; TX; returning 0 is the outcome.
 

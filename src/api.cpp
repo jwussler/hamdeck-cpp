@@ -237,7 +237,7 @@ std::string Pad(long long v, int width) {
 // ⚠️ POWER CAP, PORTED FAITHFULLY AND DELIBERATELY NOT "FIXED".
 // In the C# host a LOCAL caller is capped at 100 W while a remote caller gets
 // 200 W - which reads backwards, so it is exactly the kind of thing to port
-// as-is and ask about rather than quietly invert. Flagged in WIP.md.
+// as-is and ask about rather than quietly invert. Flagged in docs/internal/WIP.md.
 // Hard ceiling on how long unkeying may be delayed, whatever the buffer says.
 constexpr int kMaxDrainMs = 1200;
 
@@ -357,7 +357,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // checkable answer is. The reference host does not serve this route, so it
   // 404s there and any such tool must refuse on 404 rather than assume.
   // ── Capability reporting ───────────────────────────────────────────────────
-  // ⚠️ CARRYOVER.md section 1: on the reference Linux build /api/record/start
+  // ⚠️ docs/internal/CARRYOVER.md section 1: on the reference Linux build /api/record/start
   // answers {"status":"ok","recording":true} while Start() sets IsRecording =
   // false. A 200 there means the route exists, not that anything is recording.
   //
@@ -367,11 +367,11 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // reads the same shape. The VALUES are honest: nothing is recording and there
   // is no capture backend, which is what available:false says.
   //
-  // ⚠️ CARRYOVER.md section 1: the reference /api/record/start answers
+  // ⚠️ docs/internal/CARRYOVER.md section 1: the reference /api/record/start answers
   // {"status":"ok","recording":true} while Start() sets IsRecording = false. The
   // only honest signal is this route's file_recording. Do not reproduce the lie.
   // ⚠️ Every field here is derived from what ACTUALLY happened, never from
-  // having been asked. CARRYOVER.md section 1: the reference /api/record/start
+  // having been asked. docs/internal/CARRYOVER.md section 1: the reference /api/record/start
   // answers ok/recording:true while Start() sets IsRecording = false.
   {
     Recorder* rec = deps.recorder;
@@ -467,7 +467,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   }
 
   // Voice keyer: present on the reference host and answering, contrary to the
-  // note in CARRYOVER.md section 1 that lists it among the null services.
+  // note in docs/internal/CARRYOVER.md section 1 that lists it among the null services.
   server.Get("/api/voice/status", [](const HttpRequest&, HttpResponse& res) {
     WriteJson(res, 200, R"({"status":"ok","playing":false})");
   });
@@ -737,7 +737,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                   JsonBool(ok && deps.auth->IsAdmin(token)),
                   JsonBool(ok && deps.auth->CanTransmit(token)),
                   // ⚠️ So a client can GREY THE AMP TUNE BUTTON instead of showing a
-                  // live one that answers 403. CARRYOVER.md section 2: "a button that
+                  // live one that answers 403. docs/internal/CARRYOVER.md section 2: "a button that
                   // always errors is worse than a missing one" - and it is also the
                   // only way to confirm the right is live without keying an amplifier
                   // to find out.
@@ -768,7 +768,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       return;
     }
 
-    // The token goes in the cookie and NOT in the body - CARRYOVER.md section 2.
+    // The token goes in the cookie and NOT in the body - docs/internal/CARRYOVER.md section 2.
     // HttpOnly keeps it away from page scripts; SameSite=Strict closes the
     // top-level-navigation CSRF vector on state-changing GETs, of which this API
     // has many (/api/ptt/on is a GET).
@@ -831,7 +831,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
 
       // ⚠️ PTT ON is here; PTT OFF is below, because unkeying is not instant. Unkeying must wait for the audio still
       // queued in the ALSA buffer or the tail of every transmission is lost
-      // (CARRYOVER.md section 4a), and that wait needs the real device depth from
+      // (docs/internal/CARRYOVER.md section 4a), and that wait needs the real device depth from
       // /proc/asound. Shipping an unkey that drops PTT immediately would look
       // like it works and quietly cut the end off every over - the exact bug that
       // took a report from a net to find. It lands with the audio work.
@@ -1086,7 +1086,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // The last fraction of a second of every transmission is sitting in the ALSA
   // buffer when the operator releases PTT. Drop the carrier first and that audio
   // is never transmitted - the end of every over is cut off, and it sounds like
-  // the other station stopped listening. CARRYOVER.md section 4a; the bug it
+  // the other station stopped listening. docs/internal/CARRYOVER.md section 4a; the bug it
   // describes took a report from a net to find.
   //
   // ⚠️ WAIT THE DEPTH AT THIS MOMENT, NOT "UNTIL EMPTY". The microphone stays
@@ -1444,7 +1444,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                          hz, mode); }});
 
   // ── Tuners: THREE different things, and confusing them is expensive ────────
-  // ⚠️ /api/tune is the RIG'S INTERNAL ATU (AC002;). CARRYOVER.md section 2 is
+  // ⚠️ /api/tune is the RIG'S INTERNAL ATU (AC002;). docs/internal/CARRYOVER.md section 2 is
   // explicit that it is the WRONG tuner for this station; the right one is
   // /api/tune/tgxl. They are kept separate and each names itself in its reply so
   // a confirmation dialog cannot say "tuning" and leave the operator guessing

@@ -9,7 +9,7 @@
 // would have caught for free.
 //
 // ⚠️ Only ONE thread may ever call this. The serial lock is not re-entrant
-// across threads (CARRYOVER.md section 5); RadioPoller owns it and request
+// across threads (docs/internal/CARRYOVER.md section 5); RadioPoller owns it and request
 // threads queue commands instead.
 
 #include <string>
@@ -27,7 +27,7 @@ class SerialCat : public CatTransport {
 
   // Tries each candidate and keeps the first that answers the identity probe.
   //
-  // ⚠️ The probe is `ID;` and ONLY `ID;`. CARRYOVER.md section 9: probing with a
+  // ⚠️ The probe is `ID;` and ONLY `ID;`. docs/internal/CARRYOVER.md section 9: probing with a
   // control route once changed the operating mode mid-session. This also matters
   // because the CP2105 is a DUAL UART - one physical device enumerates two
   // serial ports and only one of them is CAT - so the port has to be identified

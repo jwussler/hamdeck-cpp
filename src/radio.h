@@ -4,7 +4,7 @@
 //
 // ⚠️ THE POINT OF THIS FILE. /api/status is served ENTIRELY from this cache and
 // never touches the serial port from a request thread - the serial lock is not
-// re-entrant across threads (CARRYOVER.md section 5). The C# Linux host shipped
+// re-entrant across threads (docs/internal/CARRYOVER.md section 5). The C# Linux host shipped
 // with no poller at all, so /api/status served a frequency 3.6 HOURS stale and a
 // tx:true left over from a tune while the rig was receiving. A cache with nothing
 // refreshing it is worse than no cache: it answers confidently and wrongly.
@@ -79,7 +79,7 @@ class RadioPoller {
   long long   CacheAgeMs() const;
 
   // ⚠️ THE ONLY WAY A REQUEST THREAD MAY TOUCH THE RADIO.
-  // The serial lock is not re-entrant across threads (CARRYOVER.md section 5),
+  // The serial lock is not re-entrant across threads (docs/internal/CARRYOVER.md section 5),
   // so exactly one thread - the poller - ever speaks to the port. Handlers queue
   // a command and return; the poller drains the queue at the top of each cycle.
   // Queueing also gives commands a natural ordering, which matters for pairs
@@ -96,7 +96,7 @@ class RadioPoller {
 
   // Transmit watchdog. Zero disables it.
   //
-  // ⚠️ THIS MUST LIVE NEXT TO THE RADIO (CARRYOVER.md section 4b). A timeout in
+  // ⚠️ THIS MUST LIVE NEXT TO THE RADIO (docs/internal/CARRYOVER.md section 4b). A timeout in
   // the client or the browser protects nothing: close the tab, sleep the laptop
   // or lose the link while keyed and the rig stays keyed with nobody watching.
   // The Linux host shipped without this for months because it existed only in

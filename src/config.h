@@ -7,7 +7,7 @@
 //
 // ⚠️ NO DEFAULT SHIPS AN ADDRESS OR A HOSTNAME. The reference host's config
 // carries station LAN addresses as compiled-in defaults, and that source is
-// public - CARRYOVER.md section 6 says a hostname in a public repo points every
+// public - docs/internal/CARRYOVER.md section 6 says a hostname in a public repo points every
 // install at that station, and an address does the same. Here every such field
 // defaults to EMPTY, which means "not configured, feature off". An operator who
 // wants the feature says where it lives.

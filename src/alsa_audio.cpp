@@ -117,7 +117,7 @@ bool AlsaPlayback::Open(const std::string& device, int sample_rate) {
     return false;
   }
   // ⚠️ A GENEROUS BUFFER, WITH THE FILL LEVEL CONTROLLED ELSEWHERE.
-  // CARRYOVER.md section 3: give the device room, then manage how full it is.
+  // docs/internal/CARRYOVER.md section 3: give the device room, then manage how full it is.
   // A small buffer just trades latency for underruns, and an underrun mid-word
   // is worse than 100 ms of delay.
   error_ = Configure(pcm_, sample_rate, sample_rate / 2, sample_rate / 50);

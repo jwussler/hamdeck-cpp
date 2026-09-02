@@ -78,4 +78,4 @@ the NetLogger sync) show medians of 206s and 63s and only ~13% under 20s, while 
   the single biggest term in the slicing error and it has not been measured.
 
 Related: `qsl-card-system` (the QR spot on the card is the consumer of this),
-[[netlogger-xml-api]], and section 1 of CARRYOVER.md for the recorder itself.
+[[netlogger-xml-api]], and section 1 of docs/internal/CARRYOVER.md for the recorder itself.

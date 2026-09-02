@@ -134,7 +134,7 @@ including this pusher**. It converts a transient process conflict into a permane
 ### The actual fix
 Stop the legacy C# host. Checks done first, so this is safe rather than hopeful:
 `rig_connected:false` (the rig lives on **deck**, `192.168.40.64` now), and the local
-cloudflared tunnel that used to publish its `:5002` as `radio.wa0o.com` **is not running on
+cloudflared tunnel that used to publish its `:5002` as the station hostname **is not running on
 this PC** — so nothing public depends on it.
 
     Stop-Process -Name HamDeck -Force
@@ -360,7 +360,7 @@ misleading. Do not re-run it as written; read §4 first.**
 ### Next, in order
 1. 🔴 **Remove `HamDeck.lnk` from `shell:startup`** (or the C# host retakes 5001 at the next
    logon and the deck dies again with the same misleading error). Joe's call, because it also
-   ends the local `radio.wa0o.com` origin — which is already dead here anyway, since
+   ends the local the station hostname origin — which is already dead here anyway, since
    `cloudflared` is not running on this PC.
 2. **Press real Stream Deck buttons and report which work.** Expect **CW keyer**, **voice
    memories** and **RX antenna** to fail — known unported features (§6), not new bugs.

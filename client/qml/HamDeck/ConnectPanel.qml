@@ -6,7 +6,7 @@ import HamDeck
 // The connect screen.
 //
 // ⚠️ THERE IS NO DEFAULT HOST, AND THERE MUST NOT BE. A hostname compiled into a
-// public repo points every install at that station (CARRYOVER.md section 6). The
+// public repo points every install at that station (docs/internal/CARRYOVER.md section 6). The
 // field starts empty on a fresh install and is remembered afterwards.
 //
 // ⚠️ THE PASSWORD IS NEVER REMEMBERED. Host and username are; the password costs

@@ -5,7 +5,7 @@
 // ⚠️ THIS PATH PUTS A HUMAN VOICE ON THE AIR. Every rule here is about not
 // transmitting the wrong thing, or transmitting nothing while appearing to work.
 //
-// Wire format is 48000 Hz / 16-bit / mono (CARRYOVER.md section 2). RX is 22050
+// Wire format is 48000 Hz / 16-bit / mono (docs/internal/CARRYOVER.md section 2). RX is 22050
 // and TX is 48000 because the codec's capture supports 8000-48000 but its
 // PLAYBACK only supports 32000-48000 - the asymmetry is the device's, not a
 // choice.
@@ -117,7 +117,7 @@ class TxAudioReceiver {
   // never grows, so the deadlock never happens.
   static constexpr size_t kMaxQueuedChunks = 50;
 
-  // ⚠️ ADAPTIVE BUFFERING (CARRYOVER.md section 3), and it is not optional.
+  // ⚠️ ADAPTIVE BUFFERING (docs/internal/CARRYOVER.md section 3), and it is not optional.
   //
   // Writing each chunk to the device the moment it arrives leaves no cushion:
   // the device runs dry between chunks and underruns. Measured on the real

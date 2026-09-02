@@ -21,7 +21,7 @@ class RxAudio : public QObject {
   ~RxAudio() override;
 
   // `device_name` is a device DESCRIPTION, not an index. Empty means the system
-  // default. CARRYOVER.md section 6: indices shift when USB devices come and go,
+  // default. docs/internal/CARRYOVER.md section 6: indices shift when USB devices come and go,
   // which is what produced a dead microphone; and index 0 is not "the default",
   // it is arbitrary and out of range when there are no devices at all.
   void Start(const QString& ws_url, const QString& device_name);
@@ -32,7 +32,7 @@ class RxAudio : public QObject {
   // ⚠️ Muted while the rig is keyed. Hearing yourself at the round-trip delay is
   // delayed auditory feedback - it disrupts speech so reliably that speech labs
   // use it deliberately. The operator slurs, hears themselves doing it, and
-  // reports the link as broken (CARRYOVER.md section 4c).
+  // reports the link as broken (docs/internal/CARRYOVER.md section 4c).
   //
   // Driven off the rig's own tx state so every PTT source behaves alike, and
   // DROPS what queued on unmute so they come back live rather than replaying.

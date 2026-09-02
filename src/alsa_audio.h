@@ -12,7 +12,7 @@
 //            8000 returns 11025 worth of data, silently.
 //   playback device altsets advertise 32000, 44100, 48000 only.
 //   default playback buffer measured 24048 frames at 48 kHz = 501 ms, matching
-//   the ~500 ms CARRYOVER.md section 3 records.
+//   the ~500 ms docs/internal/CARRYOVER.md section 3 records.
 
 #include <alsa/asoundlib.h>
 
@@ -60,7 +60,7 @@ class AlsaPlayback : public TxAudioSink {
   // that is always ~0, because the sender sends at real time - it reports
   // "nothing queued" while half a second sits in ALSA, and an estimate whose
   // failure mode is zero looks exactly like a working measurement
-  // (CARRYOVER.md section 3). That bug cut the end off every transmission.
+  // (docs/internal/CARRYOVER.md section 3). That bug cut the end off every transmission.
   long QueuedFrames() const;
   int QueuedMs() const override;
   long Xruns() const override { return xruns_; }
