@@ -105,6 +105,16 @@ class RadioPoller {
   // the counts follow the RADIO rather than any one client.
   void SetSessionStats(SessionStats* stats) { stats_ = stats; }
 
+  // ⚠️ ONE FAN-OUT POINT, NOT A SECOND POLLER. Everything that needs to react
+  // to what the rig is doing - session stats, PTT auto-record - is fed from the
+  // one cycle that already asked. A feature that polls the rig on its own
+  // schedule competes for the CAT port with the loop that keeps the panel live.
+  // Called on the poll thread with no lock held; keep the callback short.
+  void OnPoll(std::function<void(bool connected, long long freq_hz,
+                                 const std::string& mode, bool tx)> cb) {
+    poll_cb_ = std::move(cb);
+  }
+
   void SetPttTimeoutSeconds(int seconds) { ptt_timeout_s_.store(seconds); }
   int  PttTimeoutSeconds() const { return ptt_timeout_s_.load(); }
 
@@ -168,6 +178,7 @@ class RadioPoller {
 
   std::atomic<int> ptt_timeout_s_{kDefaultPttTimeoutSeconds};
   SessionStats* stats_ = nullptr;
+  std::function<void(bool, long long, const std::string&, bool)> poll_cb_;
   std::atomic<int> watchdog_trips_{0};
   std::function<void(double)> watchdog_cb_;
   std::chrono::steady_clock::time_point keyed_since_{};

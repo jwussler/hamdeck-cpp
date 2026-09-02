@@ -29,6 +29,29 @@ std::string Stamp() {
   return buf;
 }
 
+// ⚠️ UTC, ISO 8601, ALWAYS - and deliberately not the same clock the FILENAME
+// uses. The name is local time because that is how the operator reads a
+// directory (house style, MM-DD-YYYY); the sidecar is UTC because that is what
+// a log is in. Deriving one from the other is the whole class of timezone bug
+// that has bitten this operator's other tooling.
+std::string Utc(std::chrono::system_clock::time_point tp) {
+  const std::time_t t = std::chrono::system_clock::to_time_t(tp);
+  std::tm tm{};
+  gmtime_r(&t, &tm);
+  char buf[32];
+  std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+  return buf;
+}
+
+std::string JsonEscape(const std::string& in) {
+  std::string out;
+  for (char c : in) {
+    if (c == '"' || c == '\\') { out += '\\'; out += c; }
+    else if (static_cast<unsigned char>(c) >= 0x20) out += c;
+  }
+  return out;
+}
+
 }  // namespace
 
 Recorder::Recorder(std::string dir, int sample_rate, int buffer_seconds,
@@ -146,7 +169,7 @@ void Recorder::CloseFile() {
   file_ = nullptr;
 }
 
-Recorder::Result Recorder::Start() {
+Recorder::Result Recorder::Start(const std::string& tag) {
   Result r;
   if (!available_) {
     r.message = reason_;
@@ -163,15 +186,20 @@ Recorder::Result Recorder::Start() {
                 " s ago; stop it first";
     return r;
   }
-  r = OpenFile("rec");
+  r = OpenFile(tag);
   // ⚠️ recording_ is set from whether the file actually opened, never from
   // having been asked. That is the whole lesson of the route this replaces.
   recording_.store(r.ok);
-  if (r.ok) r.message = "recording";
+  if (r.ok) {
+    file_started_ = std::chrono::system_clock::now();
+    file_start_prov_ = Ask();
+    overs_.clear();
+    r.message = "recording";
+  }
   return r;
 }
 
-Recorder::Result Recorder::Stop() {
+Recorder::Result Recorder::Stop(const std::string& trigger) {
   Result r;
   std::lock_guard<std::mutex> lock(mu_);
   if (!file_) {
@@ -180,6 +208,9 @@ Recorder::Result Recorder::Stop() {
   }
   r.filename = file_path_;
   const int secs = static_cast<int>(file_frames_ / rate_);
+  // ⚠️ Before CloseFile(), which clears file_path_. The sidecar is written for
+  // the file that just closed, from the state that produced it.
+  WriteSidecar(file_path_, trigger, file_started_, file_start_prov_, &overs_);
   CloseFile();
   recording_.store(false);
   r.ok = true;
@@ -208,11 +239,101 @@ Recorder::Result Recorder::SaveReplay() {
   WriteWavHeader(f, static_cast<uint32_t>(snap.size() * 2));
   std::fwrite(snap.data(), sizeof(int16_t), snap.size(), f);
   std::fclose(f);
+  // ⚠️ THE REPLAY'S START TIME IS IN THE PAST. The whole point of the ring is
+  // that it holds what happened BEFORE the operator pressed anything, so
+  // stamping the sidecar with "now" would file the audio minutes after the
+  // exchange it contains and match it to the wrong QSO - or to none. Derived
+  // from the sample count, which is what the audio actually is.
+  const auto secs = static_cast<int>(snap.size() / rate_);
+  const auto began = std::chrono::system_clock::now() - std::chrono::seconds(secs);
+  // ⚠️ Provenance is read at save time, not capture time: the frequency is
+  // where the rig is NOW, which is where it was during the buffer only if it
+  // has not moved. Good enough to match on, and the sidecar says start and end
+  // separately so a QSY between them is visible rather than hidden.
+  WriteSidecar(path, "replay", began, Ask(), nullptr);
+
   r.ok = true;
   r.filename = path;
-  r.message = std::format("saved {} s from the buffer",
-                          static_cast<int>(snap.size() / rate_));
+  r.message = std::format("saved {} s from the buffer", secs);
   return r;
+}
+
+void Recorder::UpdateProvenance(bool connected, long long freq_hz,
+                                const std::string& mode) {
+  std::lock_guard<std::mutex> lock(prov_mu_);
+  prov_.connected = connected;
+  prov_.freq_hz = freq_hz;
+  prov_.mode = mode;
+}
+
+Recorder::Provenance Recorder::Ask() const {
+  // ⚠️ NO GUESSING. Until the poller has handed over a connected reading, the
+  // sidecar says connected:false and carries no frequency - it does not carry a
+  // stale one. A recording filed under the wrong band is worse than one filed
+  // under none, because the wrong one gets matched to a QSO.
+  std::lock_guard<std::mutex> lock(prov_mu_);
+  return prov_;
+}
+
+void Recorder::NoteOver(bool keyed) {
+  std::lock_guard<std::mutex> lock(mu_);
+  if (!file_) return;  // overs only mean something inside a recording
+  const auto now = std::chrono::system_clock::now();
+  if (keyed) {
+    if (!overs_.empty() && overs_.back().open) return;  // already keyed
+    overs_.push_back({now, now, true});
+  } else if (!overs_.empty() && overs_.back().open) {
+    overs_.back().end = now;
+    overs_.back().open = false;
+  }
+}
+
+void Recorder::WriteSidecar(const std::string& wav_path, const std::string& trigger,
+                            std::chrono::system_clock::time_point started,
+                            const Provenance& at_start,
+                            const std::vector<Over>* overs_in) const {
+  const Provenance at_end = Ask();
+  const auto ended = std::chrono::system_clock::now();
+
+  std::string overs = "null";
+  if (overs_in) {
+    overs = "[";
+    for (size_t i = 0; i < overs_in->size(); ++i) {
+      const auto& o = (*overs_in)[i];
+    // An over still open at close is a recording that ended mid-transmission -
+    // reported as such rather than given an invented end.
+      overs += std::format(R"({}{{"start_utc":"{}","end_utc":{}}})",
+                           i ? "," : "", Utc(o.start),
+                           o.open ? "null" : ("\"" + Utc(o.end) + "\""));
+    }
+    overs += "]";
+  }
+
+  const std::string path = wav_path + ".json";
+  std::FILE* f = std::fopen(path.c_str(), "wb");
+  if (!f) return;  // the audio is saved; a missing sidecar must not lose it
+  const std::string json = std::format(
+      "{{\n"
+      R"(  "file": "{}",)" "\n"
+      R"(  "trigger": "{}",)" "\n"
+      R"(  "started_utc": "{}",)" "\n"
+      R"(  "ended_utc": "{}",)" "\n"
+      R"(  "rig_connected": {},)" "\n"
+      R"(  "freq_hz_start": {},)" "\n"
+      R"(  "freq_hz_end": {},)" "\n"
+      R"(  "mode": "{}",)" "\n"
+      R"(  "sample_rate": {},)" "\n"
+      R"(  "channels": 1,)" "\n"
+      R"(  "overs": {})" "\n"
+      "}}\n",
+      JsonEscape(std::filesystem::path(wav_path).filename().string()),
+      JsonEscape(trigger), Utc(started), Utc(ended),
+      at_start.connected ? "true" : "false",
+      at_start.connected ? at_start.freq_hz : 0,
+      at_end.connected ? at_end.freq_hz : 0,
+      JsonEscape(at_start.mode), rate_, overs);
+  std::fwrite(json.data(), 1, json.size(), f);
+  std::fclose(f);
 }
 
 int Recorder::recorded_seconds() const {

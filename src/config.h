@@ -59,6 +59,13 @@ struct Config {
   int record_max_seconds = 10800;    // hard ceiling; 0 disables the ceiling
   int record_warning_seconds = 300;
 
+  // PTT auto-record. ⚠️ OFF unless the operator turns it on: it records whoever
+  // they are talking to, unasked, and that is their call to make once rather
+  // than a default that arrives with an update.
+  bool ptt_record_enabled = false;
+  int ptt_record_seconds = 60;        // idle time after the last over
+  int ptt_record_qsy_khz = 10;        // QSY from the start freq that ends it
+
   // API
   int  api_port = 5001;               // control, bound to loopback
 
