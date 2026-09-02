@@ -1,5 +1,20 @@
 cmake_minimum_required(VERSION 3.22)
-project(hamdeck-client VERSION 0.1.15 LANGUAGES CXX)
+# ⚠️ THE VERSION COMES FROM THE TAG, NOT FROM THIS FILE.
+#
+# It used to be hardcoded here, and it drifted: v0.1.29 shipped
+# hamdeck-client_0.1.15_amd64.deb, fourteen versions behind the release it was
+# built from, because the pusher took its version from the tag (vpk
+# --packVersion) and this did not. The download looked stale while being current
+# - and the same number goes into CFBundleShortVersionString, so the Mac app
+# would have told Get Info it was 0.1.15 as well.
+#
+# The literal below is the fallback for a local build with no tag, and it is the
+# only place it should ever appear. CI passes -DHAMDECK_VERSION=<tag without v>.
+if(NOT DEFINED HAMDECK_VERSION OR HAMDECK_VERSION STREQUAL "")
+    set(HAMDECK_VERSION "0.0.0")
+endif()
+project(hamdeck-client VERSION ${HAMDECK_VERSION} LANGUAGES CXX)
+message(STATUS "hamdeck-client version: ${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
