@@ -1,0 +1,7 @@
+[Unit]
+Description=HamDeck: recover the host from stale radio device handles
+ConditionPathExists=/opt/hamdeck-cpp/hamdeck-host
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hamdeck-rig-watchdog

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check every 30s that the HamDeck host still holds the real radio
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=30
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target

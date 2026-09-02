@@ -1387,3 +1387,62 @@ paths, so any button sending a trailing slash was never exercised.
 Verified live without transmitting: `/api/health/` and `/api/health//` now answer 200, and
 `/api/tune/amp/` answers 401 (the auth gate) instead of the catch-all's 200 - proving it now
 resolves to the real route. Build `ef607ca00190`.
+
+---
+
+## §12 — The radio moved and the station never noticed (09/02/2026)
+
+Joe moved a cable: unplugged the FTDX-101MP's USB and plugged it back in. The host went on
+serving a dashboard, `active (running)`, and reported **`rig_connected:false` indefinitely**.
+
+**The mechanism, measured, not guessed:**
+
+    /proc/1797/fd/3 -> /dev/ttyUSB0 (deleted)
+    /proc/1797/fd/5 -> /dev/snd/pcmC0D0c (deleted)
+    /proc/1797/fd/6 -> /dev/snd/pcmC0D0p (deleted)
+
+The host opens CAT and the codec **once, at startup**, and has no reconnect path
+(`main.cpp` — a failed open is fatal by design; a *dying* open is not handled at all).
+So it sat holding three device nodes that no longer existed.
+
+⚠️ **The held fd is also what renamed the port.** Minor 0 was still in use, so the returning
+CP2105 enumerated as `ttyUSB1`/`ttyUSB2`. `radio_port` said `/dev/ttyUSB0`. Every restart
+then failed FATAL (restart counter reached **209**) until one happened to catch a moment when
+a `ttyUSB0` existed. **A device that "came back on a different number" is a symptom of the
+old handle, not of the cable.**
+
+### The fix — recovery from OUTSIDE the process
+The host cannot rescan, so nothing inside it was changed. Three pieces, all in `deploy/`:
+
+1. **`99-hamdeck-radio.rules`** — `/dev/ttyRIG` symlink matched on **vid:pid + interface 00**
+   (the CAT half of the dual UART), never a minor number. `radio_port` is now `/dev/ttyRIG`.
+   The rule also sets `SYSTEMD_WANTS=hamdeck-cpp.service`, so plugging the radio in **starts
+   the host**.
+2. **`hamdeck-cpp.service.d/rig-device.conf`** — `BindsTo=dev-ttyRIG.device`, so unplugging
+   **stops** the host and drops the stale fds; plus `Restart=always` /
+   `StartLimitIntervalSec=0` so it keeps trying while the radio is away.
+3. **`hamdeck-rig-watchdog`** + timer (30s) — catches a re-enumeration systemd coalesced.
+   ⚠️ It fires **only** on a signature no healthy host can show: an fd on a *deleted* `/dev`
+   node, or a CAT fd that is not what `/dev/ttyRIG` points at. Deliberately **not** on
+   `rig_connected:false` — a radio switched off reads exactly like that, and that watchdog
+   would restart forever with nothing wrong.
+
+### The gate: `tools/rig_replug_test.sh` — PROVEN to fail
+Unbinds **both** USB devices from the kernel's `usb` driver and binds them back: the same
+udev remove/add a physical replug produces, without touching the hypervisor's passthrough.
+
+- recovery **disabled** → `FAIL: still not connected 30s after the radio came back`, unit
+  still `active`, three deleted fds. Tonight's bug, reproduced on demand.
+- watchdog alone, same broken state → `restarting hamdeck-cpp.service: stale device handle:
+  /dev/snd/pcmC0D0p (deleted)` → connected.
+- recovery **enabled** → unplug leaves the unit `inactive`; replug → `rig_connected=true in
+  0s, CAT node /dev/ttyUSB0, stale fds 0`, **PASS**. Back on minor 0, because the fd was
+  released.
+
+⚠️ **A bug in the first version of the gate, worth keeping:** the rebind guard tested
+`[ -e /sys/bus/usb/devices/$p ]`. Unbinding does **not** remove the device from sysfs — it
+only detaches the driver — so the guard skipped the rebind every time and left the station
+off the air. Test for `$p/driver`, not for `$p`.
+
+⚠️ Running the gate restarts the host, which drops the Wavelog pusher's session. Do not run
+it while Joe is operating.
