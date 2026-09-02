@@ -1032,8 +1032,14 @@ jobs:
           }
           need "Windows (client + pusher)" 'HamDeck-win-Setup.exe'
           need "Windows (client alone)"    'HamDeckRemote-win-Setup.exe'
-          need "macOS"                     '*.dmg'
           need "Linux"                     '*.deb'
+          # ⚠️ macOS IS NOT CHECKED HERE, AND THAT IS NOT AN OVERSIGHT. The macos
+          # job runs AFTER this one by design - its runner pool queues for hours,
+          # so the release is published first and the DMG is attached when it
+          # arrives. Demanding a .dmg at publish time asks for a file that cannot
+          # exist yet: the first run of this gate failed on exactly that, and the
+          # failure then SKIPPED the macos job, so the .dmg never got built at all.
+          # The macos job verifies its own upload instead - see has_dmg there.
 
           # ⚠️ And nothing ships as a bare archive. The only non-installers allowed
           # are the three Velopack update-feed files, which the updater fetches from
