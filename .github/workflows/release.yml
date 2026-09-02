@@ -487,6 +487,62 @@ jobs:
           Move-Item $packed.FullName $renamed -Force
           "renamed $($packed.Name) -> HamDeck-win-Setup.exe"
 
+      # ⚠️ EVERY PLATFORM GETS AN INSTALLER. Mac has a .dmg, Linux has .debs, and
+      # Windows had the client only as a folder inside somebody else's package.
+      # A zip is not a deliverable: it asks the person downloading it to pick an
+      # exe out of 1,369 files and make their own shortcut, and nobody does that.
+      #
+      # ⚠️ AFTER the Velopack pack, not before. vpk consumes the same staged tree,
+      # and Inno must package the SIGNED files - which the signing step above has
+      # already put there, recursively, including client\.
+      #
+      # iscc ships on the GitHub Windows runner images; no install step needed.
+      - name: Build the standalone client installer
+        working-directory: client/packaging
+        shell: pwsh
+        run: |
+          $ver = "${{ github.ref_name }}" -replace '^v',''
+          if ($ver -notmatch '^\d+\.\d+\.\d+') { $ver = "0.0.0" }
+          $src = "${{ github.workspace }}\pusher\packaging\dist\hamdeck-pusher\client"
+          if (-not (Test-Path "$src\hamdeck-qml.exe")) { throw "no staged client at $src" }
+          if (-not (Test-Path "$src\platforms\qwindows.dll")) {
+            throw "the staged client has no platforms\qwindows.dll - it would install and refuse to start"
+          }
+          & iscc.exe /Qp "/DAppVersion=$ver" "/DSourceDir=$src" hamdeck-remote.iss
+          if ($LASTEXITCODE -ne 0) { throw "iscc failed" }
+          if (-not (Test-Path "HamDeckRemote-win-Setup.exe")) { throw "iscc produced no installer" }
+          "built HamDeckRemote-win-Setup.exe ($ver)"
+
+      # The Inno output is a NEW binary that nothing has signed yet - the files
+      # inside it are signed, the wrapper around them is not, and SmartScreen
+      # judges the wrapper.
+      - name: Sign the client installer
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\client\packaging
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: The client installer is actually signed
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
+        working-directory: client/packaging
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature "HamDeckRemote-win-Setup.exe"
+          "Status: $($sig.Status)"
+          "Signer: $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "client installer is not validly signed" }
+          if ($sig.SignerCertificate.Subject -notmatch 'Wussler') { throw "unexpected signer" }
+
       - name: The installer is actually signed
         if: ${{ env.AZURE_CLIENT_ID != '' }}
         working-directory: pusher
@@ -535,6 +591,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with: { name: hamdeck-pusher-windows-installer, path: pusher/packaging/Releases/* }
+
+      # ⚠️ A SEPARATE ARTIFACT NAME. Two uploads sharing one name is a race with an
+      # arbitrary winner - the same trap the arch matrix already carries a warning
+      # about, and it would silently drop one of the two Windows installers.
+      - uses: actions/upload-artifact@v4
+        with: { name: hamdeck-client-windows-installer, path: client/packaging/HamDeckRemote-win-Setup.exe }
 
   macos:
     # ⚠️ RUNS AFTER publish, NOT BEFORE IT, AND THAT IS DELIBERATE.
@@ -867,7 +929,10 @@ jobs:
           the **Wavelog Pusher** together, and updates them together. There is no separate
           client download on Windows and none is needed - this is it.
 
-          Mac: `HamDeckRemote-macOS.dmg`. Linux: the `.deb` for your architecture. The `.nupkg`,
+          Only want the radio panel? **`HamDeckRemote-win-Setup.exe`** installs the client
+          on its own - no Wavelog pusher, and no auto-update.
+
+          Mac: **`HamDeckRemote-macOS.dmg`**. Linux: the **`.deb`** for your architecture. The `.nupkg`,
           `RELEASES` and `releases.win.json` beside it are the update manifest — leave them
           there, they are what future versions install themselves from.
 
@@ -953,6 +1018,35 @@ jobs:
             esac
           done
           echo "  every versioned artifact carries $VER"
+
+          # ⚠️ EVERY PLATFORM SHIPS AN INSTALLER. Nobody using this project is going
+          # to unzip a folder, find an exe among 1,369 files and make their own
+          # shortcut - so a release that offers one is a release that offers nothing.
+          # This refuses to publish unless each platform has something to double-click.
+          need() {  # description, glob
+            for f in $FILES; do
+              case "$(basename "$f")" in $2) echo "  ✓ $1: $(basename "$f")"; return 0;; esac
+            done
+            echo "  ✗ MISSING $1 - the release page would offer no installer for it"
+            return 1
+          }
+          need "Windows (client + pusher)" 'HamDeck-win-Setup.exe'
+          need "Windows (client alone)"    'HamDeckRemote-win-Setup.exe'
+          need "macOS"                     '*.dmg'
+          need "Linux"                     '*.deb'
+
+          # ⚠️ And nothing ships as a bare archive. The only non-installers allowed
+          # are the three Velopack update-feed files, which the updater fetches from
+          # this release - they are named explicitly so a new stray file is refused
+          # rather than quietly joining them.
+          for f in $FILES; do
+            case "$(basename "$f")" in
+              *.zip|*.tar.gz|*.7z)
+                echo "  ✗ $(basename "$f") is an archive, not an installer"; exit 1 ;;
+              *Setup.exe|*.dmg|*.deb|*.nupkg|RELEASES|releases.*.json) ;;
+              *) echo "  ✗ $(basename "$f") is neither an installer nor a known update-feed file"; exit 1 ;;
+            esac
+          done
 
           # create-or-upload: a re-run of the same tag must top up the existing
           # release rather than fail on "already exists" and leave it half filled.
