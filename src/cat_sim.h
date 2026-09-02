@@ -9,7 +9,7 @@
 //
 // It deliberately does NOT simulate: audio (there is no audio over CAT), amp or
 // TGXL tuning (those are separate hardware), or timing. Anything about latency,
-// buffer depth or PTT tail MUST be measured on the real station - CARRYOVER.md
+// buffer depth or PTT tail MUST be measured on the real station - docs/internal/CARRYOVER.md
 // section 3 is explicit that estimates whose failure mode is zero look exactly
 // like working measurements.
 

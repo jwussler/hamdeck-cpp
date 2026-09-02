@@ -2,7 +2,7 @@
 
 // TGXL — the external antenna tuner, reached over TCP.
 //
-// ⚠️ THIS IS THE RIGHT TUNER FOR THIS STATION. CARRYOVER.md section 2 is
+// ⚠️ THIS IS THE RIGHT TUNER FOR THIS STATION. docs/internal/CARRYOVER.md section 2 is
 // explicit: /api/tune is the rig's INTERNAL ATU and is the wrong one. They are
 // kept separate and each names itself in its reply, so a confirmation can never
 // say just "tuning" and leave the operator guessing which box is about to key up.

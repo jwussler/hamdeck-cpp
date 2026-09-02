@@ -1,6 +1,6 @@
 // Recorder tests.
 //
-// ⚠️ The point of these is CARRYOVER.md section 1: the reference host answers
+// ⚠️ The point of these is docs/internal/CARRYOVER.md section 1: the reference host answers
 // "recording":true from a Start() that set the flag false. So every test here
 // checks the REPORTED state against what is actually on disk, not against what
 // the call returned.

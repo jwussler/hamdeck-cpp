@@ -23,7 +23,7 @@
 //
 // ⚠️ AUTO-REPEAT MUST BE SUPPRESSED. A held key repeats at the OS repeat rate,
 // and without filtering that flaps the transmitter on and off many times a
-// second (CARRYOVER.md section 6 records this as mandatory on Windows via
+// second (docs/internal/CARRYOVER.md section 6 records this as mandatory on Windows via
 // MOD_NOREPEAT). Handled here for every platform, not just Windows.
 
 #include <QKeySequence>

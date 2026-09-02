@@ -5,7 +5,7 @@ name: release
 # ⚠️ EVERY JOB RUNS THE BINARY BEFORE PACKAGING IT. A green build proves the code
 # compiles and proves nothing about whether the program starts - the .NET client
 # shipped a release that could not launch at all while every test passed
-# (CARRYOVER.md section 8). `--selftest` walks the startup path and exits, and it
+# (docs/internal/CARRYOVER.md section 8). `--selftest` walks the startup path and exits, and it
 # runs under a timeout because a hang is a failure too.
 
 on:

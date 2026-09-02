@@ -3,7 +3,7 @@
 // The obvious black-box test - freeze the process and re-query - is WORTHLESS:
 // SIGSTOP freezes the HTTP server too, so the poller refreshes the cache the
 // instant the process resumes and the answer comes back fresh. It looks like a
-// pass and measures nothing. That is the same failure shape as CARRYOVER.md
+// pass and measures nothing. That is the same failure shape as docs/internal/CARRYOVER.md
 // section 3's byte-count latency estimate, which read ~0 in steady state while
 // 435ms sat in the ALSA buffer.
 //

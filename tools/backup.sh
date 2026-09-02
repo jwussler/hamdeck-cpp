@@ -7,7 +7,7 @@
 # ⚠️ THE BUNDLE CONTAINS THE FULL HISTORY, INCLUDING SITE DETAIL that has been
 # removed from the working tree but is still in older commits. It is safe on
 # private storage and MUST NOT be published. That is also why this script has no
-# GitHub path in it - see the push blocker in WIP.md.
+# GitHub path in it - see the push blocker in docs/internal/WIP.md.
 #
 # No host or path is baked in: this repo is public.
 #   HAMDECK_BACKUP_HOST=<ssh target> HAMDECK_BACKUP_PATH=<dir on that host> tools/backup.sh

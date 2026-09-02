@@ -3,7 +3,7 @@
 # The VM is the build host on purpose: it is where the ALSA and serial work will
 # run, so it is the only place a green build means anything.
 #
-# No default host is baked in. CARRYOVER.md section 6: never ship a default host -
+# No default host is baked in. docs/internal/CARRYOVER.md section 6: never ship a default host -
 # a hostname in a public repo points every install at that station. Set
 # HAMDECK_BUILD_HOST to an ssh target; the site's value is in the gitignored SITE.md.
 set -e

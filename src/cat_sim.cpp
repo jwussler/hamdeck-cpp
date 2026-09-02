@@ -17,7 +17,7 @@ std::string Pad(long long v, int width) {
 std::optional<std::string> SimulatedRig::Exchange(const std::string& cmd) {
   std::lock_guard<std::mutex> lock(mu_);
 
-  // ID; is the ONLY safe probe. CARRYOVER.md section 9: probing with a control
+  // ID; is the ONLY safe probe. docs/internal/CARRYOVER.md section 9: probing with a control
   // route once changed the operating mode mid-session. 0682 is the FTDX-101MP.
   if (cmd == "ID;")  return "ID0682;";
   // ⚠️ CW KEYER. Modelled because a route that CANNOT be exercised is a route nobody has

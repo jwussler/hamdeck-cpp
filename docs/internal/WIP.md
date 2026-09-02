@@ -2,9 +2,12 @@
 
 Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anything.
 
-> **THIS REPO IS PUBLIC.** Nothing station-specific goes in it — no hostnames, addresses, VM
-> ids, tunnel details, or live readings that say what the station was doing. That applies to
-> **commit messages** too. Site detail lives in the gitignored `SITE.md`.
+> **TREAT THIS REPO AS PUBLIC.** Nothing station-specific goes in it — no hostnames,
+> addresses, VM ids, tunnel details, or live readings that say what the station was doing.
+> That applies to **commit messages** too. Site detail lives in the gitignored `SITE.md`.
+> ⚠️ This banner said "THIS REPO IS PUBLIC" for months while the repo was private. The rule
+> was right and the fact was wrong, which is how a rule stops being taken seriously right
+> before it starts mattering. It is public now; the wording is the instruction either way.
 > CARRYOVER.md §6 states the narrow version: *a hostname in a public repo points every install
 > at that station.* It generalises.
 

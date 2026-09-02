@@ -2,7 +2,7 @@
 
 // Recording, and the replay buffer.
 //
-// ⚠️ CARRYOVER.md section 1 is about THIS FEATURE. On the reference Linux build
+// ⚠️ docs/internal/CARRYOVER.md section 1 is about THIS FEATURE. On the reference Linux build
 // /api/record/start answers {"status":"ok","recording":true} while Start() sets
 // IsRecording = false. A 200 there means the route exists, not that anything is
 // recording, and the only honest signal is file_recording in the status route.

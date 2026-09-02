@@ -48,7 +48,7 @@ using PreRouting = std::function<bool(const HttpRequest&, HttpResponse&)>;
 // ⚠️ Writes are serialised per connection. Two threads writing the same socket
 // interleave frames and corrupt the stream - the C# client hit the same wall from
 // the other side, where overlapping SendAsync calls are rejected outright
-// (CARRYOVER.md section 6). Here the lock is taken inside Send*.
+// (docs/internal/CARRYOVER.md section 6). Here the lock is taken inside Send*.
 class WsConnection {
  public:
   explicit WsConnection(mg_connection* conn) : conn_(conn) {}

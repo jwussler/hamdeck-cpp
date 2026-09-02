@@ -5,7 +5,7 @@
 
 ⚠️ THIS TOOL FIRES STATE-CHANGING ROUTES. It will key PTT, change mode, switch
 antennas and move the frequency. Against a real station that is exactly the
-accident CARRYOVER.md section 9 records - a control-route probe that changed the
+accident docs/internal/CARRYOVER.md section 9 records - a control-route probe that changed the
 operating mode mid-session.
 
 So it refuses to run unless the target PROVES it is a simulator:

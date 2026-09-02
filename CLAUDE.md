@@ -7,7 +7,7 @@ Windows client stops working.
 
 ## Read these first
 
-- **`CARRYOVER.md`** (this repo) — the API surface, the audio chain with measured numbers,
+- **`docs/internal/CARRYOVER.md`** (this repo) — the API surface, the audio chain with measured numbers,
   the three PTT traps, and a list of things that are **not possible** so they don't get
   retried. Written from measurements on the live station, not recollection.
 - **`~/hamdeck-site/brand/BRAND.md`** — the visual identity. **Anything with a user
@@ -38,7 +38,7 @@ Judge proposals on whether they make the C++ build better, not on whether C++ wa
   a single density scale (`Theme.u()`/`f()`, from `Backend::uiScale`) *and* reflow against the
   width actually available (`Theme.cols()`). No unscaled pixel constants. Prove it with
   `--check-resolutions`, which measures every key at seven screen sizes — and look at the
-  PNGs it writes. See WIP.md §8d, including the four ways that walk passed while measuring
+  PNGs it writes. See docs/internal/WIP.md §8d, including the four ways that walk passed while measuring
   nothing.
 - Suggested libraries, all OSI-approved so code signing stays possible: miniaudio (audio),
   cpp-httplib (REST), IXWebSocket, nlohmann/json, Dear ImGui if a lighter UI is wanted.
@@ -58,7 +58,7 @@ now rather than later:
   96 kB/s; the crypto is the load. Size the board for that. A Pi Zero 2 W or better is the
   realistic floor.
 - The USB codec (TI PCM2903C) and the CP2105 CAT bridge both need `linux-modules-extra` on a
-  stripped kernel — see CARRYOVER.md. Do not assume the Pi image ships `snd-usb-audio`.
+  stripped kernel — see docs/internal/CARRYOVER.md. Do not assume the Pi image ships `snd-usb-audio`.
 
 ## Non-negotiables
 
@@ -76,7 +76,7 @@ now rather than later:
 
 Six bugs stood between "it compiles" and "a voice on the air". **Not one was a language or a
 build problem, and every single one looked healthy to the checks that existed.** Full account in
-`WIP.md` §8f–§8h; these are the rules that came out of it.
+`docs/internal/WIP.md` §8f–§8h; these are the rules that came out of it.
 
 ### Counting is not checking
 Frames accepted, `hw_ptr` advancing at 48 kHz, zero drops, a queue behaving — **all of it reads
@@ -93,7 +93,7 @@ the project, because a zero-height item lays out and paints perfectly well. `tes
 drags one with synthetic mouse events. Do that for any control that matters.
 
 ### Comparing route INVENTORIES is not comparing behaviour
-`AUDIT-CSHARP.md` ticked `/api/remote-tx/on` because the route existed. It answered `200` and
+`docs/internal/AUDIT-CSHARP.md` ticked `/api/remote-tx/on` because the route existed. It answered `200` and
 changed nothing, and the status route beside it **invented all three of its fields** so the two
 agreed with each other. ⚠️ **The test that catches this: call the route, then read the radio
 back through something that is NOT the route under test.**

@@ -8,7 +8,7 @@
 // station stays on the air. Assume it will outlive the port and be the thing CI
 // runs against, because CI will never have a radio.
 //
-// ⚠️ The serial lock is NOT re-entrant across threads (CARRYOVER.md section 5).
+// ⚠️ The serial lock is NOT re-entrant across threads (docs/internal/CARRYOVER.md section 5).
 // Nothing on a request thread may call into this. Only the poller does.
 
 #include <optional>

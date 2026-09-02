@@ -65,7 +65,7 @@ bool TxAudioReceiver::Accept(const char* data, size_t bytes, bool keyed) {
 
   std::lock_guard<std::mutex> lock(mu_);
   if (queue_.size() >= kMaxQueuedChunks) {
-    // ⚠️ TRIM ONLY BETWEEN OVERS (CARRYOVER.md section 3). Dropping audio while
+    // ⚠️ TRIM ONLY BETWEEN OVERS (docs/internal/CARRYOVER.md section 3). Dropping audio while
     // the rig is KEYED is audible - a syllable vanishes mid-sentence. Between
     // overs it costs nothing, and with the mic open there is always idle time.
     // So while keyed we accept the latency and let the queue run long; the

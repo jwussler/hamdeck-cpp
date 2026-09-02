@@ -2,7 +2,7 @@
 
 // Client settings.
 //
-// ⚠️ THREE RULES FROM CARRYOVER.md SECTION 6, ALL LEARNED THE HARD WAY:
+// ⚠️ THREE RULES FROM docs/internal/CARRYOVER.md SECTION 6, ALL LEARNED THE HARD WAY:
 //
 // 1. Settings live OUTSIDE the install directory, so an update cannot overwrite
 //    them. QSettings with the platform config location does this.
