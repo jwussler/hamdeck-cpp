@@ -244,6 +244,35 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with $LASTEXITCODE" }
 
+          # ⚠️ CROSS-COMPILED KIT: OVERWRITE WHAT THE HOST TOOL JUST COPIED.
+          #
+          # --qtpaths is supposed to point the host tool at the target kit. On the
+          # arm64 kit there is no qtpaths.exe to point at - it is
+          # win64_msvc2022_arm64_cross_compiled, which ships no runnable tools at
+          # all - so the deploy falls through to the host tool alone and copies the
+          # HOST's x64 Qt beside an arm64 exe. Measured, not guessed: the arch check
+          # below printed `exe=arm64 Qt6Core=x64` and refused, which is the only
+          # reason this was ever visible.
+          #
+          # So the target kit's own binaries are copied over the top afterwards.
+          # Ugly, and the alternative is shipping a build that installs and dies.
+          #
+          # ⚠️ ONLY when the target kit had no windeployqt of its own. The x64 leg
+          # deploys correctly and must not be touched by this.
+          if (-not (Test-Path (Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"))) {
+            Write-Host "cross-compiled kit - replacing host Qt with the target kit's own"
+            Get-ChildItem "$env:QT_ROOT_DIR\bin" -Filter "Qt6*.dll" |
+              Copy-Item -Destination packaging\deploy -Force
+            foreach ($d in 'platforms','styles','imageformats','tls','networkinformation',
+                           'multimedia','iconengines','generic','qmltooling') {
+              $src = Join-Path $env:QT_ROOT_DIR "plugins\$d"
+              if (Test-Path $src) { Copy-Item $src packaging\deploy -Recurse -Force }
+            }
+            if (Test-Path "$env:QT_ROOT_DIR\qml") {
+              Copy-Item "$env:QT_ROOT_DIR\qml\*" packaging\deploy -Recurse -Force
+            }
+          }
+
           # ⚠️ THE DEPLOYED DLLs MUST MATCH THE EXE'S ARCHITECTURE.
           #
           # A host windeployqt will happily copy x64 Qt DLLs beside an arm64 binary and
