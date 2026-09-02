@@ -88,6 +88,9 @@ bool Config::Load(const std::string& path, Config& out, std::string& error) {
     Get(j, "record_buffer_seconds", cfg.record_buffer_seconds);
     Get(j, "record_max_seconds", cfg.record_max_seconds);
     Get(j, "record_warning_seconds", cfg.record_warning_seconds);
+    Get(j, "ptt_record_enabled", cfg.ptt_record_enabled);
+    Get(j, "ptt_record_seconds", cfg.ptt_record_seconds);
+    Get(j, "ptt_record_qsy_khz", cfg.ptt_record_qsy_khz);
     Get(j, "api_port", cfg.api_port);
     Get(j, "cat_proxy_port", cfg.cat_proxy_port);
     Get(j, "dashboard_port", cfg.dashboard_port);
@@ -173,6 +176,9 @@ bool Config::Save(const std::string& path, std::string& error) const {
   j["record_path"] = record_path;
   j["record_buffer_seconds"] = record_buffer_seconds;
   j["record_max_seconds"] = record_max_seconds;
+  j["ptt_record_enabled"] = ptt_record_enabled;
+  j["ptt_record_seconds"] = ptt_record_seconds;
+  j["ptt_record_qsy_khz"] = ptt_record_qsy_khz;
   j["alsa_capture_device"] = alsa_capture_device;
   j["alsa_playback_device"] = alsa_playback_device;
   j["api_port"] = api_port;

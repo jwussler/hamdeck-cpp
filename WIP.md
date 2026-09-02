@@ -1511,3 +1511,126 @@ one thing most likely to regress — if `OUTPUT_NAME` stops applying the bundle 
 
 **Not yet proven on hardware.** CI checks structure; nobody has opened the renamed bundle in
 Finder or keyed up on a Mac.
+
+---
+
+## 09/02/2026 — PTT auto-record, and provenance on every recording
+
+Started from the wrong premise ("port recording like the C# has") and measured before
+building: `src/recorder.cpp` already does WAV writing, continuous record AND the replay ring,
+wired at `main.cpp:213` and unit-tested. `AUDIT-CSHARP.md:42` had it as ✅ ported all along.
+
+**The real gap was that a recording carried no provenance.** Files were
+`hamdeck-rec-<local time>.wav` and nothing else — no frequency, no mode, and the only
+timestamp in local time while every log worth matching against is UTC. Nothing downstream
+could join on that, so "who was it" was unanswerable by construction.
+
+### 1. Every recording now writes a `.json` sidecar
+UTC start/end, rig-connected, frequency at start **and** end, mode, sample rate, and the
+operator's overs. Written for manual, replay and auto recordings alike.
+
+⚠️ **Provenance is PUSHED from the poll loop, not pulled.** The first cut had the recorder
+call back into `RadioPoller` for the current frequency — that takes the poller's lock while
+holding the recorder's, from the poll thread, waiting on the one API path that nests them the
+other way. `RadioPoller::OnPoll` hands the values over instead; `Recorder::UpdateProvenance`
+keeps them under its own small lock. One fan-out point, no second poller competing for CAT.
+
+⚠️ **A replay clip's `started_utc` is in the PAST**, derived from the sample count. The ring
+holds what happened *before* the press; stamping it "now" files the audio minutes after the
+exchange it contains and matches it to the wrong QSO.
+
+⚠️ **`"overs": null` ≠ `"overs": []`.** Null means not tracked (a replay clip). An empty array
+would claim the operator never transmitted. Different facts, and the second one is a lie.
+
+### 2. `src/qso_record.cpp` — PTT auto-record, ported from the C# behaviour
+`Views/MainWindow.xaml.cs:420`, not invented: start on the PTT rising edge, every later over
+pushes an idle deadline out, stop on idle (`ptt_record_seconds`, 60) or a QSY past
+`ptt_record_qsy_khz` (10) **from where the QSO started** — a reading-to-reading comparison
+never trips on someone tuning across the band in small steps.
+
+⚠️ **It must not start on a tune.** Keying the tuner is PTT to the rig; without the guard every
+band change litters the directory with two-second files no log will ever match. A tune also
+must not move the remembered PTT state, or its unkey closes an over that never opened.
+
+⚠️ **OFF by default** (`ptt_record_enabled`). It records whoever the operator is talking to,
+unasked. That is a decision made once in the config, not a default that arrives with an update.
+
+### The gates — `tests/test_qso_record.cpp`, PROVEN to fail
+| reintroduced | caught by |
+|---|---|
+| `NoteOver` before the file opens | `overs == 2` — the over that STARTS each QSO went unlisted while every later one was recorded |
+| `localtime_r` for the sidecar | the local-vs-UTC hour comparison (see below) |
+| replay stamped when saved | `age >= 19 && age < 60` |
+| auto-record starting on a tune | `!q.active()` |
+
+⚠️⚠️ **THE UTC TEST WAS BLIND AND PASSED ANYWAY.** The build box runs UTC, so `localtime_r`
+and `gmtime_r` return the same thing and the assertion held just as happily against a
+local-time stamp. The test now sets `TZ` to a **POSIX string** (`CST6CDT,M3.2.0/2,M11.1.0/2`,
+which glibc parses with no tzdata, so a bare container cannot silently drop it back to UTC),
+asserts the two clocks actually differ before testing anything, and compares the filename's
+local hour against the sidecar's UTC hour. Only then did swapping in `localtime_r` fail.
+
+### Proven on the built host, not only in tests
+Ran `hamdeck-host` against the simulated rig with `ptt_record_seconds: 3`, keyed via
+`/api/ptt/on`, unkeyed, waited out the idle timer:
+`hamdeck-qso-09-02-2026-135540.wav` — 3.0 s, 1ch/16bit/22050, **rms 5656 peak 7997** (real
+audio, not an empty header) — beside a sidecar carrying `trigger: idle`, both UTC times,
+14074000 Hz, USB, and one closed over.
+
+⚠️ **`pkill -f hamdeck-host` KILLS THE SHELL THAT RUNS IT** — the pattern matches the
+command line of the very shell issuing it. Cost a lost commit. Use `pkill -x hamdeck-host`.
+
+### Next, in order
+1. **Re-measure MONI.** `CARRYOVER.md:207` says it cannot be captured (120 s of `/ws`, band
+   noise only); the C# says the opposite at `WsAudioClient.cs:205` and mutes RX while keyed
+   *because* the operator hears themselves. `RadioController.cs:687` is the likely
+   explanation — MON needs **`ML0001;` to enable AND `ML1<level>;` to set the level**, and
+   enable-at-level-0 is on and silent, which reads exactly like "no transmission in it".
+   Gate: recorded RMS during a keyed window vs the same window unkeyed, into a dummy load.
+   ⚠️ It matters beyond convenience: recording the host's own `/ws/tx` PCM would have looked
+   perfect through every one of the six TX-chain bugs. MONI is the only source that proves
+   audio actually left the radio.
+2. **Identification, layered** — Wavelog QSO in the window and band ⇒ the callsign, stated as
+   fact; otherwise the NetLogger roster for whatever net was up ⇒ **candidates**, stated as
+   candidates. Never the same kind of claim, and never "nobody" as a finding.
+   ⚠️ **NetLogger has a hard 7-day wall and no bulk history endpoint.** Past net rosters
+   cannot be fetched retroactively — the only source is `netlogger_poll.py`'s
+   `netlogger_checkin` table, and only for the period it has actually been polling. Anything
+   older is unattributable from the net side, permanently.
+
+### Identification, layer 1 — `tools/identify_recording.py` (09/02/2026)
+
+Takes a recording's sidecar and answers "who was that" from the log. Two layers that are
+deliberately **not** the same kind of claim: **LOGGED** is a fact (the operator wrote the
+callsign down); **ON THE NET** is a list of **candidates** (a check-in says present, not that
+they were the voice on the tape).
+
+⚠️ **The net name is ALREADY in the log** and needs no API at all. NetLogger-sourced QSOs carry
+it in `COL_COMMENT`, in the two encodings qsl-queue's README measured over 29,573 rows —
+`OMISS 40m SSB Net` and `MT/HI [OMISS 40m SSB Net]`. So layer 1 works **retroactively over the
+whole log**, unlike anything that depends on the NetLogger API. Bracket text is not always a
+net (`[New call sign May 2025]` is in there), so a bracketed token is only taken as one when it
+is net-shaped — verified against that exact row.
+
+⚠️ **Matching is on TIME ALONE, and the band is shown so a wrong match is visible.** Filtering
+by band would silently drop true matches whenever the sidecar's frequency is unreliable (rig
+disconnected, or a QSY between the exchange and the log entry), and a dropped true match is
+invisible in a way a flagged odd one is not. A QSO on another band in the same window is marked
+`⚠️ DIFFERENT BAND`, never hidden. Proven by re-running a real window with the band claim
+changed and watching both rows flag.
+
+⚠️ **A logged QSO is an INSTANT, not a span** — `COL_TIME_OFF == COL_TIME_ON` on every row, so
+the timestamp is when it was *logged*, usually the end of the exchange. Hence `--pad` (120 s
+default) and hence each match prints its offset into the recording, so an edge match reads as
+one instead of a bullseye.
+
+⚠️ **"Nothing found" is never printed as "nobody".** An unlogged QSO and a station heard but
+not worked look identical to this tool. A false negative stated as a finding is worse than no
+answer.
+
+Measured against the real log, not a fixture: a 26-minute window over the 07/26 80m net
+returned **N4GTO / N4TTU / W4ETA**, each with its offset into the recording and the net name
+parsed from the comment.
+
+⚠️ **Connection details come from the environment** (`WAVELOG_DB_*`, or `WAVELOG_DB_DOCKER`),
+never from the file — same rule as the rest of this repo.
