@@ -46,8 +46,16 @@ jobs:
             libasound2-dev libssl-dev
       - name: Build
         run: |
+          # ⚠️ THE VERSION COMES FROM THE TAG. Without this the client falls back
+          # to 0.0.0 and the .deb / Mac bundle carry a version that has nothing to
+          # do with the release - which is exactly how v0.1.29 shipped a package
+          # called hamdeck-client_0.1.15.
+          VER="${GITHUB_REF_NAME#v}"
+          case "$VER" in [0-9]*.[0-9]*.[0-9]*) ;; *) VER="0.0.0" ;; esac
+          echo "building client version $VER"
           cmake -S client -B client/build -G Ninja \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=/usr \
+            -DHAMDECK_VERSION="$VER"
           cmake --build client/build
       - name: Test
         run: ctest --test-dir client/build --output-on-failure
@@ -129,8 +137,14 @@ jobs:
           # which kills the whole step before a single line is compiled.
           modules: 'qtwebsockets qtmultimedia'
       - name: Build
+        shell: pwsh
         run: |
-          cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release
+          # ⚠️ THE VERSION COMES FROM THE TAG - see the Linux leg for what the
+          # hardcoded fallback cost. The tag carries a leading v; CMake must not.
+          $ver = "${{ github.ref_name }}" -replace '^v',''
+          if ($ver -notmatch '^\d+\.\d+\.\d+') { $ver = "0.0.0" }
+          "building client version $ver"
+          cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release "-DHAMDECK_VERSION=$ver"
           cmake --build client/build --config Release
       - name: Run the binary
         shell: pwsh
@@ -435,12 +449,29 @@ jobs:
           vpk pack --packId HamDeckPusher --packVersion $ver `
                    --packDir packaging\dist\hamdeck-pusher `
                    --mainExe hamdeck-pusher.exe `
-                   --packTitle "HamDeck Wavelog Pusher" `
+                   --packTitle "HamDeck" `
                    --packAuthors "WA0O" `
                    --icon ..\packaging\icons\hamdeck.ico `
                    --outputDir packaging\Releases `
                    --azureTrustedSignFile packaging\azuresign.json
           Remove-Item packaging\azuresign.json -Force
+
+          # ⚠️ THE packId STAYS HamDeckPusher. It is Velopack's UPDATE IDENTITY -
+          # every installed copy looks for that id, so changing it orphans every
+          # existing install silently: they keep running and simply never see
+          # another update. Only the FILE NAME and the display title change here.
+          #
+          # ⚠️ And the file name is safe to change precisely because the updater
+          # never fetches it: RELEASES points at the .nupkg. Setup.exe is only
+          # what a human downloads once - which is the whole problem being fixed.
+          # This installer carries the Pusher AND the HamDeck Remote client, and
+          # calling it HamDeckPusher-win-Setup.exe meant the release page never
+          # said the client was in there at all.
+          $packed = Get-ChildItem packaging\Releases\*Setup.exe | Select-Object -First 1
+          if (-not $packed) { throw "vpk produced no Setup.exe to rename" }
+          $renamed = Join-Path $packed.Directory "HamDeck-win-Setup.exe"
+          Move-Item $packed.FullName $renamed -Force
+          "renamed $($packed.Name) -> HamDeck-win-Setup.exe"
 
       - name: The installer is actually signed
         if: ${{ env.AZURE_CLIENT_ID != '' }}
@@ -547,8 +578,16 @@ jobs:
 
       - name: Build
         run: |
+          # ⚠️ THE VERSION COMES FROM THE TAG. Without this the client falls back
+          # to 0.0.0 and the .deb / Mac bundle carry a version that has nothing to
+          # do with the release - which is exactly how v0.1.29 shipped a package
+          # called hamdeck-client_0.1.15.
+          VER="${GITHUB_REF_NAME#v}"
+          case "$VER" in [0-9]*.[0-9]*.[0-9]*) ;; *) VER="0.0.0" ;; esac
+          echo "building client version $VER"
           cmake -S client -B client/build -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+                -DHAMDECK_VERSION="$VER"
           cmake --build client/build
 
       - name: Run the binary
@@ -793,10 +832,13 @@ jobs:
           test -n "$(find dist -name '*Setup.exe' -print -quit)" || {
             echo "no installer among the artifacts - refusing to publish"; exit 1; }
           cat > notes.md <<'NOTES'
-          ## HamDeck — download `HamDeckPusher-win-Setup.exe`
+          ## Windows — download `HamDeck-win-Setup.exe`
 
-          **One installer, both applications.** It installs the **Wavelog Pusher** and the
-          **HamDeck Remote** client together, and updates them together. The `.nupkg`,
+          **One installer, both applications.** It installs the **HamDeck Remote** client and
+          the **Wavelog Pusher** together, and updates them together. There is no separate
+          client download on Windows and none is needed - this is it.
+
+          Mac: `HamDeckRemote-macOS.dmg`. Linux: the `.deb` for your architecture. The `.nupkg`,
           `RELEASES` and `releases.win.json` beside it are the update manifest — leave them
           there, they are what future versions install themselves from.
 
@@ -865,6 +907,23 @@ jobs:
             exit 1
           fi
           echo "publishing $EXPECTED files"
+
+          # ⚠️ EVERY ARTIFACT MUST CARRY THE RELEASE'S VERSION. v0.1.29 shipped
+          # hamdeck-client_0.1.15_amd64.deb - built from the right commit, named
+          # from a literal in CMakeLists that nobody had touched in fourteen
+          # releases. It looked stale and nothing checked. Filenames are the
+          # cheapest possible place to catch it.
+          VER="${GITHUB_REF_NAME#v}"
+          for f in $FILES; do
+            case "$(basename "$f")" in
+              *.deb|*.nupkg)
+                case "$(basename "$f")" in
+                  *"$VER"*) ;;
+                  *) echo "$(basename "$f") does not carry the release version $VER"; exit 1 ;;
+                esac ;;
+            esac
+          done
+          echo "  every versioned artifact carries $VER"
 
           # create-or-upload: a re-run of the same tag must top up the existing
           # release rather than fail on "already exists" and leave it half filled.
