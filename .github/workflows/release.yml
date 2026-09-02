@@ -719,13 +719,37 @@ jobs:
       - name: Attach it to the release
         if: ${{ env.APPLE_CERT_P12 != '' }}
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN || github.token }}
+          # ⚠️ TWO TOKENS, NOT ONE FALLING BACK TO THE OTHER. This used to be
+          # `RELEASES_TOKEN || github.token`, which was fine while there was one
+          # destination. Now there are two, and they need DIFFERENT credentials:
+          # the fine-grained PAT is scoped to jwussler/hamdeck-releases and cannot
+          # write here, while github.token cannot write there. One variable
+          # holding whichever happened to exist would fail on one of the two.
+          GH_TOKEN: ${{ github.token }}
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -n "${{ secrets.RELEASES_TOKEN }}" ]; then
-            gh release upload "${GITHUB_REF_NAME}" "$DMG" --repo jwussler/hamdeck-releases --clobber
-          else
-            gh release upload "${GITHUB_REF_NAME}" "$DMG" --clobber
+          # ⚠️ BOTH REPOS, same reason as the publish job: public is the canonical
+          # download, the source repo is where its own author looks. This job runs
+          # AFTER publish, so both releases already exist and this is an upload.
+          #
+          # ⚠️ The DMG is the ONE asset published by a different job from the rest,
+          # so it is the one that can go missing without the publish job's count
+          # gate noticing. Each upload is read back.
+          has_dmg() {   # repo, token
+            GH_TOKEN="$2" gh release view "${GITHUB_REF_NAME}" --repo "$1" \
+              --json assets -q '.assets[].name' | grep -q '\.dmg$' \
+              || { echo "no .dmg on the release in $1 after uploading it"; return 1; }
+            echo "  $1: dmg present"
+          }
+
+          gh release upload "${GITHUB_REF_NAME}" "$DMG" --repo "$GITHUB_REPOSITORY" --clobber
+          has_dmg "$GITHUB_REPOSITORY" "$GH_TOKEN"
+
+          if [ -n "${RELEASES_TOKEN:-}" ]; then
+            GH_TOKEN="$RELEASES_TOKEN" gh release upload "${GITHUB_REF_NAME}" "$DMG" \
+              --repo jwussler/hamdeck-releases --clobber
+            has_dmg jwussler/hamdeck-releases "$RELEASES_TOKEN"
           fi
 
       - name: Destroy the keychain
@@ -824,15 +848,56 @@ jobs:
           # it did, because silently publishing somewhere nobody is looking is worse than
           # an error.
           FILES="$(find dist -name '*Setup.exe') $(find dist -name '*.dmg') $(find dist -name '*.deb') $(find dist -name '*.nupkg') $(find dist -name 'RELEASES') $(find dist -name 'releases.*.json')"
+
+          # ⚠️ A RELEASE WITH NO FILES IS THE FAILURE THIS STEP KEEPS PRODUCING.
+          # 16 releases on this repo carried these exact notes - "download
+          # HamDeckPusher-win-Setup.exe" - with ZERO assets attached, telling the
+          # reader to download a file that was not there. Nothing failed: `gh
+          # release create` is perfectly happy to publish a release with an empty
+          # file list, and the job goes green. So the count is checked, twice:
+          # here before publishing, and again against what the API actually holds
+          # afterwards.
+          EXPECTED=0
+          for f in $FILES; do EXPECTED=$((EXPECTED+1)); done
+          if [ "$EXPECTED" -eq 0 ]; then
+            echo "no artifacts were found in dist/ - refusing to publish an empty release"
+            find dist -type f | head -50
+            exit 1
+          fi
+          echo "publishing $EXPECTED files"
+
+          # create-or-upload: a re-run of the same tag must top up the existing
+          # release rather than fail on "already exists" and leave it half filled.
+          publish() {   # repo, token
+            GH_TOKEN="$2" gh release create "${GITHUB_REF_NAME}" --repo "$1" \
+              --title "HamDeck ${GITHUB_REF_NAME}" --notes-file notes.md $FILES \
+            || GH_TOKEN="$2" gh release upload "${GITHUB_REF_NAME}" --repo "$1" \
+              $FILES --clobber
+            local n
+            n="$(GH_TOKEN="$2" gh release view "${GITHUB_REF_NAME}" --repo "$1" \
+                  --json assets -q '.assets|length')"
+            echo "  $1: $n assets"
+            [ "$n" -ge "$EXPECTED" ] || { echo "  $1 has $n assets, expected $EXPECTED"; return 1; }
+          }
+
+          # ⚠️ BOTH REPOS, AND THE SOURCE REPO IS NOT OPTIONAL.
+          #
+          # jwussler/hamdeck-releases is the PUBLIC, canonical download: this repo
+          # is private, so a release here is reachable by one person, and
+          # Velopack's updater cannot read it at all - GithubSource needs a token,
+          # and embedding one puts a credential in every copy handed to a friend
+          # where it can be read straight back out.
+          #
+          # But the source repo is where its own author goes to find a build, and
+          # for 16 tags what he found there was a page of instructions and a
+          # Source code (zip) link. Mirroring costs an upload and removes a dead
+          # end. Same files, same step, so the two cannot drift.
           if [ -n "${RELEASES_TOKEN:-}" ]; then
-            echo "publishing to jwussler/hamdeck-releases (public)"
-            GH_TOKEN="$RELEASES_TOKEN" gh release create "${GITHUB_REF_NAME}" \
-              --repo jwussler/hamdeck-releases \
-              --title "HamDeck ${GITHUB_REF_NAME}" \
-              --notes-file notes.md $FILES
+            echo "publishing to jwussler/hamdeck-releases (public, canonical)"
+            publish jwussler/hamdeck-releases "$RELEASES_TOKEN"
+            echo "mirroring to jwussler/hamdeck-cpp (private source repo)"
+            publish "$GITHUB_REPOSITORY" "$GH_TOKEN"
           else
-            echo "RELEASES_TOKEN not set - publishing to this PRIVATE repo, which nobody else can reach"
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "HamDeck ${GITHUB_REF_NAME}" \
-              --notes-file notes.md $FILES
+            echo "RELEASES_TOKEN not set - publishing ONLY to this PRIVATE repo, which nobody else can reach"
+            publish "$GITHUB_REPOSITORY" "$GH_TOKEN"
           fi
