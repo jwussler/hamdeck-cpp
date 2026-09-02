@@ -51,7 +51,8 @@ int main() {
   // Sessions.
   AuthService auth(480);
   CHECK(!auth.IsConfigured());
-  auth.AddUser("Joe", AuthService::HashPassword("s3cret"), /*is_admin=*/true);
+  auth.AddUser("Joe", AuthService::HashPassword("s3cret"), /*is_admin=*/true,
+               /*can_transmit=*/true, /*is_station=*/false);
   CHECK(auth.IsConfigured());
 
   CHECK(!auth.Login("joe", "wrong").has_value());
@@ -69,7 +70,7 @@ int main() {
 
   // Throttle: five failures locks the account.
   AuthService t(480);
-  t.AddUser("bob", AuthService::HashPassword("pw"));
+  t.AddUser("bob", AuthService::HashPassword("pw"), false, true, false);
   for (int i = 0; i < AuthService::kMaxLoginFails; ++i) {
     CHECK(!t.Login("bob", "nope").has_value());
   }

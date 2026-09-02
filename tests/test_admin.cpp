@@ -13,8 +13,8 @@
 int main() {
   setvbuf(stdout, nullptr, _IONBF, 0);
   AuthService a(480);
-  a.AddUser("boss", AuthService::HashPassword("pw1"), /*is_admin=*/true, true);
-  a.AddUser("op",   AuthService::HashPassword("pw2"), /*is_admin=*/false, true);
+  a.AddUser("boss", AuthService::HashPassword("pw1"), /*is_admin=*/true, true, false);
+  a.AddUser("op",   AuthService::HashPassword("pw2"), /*is_admin=*/false, true, false);
 
   CHECK(a.ListUsers().size() == 2);
   CHECK(a.AdminCount() == 1);
@@ -56,7 +56,7 @@ int main() {
   std::printf("remove:   user gone, and their live session with them\n");
 
   // ── Kick ─────────────────────────────────────────────────────────────────
-  a.AddUser("op2", AuthService::HashPassword("pw4"), false, true);
+  a.AddUser("op2", AuthService::HashPassword("pw4"), false, true, false);
   const auto k1 = a.Login("op2", "pw4");
   const auto k2 = a.Login("op2", "pw4");
   CHECK(k1 && k2);

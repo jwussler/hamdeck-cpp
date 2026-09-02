@@ -87,9 +87,10 @@ bool AuthService::VerifyPassword(const std::string& password, const std::string&
 }
 
 void AuthService::AddUser(const std::string& username, const std::string& password_hash,
-                          bool is_admin, bool can_transmit) {
+                          bool is_admin, bool can_transmit, bool is_station) {
   std::lock_guard<std::mutex> lock(mu_);
-  users_[LowerTrim(username)] = UserInfo{password_hash, is_admin, can_transmit};
+  users_[LowerTrim(username)] =
+      UserInfo{password_hash, is_admin, can_transmit, is_station};
 }
 
 bool AuthService::IsConfigured() const {
@@ -127,7 +128,8 @@ std::optional<std::string> AuthService::Login(const std::string& username,
   const std::string token = ToHexLower(raw, sizeof(raw));
 
   const auto now = std::chrono::steady_clock::now();
-  sessions_[token] = SessionInfo{key, it->second.is_admin, it->second.can_transmit, now, now};
+  sessions_[token] = SessionInfo{key, it->second.is_admin, it->second.can_transmit,
+                                 it->second.is_station, now, now};
   return token;
 }
 
@@ -156,6 +158,12 @@ bool AuthService::CanTransmit(const std::string& token) const {
   std::lock_guard<std::mutex> lock(mu_);
   const auto it = sessions_.find(token);
   return it != sessions_.end() && it->second.can_transmit;
+}
+
+bool AuthService::IsStation(const std::string& token) const {
+  std::lock_guard<std::mutex> lock(mu_);
+  const auto it = sessions_.find(token);
+  return it != sessions_.end() && it->second.is_station;
 }
 
 std::optional<std::string> AuthService::Username(const std::string& token) const {
@@ -223,6 +231,21 @@ bool AuthService::SetCanTransmit(const std::string& username, bool allow) {
   return true;
 }
 
+bool AuthService::SetIsStation(const std::string& username, bool allow) {
+  const std::string key = LowerTrim(username);
+  std::lock_guard<std::mutex> lock(mu_);
+  const auto it = users_.find(key);
+  if (it == users_.end()) return false;
+  it->second.is_station = allow;
+  // ⚠️ Same reason as SetCanTransmit, and it matters more here: this is the
+  // right to start an unattended carrier. Revoking it and leaving live sessions
+  // holding the old value is a permission you believe you took away and did not.
+  for (auto& [token, s] : sessions_) {
+    if (s.username == key) s.is_station = allow;
+  }
+  return true;
+}
+
 int AuthService::KillUserSessions(const std::string& username) {
   const std::string key = LowerTrim(username);
   std::lock_guard<std::mutex> lock(mu_);
@@ -242,7 +265,7 @@ std::vector<AuthService::UserRow> AuthService::ListUsers() const {
   std::lock_guard<std::mutex> lock(mu_);
   std::vector<UserRow> out;
   for (const auto& [name, u] : users_) {
-    out.push_back({name, u.is_admin, u.can_transmit});
+    out.push_back({name, u.is_admin, u.can_transmit, u.is_station});
   }
   return out;
 }
@@ -255,7 +278,7 @@ std::vector<AuthService::SessionRow> AuthService::ListSessions() const {
     // ⚠️ Only a PREFIX of the token. A full session token in an admin listing
     // is a credential in a log, a screenshot and a support ticket.
     out.push_back({token.substr(0, 8) + "...", s.username, s.is_admin,
-                   s.can_transmit,
+                   s.can_transmit, s.is_station,
                    std::chrono::duration_cast<std::chrono::seconds>(
                        now - s.last_activity).count()});
   }

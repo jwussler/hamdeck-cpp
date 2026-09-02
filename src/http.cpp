@@ -30,6 +30,27 @@ HttpRequest BuildRequest(mg_connection* conn) {
   const mg_request_info* ri = mg_get_request_info(conn);
   HttpRequest req;
   req.path = ri->request_uri ? ri->request_uri : "";
+  // ⚠️ TRAILING SLASHES ARE TRIMMED ON /api/ PATHS, because the reference host does
+  // it and the API is the contract between the two:
+  //
+  //     if (path.StartsWith("/api/")) { var trimmed = path.TrimEnd('/'); ... }
+  //     Services/ApiServer.cs:764-766
+  //
+  // Without it "/api/tune/amp/" does not match the exact route "/api/tune/amp".
+  // It fell through to the PREFIX route "/api/tune/amp/" instead - the catch-all
+  // that answers "Amp tuner is not configured on this host" and never tunes. The
+  // Stream Deck's amp tune button sends exactly that trailing slash, so it got a
+  // cheerful 200 and a silent no-op.
+  //
+  // ⚠️ It is done HERE, where the path is first built, so the AUTH, ADMIN and
+  // TRANSMIT gates all see the same normalised path the router will match. Doing
+  // it at the router instead would let "/api/ptt/on/" skip IsTransmitRoute - the
+  // gate would look at one string and the dispatcher at another, which is how a
+  // permission check gets walked around with a keystroke.
+  if (req.path.rfind("/api/", 0) == 0) {
+    const auto end = req.path.find_last_not_of('/');
+    req.path = (end == std::string::npos) ? "" : req.path.substr(0, end + 1);
+  }
   req.method = ri->request_method ? ri->request_method : "";
   req.query = ri->query_string ? ri->query_string : "";
   for (int i = 0; i < ri->num_headers; ++i) {

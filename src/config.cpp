@@ -109,6 +109,9 @@ bool Config::Load(const std::string& path, Config& out, std::string& error) {
         Get(u, "password_hash", cu.password_hash);
         Get(u, "is_admin", cu.is_admin);
         Get(u, "can_transmit", cu.can_transmit);
+        // Absent in a config written before station rights existed, and Get
+        // leaves the default alone - so an upgraded host grants nobody this.
+        Get(u, "is_station", cu.is_station);
         if (cu.username.empty() || cu.password_hash.empty()) {
           // A user entry that cannot authenticate is a mistake, not a disabled
           // account. Refuse the file rather than start with a user list that is
@@ -185,7 +188,8 @@ bool Config::Save(const std::string& path, std::string& error) const {
     users.push_back({{"username", u.username},
                      {"password_hash", u.password_hash},
                      {"is_admin", u.is_admin},
-                     {"can_transmit", u.can_transmit}});
+                     {"can_transmit", u.can_transmit},
+                     {"is_station", u.is_station}});
   }
   j["web_users"] = users;
 

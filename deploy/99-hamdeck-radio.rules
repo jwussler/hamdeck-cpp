@@ -1,0 +1,13 @@
+# FTDX-101MP CAT link — Silicon Labs CP2105 dual UART bridge (10c4:ea70).
+#
+# Interface 00 is the CAT port; interface 01 is the bridge's second port and is
+# silent. Match on the INTERFACE, never on a minor number: on 09/02/2026 the
+# cable was moved and CAT came back as /dev/ttyUSB1, because the host was still
+# holding a dead fd on /dev/ttyUSB0 and minor 0 was therefore still taken. The
+# host came up pointed at a device that no longer existed. It names /dev/ttyRIG
+# now and nothing else.
+#
+# SYSTEMD_WANTS starts the host when the radio appears. The unit BindsTo the
+# same device, so unplugging stops it and drops the stale fd. Together that is
+# the "keep looking for the radio" behaviour, with no polling.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea70", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="ttyRIG", TAG+="systemd", ENV{SYSTEMD_WANTS}="hamdeck-cpp.service"

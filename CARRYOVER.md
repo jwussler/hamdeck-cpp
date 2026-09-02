@@ -52,10 +52,39 @@ Auth: session cookie, also accepted as `?token=` or `Bearer`. Since v3.4.14 stat
 audio require a session. `web_admin_only=true` makes `/` serve the admin page and 404s the old
 browser rig UI.
 
+🔴 **TRAILING SLASHES ARE TRIMMED ON `/api/` PATHS — `ApiServer.cs:764-766`:**
+
+```csharp
+if (path.StartsWith("/api/")) { var trimmed = path.TrimEnd('/'); ... }
+```
+
+**The Stream Deck sends them.** Its amp tune button requests `/api/tune/amp/`, and the C++ host
+matched that against the PREFIX route rather than the exact one — the not-configured catch-all,
+which answers 200 and never tunes. The button reported success and did nothing, independent of
+any permission.
+
+⚠️ **A route inventory cannot see this.** `AUDIT-CSHARP.md` ticked `/api/tune/amp` because the
+route exists, and the 71/74 sweep drove clean paths. How a path is MATCHED is part of the
+contract, not an implementation detail. Normalise where the request is built, so the gates and
+the router agree — at the router alone, `/api/ptt/on/` skips `IsTransmitRoute` and still
+dispatches.
+
 ⚠️ **`/api/tune` is the rig's INTERNAL ATU and is the wrong tuner for this station.** The right
 one is `/api/tune/tgxl`. Keep them separate and name them in any confirmation.
 ⚠️ **`/api/tune/amp` refuses every remote caller** (`AmpTuneOrDeny(isLocal)`). Do not expose it
 remotely; a button that always errors is worse than a missing one.
+
+⚠️ **AND IT ANSWERS 200 WHEN IT REFUSES.** `AmpTuneOrDeny` returns an error *object*, not an
+error status, so a Stream Deck button reads the refusal as success: green tick, no tune. That
+is not a detail - it is why this went unnoticed for weeks after the host moved boxes.
+
+📌 **The C++ host deliberately diverges here, 09/01/2026.** `isLocal` was the right test on the
+reference host *because it ran on the station PC*, so loopback proved an operator was present
+and all 44 Stream Deck buttons hitting `localhost:5001` were local. Once the rig moved to its
+own box, loopback started proving the caller was on the **rig** box - the one place nobody
+sits - and amp tune became unreachable from the operating position. The C++ host therefore
+asks **who**, not **where**: the loopback console, or a session whose account carries
+`is_station`. It refuses with **403**. See `tools/amp_gate_check.sh`.
 
 ---
 
@@ -181,7 +210,8 @@ Both lived only in the WPF host and were never ported to Linux. Check for more o
   needs a second receiver or a net report.
 - **WPF cannot be cross-compiled.** `Microsoft.NET.Sdk.WindowsDesktop` does not exist for Linux.
   (Irrelevant to a C++ client, but it is why the .NET client is built on a Windows CI runner.)
-- **Amp tune is local-only** — see §2.
+- **Amp tune is local-only** — see §2. (On the C++ host: local console *or* an `is_station`
+  account, and the refusal is a 403. The restriction did not go away; the question changed.)
 
 ---
 

@@ -1264,3 +1264,250 @@ FTDX-101 emits before trusting every one.
 - Bandmap→QSY (the reverse direction, HTTP :54321 in the C#) is **not** built. Ask before
   building it: it is unauthenticated remote control of the VFO and the C# bound it to the
   whole LAN with `Allow-Origin: *`.
+
+---
+
+## 09/01/2026 — the amp tune button, and why it was never "yanked"
+
+**Symptom:** the Stream Deck amp tune button does nothing. **Cause:** it has been refused
+since the rig moved to its own box, and the refusal was served as **HTTP 200**, which a deck
+button reads as success. Green tick, no carrier, no complaint, for weeks.
+
+The restriction was NOT added here. It is the reference host's, ported faithfully —
+`Services/ApiServer.cs`:
+
+    private object? AmpTuneOrDeny(bool isLocal)
+        => isLocal ? _amp.Tune() : ... "Amp tune is only available when connected locally."
+
+`isLocal` was correct *there* because the C# host ran on the station PC, so loopback proved
+an operator was present and all 44 deck buttons hitting `localhost:5001` were local. The gate
+never broke. It came to prove the wrong thing: loopback on the rig box means the caller is on
+the rig box, which is the one place nobody sits.
+
+**Fix:** ask WHO, not WHERE. Amp tune needs the loopback console, or a session whose account
+carries `is_station` **and** `can_transmit`. Refusals are 403.
+
+⚠️ **`is_station` is deliberately not implied by `can_transmit`.** "May key the rig, with a
+hand on it" and "may start a ten-second unattended carrier into an amplifier" are different
+claims. Default false, granted by an explicit admin act, so nothing gains it by upgrading.
+
+⚠️ **And `can_transmit` is required on top**, found by reading the live user list rather than
+assuming: the `pusher` account has `can_transmit=false`, and amp tune predates
+`IsTransmitRoute` so it is gated separately. Without that term, a station grant would have
+handed a carrier to an account explicitly denied transmit.
+
+### The test, and the hole in the first draft of the test
+`tools/amp_gate_check.sh` drives the real binary over HTTP on both listeners, refuses to run
+against anything that is not a simulator, and is wired into ctest.
+
+⚠️ **Its first version passed against the injected bug.** Step 3 asserted only "not 403", and
+the bug being guarded against refuses with **200** — so the assertion could not tell the
+working build from the broken one. It now checks the body came from the amp route. This is
+the same failure the fix itself addresses, reproduced inside its own test within the hour.
+
+### Closed 09/01/2026 — granted to `wa0o`
+Joe: the pusher logs in as **`wa0o`**, which already held `can_transmit`, so this was the
+station grant alone and widened nothing else. Config edited in place (backup
+`config.json.bak-station-*`, temp+rename, every unknown key preserved), host restarted, and
+the pusher reconnected on its own.
+
+    joe        tx=True  station=False
+    listener   tx=False station=False
+    pusher     tx=False station=False
+    wa0o       tx=True  station=True
+
+⚠️ **The last step is a button press, and it is Joe's.** `rig_connected` went true during this
+work, and `/api/tune/amp` keys the transmitter for ten seconds - so it was NOT fired from here
+to "confirm". The binary is proven by `amp_gate_check.sh` against the simulator on both build
+hosts; the live path is proven by pressing the button.
+
+    joe        admin  tx  station=false
+    listener          --  station=false
+    pusher            --  station=false     <- tx denied
+    wa0o              tx  station=false
+
+Deployed to the VM: build `41d38d6ba96c`, 16/16 tests green there.
+
+`/api/auth/status` now carries `is_station`, so a client can grey the button out rather than
+show a live one that answers 403 - and so the right can be confirmed without keying an amp.
+
+
+### 🔴 The grant that kept vanishing — an admin write flushes the WHOLE user list
+
+Granting `wa0o` the station right in the config file and restarting did not work, twice, and
+the second failure explained the first.
+
+1. `main.cpp` called `AddUser` without `is_station`. The `= false` default argument made that
+   compile cleanly, so **every startup dropped the right**. The file said the operator had it;
+   the running host said they did not.
+2. Worse, it did not just fail to load - it **erased the grant**. `persist_users` mirrors the
+   in-memory user list back over `config.json` on any admin write, so removing a temporary
+   account rewrote every user from memory, where `is_station` was already false. The grant was
+   overwritten by the cleanup step of the check that was verifying it.
+
+⚠️ **An admin write persists ALL users, not the one being changed.** A hand-edit to
+`config.json` on a running host survives only until the next admin call. Grant through the API,
+or edit and restart before anything else touches a user.
+
+⚠️ **`AddUser` has no default arguments now.** A missing right is a compile error, not a silent
+false. Removing them immediately surfaced seven call sites.
+
+⚠️ **`ctest` passed while the build was FAILING** during this work - it ran the stale binaries
+from the previous build. A green suite after a red build means nothing; read the build result.
+
+Live state, verified in the running host AND on disk after a flush:
+
+    joe        tx=True  station=False
+    listener   tx=False station=False
+    pusher     tx=False station=False
+    wa0o       tx=True  station=True
+
+Deployed: build `1c75acfd03ce`.
+
+
+### 🔴 ROOT CAUSE, found last instead of first: a trailing slash
+
+The amp button sends **`/api/tune/amp/`**. Read straight off the host's journal:
+
+    Sep 02 01:09:53 hamdeck-cpp hamdeck-host[18620]: dash GET /api/tune/amp/
+
+That matched the PREFIX route, not the exact one, so it hit the not-configured catch-all -
+200, no tune, no rights involved at all. The reference host trims trailing slashes on `/api/`
+paths (`ApiServer.cs:766`); this one did not.
+
+⚠️ **Process failure worth keeping.** Hours went into the permission gate - which was a real
+bug and did need fixing - while the thing actually breaking the button was routing. The first
+move should have been *what does the deck actually send, and what does the host answer*. One
+`journalctl | grep tune` answered it. Reasoning from the code found a true fact that was not
+the operative one.
+
+⚠️ **This may have been breaking other buttons silently.** The 71/74 route sweep used clean
+paths, so any button sending a trailing slash was never exercised.
+
+Verified live without transmitting: `/api/health/` and `/api/health//` now answer 200, and
+`/api/tune/amp/` answers 401 (the auth gate) instead of the catch-all's 200 - proving it now
+resolves to the real route. Build `ef607ca00190`.
+
+---
+
+## §12 — The radio moved and the station never noticed (09/02/2026)
+
+Joe moved a cable: unplugged the FTDX-101MP's USB and plugged it back in. The host went on
+serving a dashboard, `active (running)`, and reported **`rig_connected:false` indefinitely**.
+
+**The mechanism, measured, not guessed:**
+
+    /proc/1797/fd/3 -> /dev/ttyUSB0 (deleted)
+    /proc/1797/fd/5 -> /dev/snd/pcmC0D0c (deleted)
+    /proc/1797/fd/6 -> /dev/snd/pcmC0D0p (deleted)
+
+The host opens CAT and the codec **once, at startup**, and has no reconnect path
+(`main.cpp` — a failed open is fatal by design; a *dying* open is not handled at all).
+So it sat holding three device nodes that no longer existed.
+
+⚠️ **The held fd is also what renamed the port.** Minor 0 was still in use, so the returning
+CP2105 enumerated as `ttyUSB1`/`ttyUSB2`. `radio_port` said `/dev/ttyUSB0`. Every restart
+then failed FATAL (restart counter reached **209**) until one happened to catch a moment when
+a `ttyUSB0` existed. **A device that "came back on a different number" is a symptom of the
+old handle, not of the cable.**
+
+### The fix — recovery from OUTSIDE the process
+The host cannot rescan, so nothing inside it was changed. Three pieces, all in `deploy/`:
+
+1. **`99-hamdeck-radio.rules`** — `/dev/ttyRIG` symlink matched on **vid:pid + interface 00**
+   (the CAT half of the dual UART), never a minor number. `radio_port` is now `/dev/ttyRIG`.
+   The rule also sets `SYSTEMD_WANTS=hamdeck-cpp.service`, so plugging the radio in **starts
+   the host**.
+2. **`hamdeck-cpp.service.d/rig-device.conf`** — `BindsTo=dev-ttyRIG.device`, so unplugging
+   **stops** the host and drops the stale fds; plus `Restart=always` /
+   `StartLimitIntervalSec=0` so it keeps trying while the radio is away.
+3. **`hamdeck-rig-watchdog`** + timer (30s) — catches a re-enumeration systemd coalesced.
+   ⚠️ It fires **only** on a signature no healthy host can show: an fd on a *deleted* `/dev`
+   node, or a CAT fd that is not what `/dev/ttyRIG` points at. Deliberately **not** on
+   `rig_connected:false` — a radio switched off reads exactly like that, and that watchdog
+   would restart forever with nothing wrong.
+
+### The gate: `tools/rig_replug_test.sh` — PROVEN to fail
+Unbinds **both** USB devices from the kernel's `usb` driver and binds them back: the same
+udev remove/add a physical replug produces, without touching the hypervisor's passthrough.
+
+- recovery **disabled** → `FAIL: still not connected 30s after the radio came back`, unit
+  still `active`, three deleted fds. Tonight's bug, reproduced on demand.
+- watchdog alone, same broken state → `restarting hamdeck-cpp.service: stale device handle:
+  /dev/snd/pcmC0D0p (deleted)` → connected.
+- recovery **enabled** → unplug leaves the unit `inactive`; replug → `rig_connected=true in
+  0s, CAT node /dev/ttyUSB0, stale fds 0`, **PASS**. Back on minor 0, because the fd was
+  released.
+
+⚠️ **A bug in the first version of the gate, worth keeping:** the rebind guard tested
+`[ -e /sys/bus/usb/devices/$p ]`. Unbinding does **not** remove the device from sysfs — it
+only detaches the driver — so the guard skipped the rebind every time and left the station
+off the air. Test for `$p/driver`, not for `$p`.
+
+⚠️ Running the gate restarts the host, which drops the Wavelog pusher's session. Do not run
+it while Joe is operating.
+
+---
+
+## 09/02/2026 — the Mac app had no name and no icon
+
+v0.1.29's DMG installed, launched and worked. Finder called it **`hamdeck-qml`** and drew it
+with the blank generic-document icon. Nothing had failed: CMake names a bundle after the
+**target**, and its stock `Info.plist` has no icon key, so there was no default that could
+have been right and nothing that looked.
+
+**A Mac app's identity is entirely in the bundle, not the binary.** Fixed in three places:
+
+1. **`packaging/icons/hamdeck.icns`** — 10 entries, generated by `brand/build.sh` in the same
+   render-pack-verify pass as the `.ico`, so the two families can never drift.
+   ⚠️ **Apple's icon grid: the artwork is 824 of 1024, centred, the rest transparent.** A
+   full-bleed square is the clearest tell of a ported icon — it sits visibly larger than every
+   neighbour in the Dock. `mark.svg` is already a rounded rect, so it needed the MARGIN, not
+   new artwork.
+   ⚠️ **The inset moves the small-art boundary up a slot.** The 32pt slot holds only
+   `32*824/1024 = 26px` of artwork, below the 32px floor where `mark.svg` turns to mush — so
+   `mark-small.svg` covers **16 and 32** here where it covers 16 and 24 in the `.ico`.
+   ⚠️ **The 16pt 1x slot is full-bleed, and that was measured, not assumed.** At 13px
+   mark-small's reflector merges into the boom: the drawing that exists to survive that size
+   stops surviving it. Rendered both, magnified, looked. Applies to that slot only — `ic11`
+   is the same 16pt slot on Retina, where there are 32 real pixels and the grid is kept.
+2. **`client/packaging/Info.plist.in`** + the `if(APPLE)` block in `client/CMakeLists.txt` —
+   `OUTPUT_NAME` renames the bundle to **HamDeck Remote.app**; CFBundleName and
+   CFBundleDisplayName are set **separately** (set one only and the other falls back to the
+   executable file name, which is how an app is called two different things in two places).
+   ⚠️ The target stays `hamdeck-qml` and `OUTPUT_NAME` applies on **APPLE only** — Linux ships
+   a binary a `.desktop` file points at, and a space in that name would be a gratuitous break.
+   ⚠️ **The icns is a `target_sources` file with `MACOSX_PACKAGE_LOCATION Resources`, not an
+   `install(FILES)`.** macdeployqt, codesign and notarisation all run against `client/build`
+   before anything is installed, so an icon added at install time is signed into nothing.
+3. ⚠️ **`NSMicrophoneUsageDescription`, which had not bitten yet and would have.** The
+   microphone *entitlement* says the app is allowed to ask; the usage string is what it asks
+   *with*. With the entitlement and no string macOS **SIGKILLs** the process the moment it
+   opens the mic — first PTT of the day, no dialog, nothing in the log.
+
+### The gate: `tools/check_macos_bundle.py` — PROVEN to fail
+Reads the built `.app` with `plistlib` and `struct` rather than `plutil`/`iconutil`, so it runs
+on the Linux leg and on a box with no Xcode. Runs in `build.yml` on every push, and in
+`release.yml` **twice** — before signing, and again after macdeployqt, which rewrites the
+bundle the first check looked at.
+
+Reconstructed the 0.1.29 bundle and each defect separately; every one is caught:
+
+| reintroduced | reported |
+|---|---|
+| target name + stock plist (0.1.29 exactly) | bundle name, CFBundleName, CFBundleDisplayName, icon key, mic string — 5 findings |
+| icns present but not in `Contents/Resources` | "the icon was added at INSTALL time, not build time" |
+| 512px art filed under the `ic10` (1024) slot | "artwork is 512x512, the slot needs 1024x1024" |
+| `NSMicrophoneUsageDescription` removed | "macOS SIGKILLs the app on the first PTT" |
+
+⚠️ It trusts each entry's **own PNG header**, not the slot it was filed under: an icns holding
+512px art under `ic10` is structurally perfect and looks soft on exactly the Retina display
+that entry exists for. `brand/build.sh` carries the same check against the source PNGs.
+
+⚠️ **Every macOS path in both workflows now has a SPACE in it** and must stay quoted. The old
+`[ -f "$BIN" ] || BIN=client/build/hamdeck-qml` fallbacks were **removed**: they would hide the
+one thing most likely to regress — if `OUTPUT_NAME` stops applying the bundle is called
+`hamdeck-qml.app` again, and a fallback would quietly build, test and ship it.
+
+**Not yet proven on hardware.** CI checks structure; nobody has opened the renamed bundle in
+Finder or keyed up on a Mac.

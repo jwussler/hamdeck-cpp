@@ -1,0 +1,44 @@
+#!/bin/bash
+# Belt-and-braces for the 09/02/2026 failure: the host holding a device node
+# that no longer exists.
+#
+# The udev rule + BindsTo drop-in handle a normal unplug/replug. This catches
+# the case where the device unit never went away cleanly (a fast re-enumeration
+# that systemd coalesced, a codec that came back on a different node) and the
+# host is left holding dead handles.
+#
+# ⚠️ It restarts ONLY on a signature that is impossible for a healthy host:
+# a fd on a deleted /dev node, or a CAT fd that is not the node /dev/ttyRIG
+# currently points at. It deliberately does NOT restart on rig_connected=false
+# alone — a radio that is switched off reads exactly like that, and a watchdog
+# that restarts on it would loop forever with nothing wrong.
+set -uo pipefail
+
+UNIT=hamdeck-cpp.service
+LINK=/dev/ttyRIG
+
+systemctl is-active --quiet "$UNIT" || exit 0
+
+pid=$(systemctl show -p MainPID --value "$UNIT")
+[[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 0 ] || exit 0
+
+reason=""
+cat_fd=""
+for l in /proc/"$pid"/fd/*; do
+  t=$(readlink "$l" 2>/dev/null) || continue
+  case "$t" in
+    /dev/*"(deleted)") reason="stale device handle: $t" ;;
+    /dev/ttyUSB*) cat_fd="$t" ;;
+  esac
+done
+
+if [ -z "$reason" ] && [ -n "$cat_fd" ] && [ -e "$LINK" ]; then
+  want=$(readlink -f "$LINK")
+  [ "$cat_fd" = "$want" ] || reason="CAT fd is $cat_fd but $LINK is now $want"
+fi
+
+[ -n "$reason" ] || exit 0
+
+logger -t hamdeck-rig-watchdog "restarting $UNIT: $reason"
+echo "restarting $UNIT: $reason"
+systemctl restart "$UNIT"

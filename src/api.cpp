@@ -732,10 +732,16 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
     WriteJson(res, 200,
               std::format(
                   R"({{"status":"ok","authenticated":{},"is_admin":{},"can_transmit":{},)"
-                  R"("username":{},"token":null}})",
+                  R"("is_station":{},"username":{},"token":null}})",
                   JsonBool(ok || trusted),
                   JsonBool(ok && deps.auth->IsAdmin(token)),
                   JsonBool(ok && deps.auth->CanTransmit(token)),
+                  // ⚠️ So a client can GREY THE AMP TUNE BUTTON instead of showing a
+                  // live one that answers 403. CARRYOVER.md section 2: "a button that
+                  // always errors is worse than a missing one" - and it is also the
+                  // only way to confirm the right is live without keying an amplifier
+                  // to find out.
+                  JsonBool(trusted || (ok && deps.auth->IsStation(token))),
                   user ? "\"" + *user + "\"" : "null"));
   });
 
@@ -1471,27 +1477,66 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                          JsonBool(tgxl && tgxl->IsActive()),
                          JsonBool(tgxl && tgxl->configured())); }});
 
-  // ⚠️ AMP TUNE REFUSES EVERY REMOTE CALLER. CARRYOVER.md section 2. The check is
-  // the LISTENER the request arrived on - the control port is bound to loopback,
-  // so "local" is a kernel guarantee, not a header a caller can set.
+  // ── Amp tune ───────────────────────────────────────────────────────────────
+  // ⚠️ WHAT THIS GUARDS: a TEN-SECOND UNATTENDED CARRIER at 20 W, ending at 100 W.
+  // That is why it is the most restricted route on the host, and the restriction
+  // stays. What changed is the QUESTION it asks.
+  //
+  // The reference host asked "did this arrive on the loopback listener":
+  //     private object? AmpTuneOrDeny(bool isLocal)
+  //         => isLocal ? _amp.Tune() : ... "only available when connected locally."
+  // That was a correct test THERE, because the C# host ran ON the station PC, so
+  // loopback proved an operator was sitting in front of it. The Stream Deck's 44
+  // buttons all point at localhost:5001 and every one of them was local.
+  //
+  // ⚠️ THE RIG MOVED TO ITS OWN BOX AND THE TEST STOPPED MEANING THAT. Loopback on
+  // the rig box proves the caller is on the rig box - which is the one place
+  // nobody sits. The gate still worked perfectly; it had simply come to prove the
+  // wrong thing, and the amp tune button went dead with a 200 and no explanation.
+  //
+  // So the question is now WHO, not WHERE: the loopback console, or a session
+  // belonging to an account marked as the operator at the station. is_station is
+  // granted by a deliberate admin act and defaults to false, so no existing
+  // account gains this by upgrading.
   AmpTuner* amp = deps.amp;
-  auto amp_tune = [amp](bool is_local) {
-    if (!is_local) {
-      return std::string(R"({"status":"error",)"
-                         R"("message":"Amp tune is only available when connected locally."})");
+  AuthService* amp_auth = deps.auth;
+  auto amp_tune = [amp, amp_auth, trusted](const HttpRequest& req, HttpResponse& res) {
+    // ⚠️ BOTH RIGHTS, and can_transmit is not redundant here. Amp tune is not in
+    // IsTransmitRoute - it predates that list and is gated separately - so without
+    // this an account with can_transmit=false could start a ten-second carrier the
+    // moment it was given the station right. Found on the live host, where the
+    // `pusher` account is exactly that shape: tx denied, and it is the account the
+    // Stream Deck's session belongs to.
+    //
+    // "Denied transmit" has to mean it everywhere, or it means nothing.
+    const std::string amp_token = ExtractToken(req);
+    const bool at_station =
+        trusted || (amp_auth && amp_auth->IsStation(amp_token) &&
+                    amp_auth->CanTransmit(amp_token));
+    if (!at_station) {
+      // ⚠️ 403, NOT 200. The reference host answered 200 with an error body, and a
+      // Stream Deck button reads that as success: it lights up green and the amp
+      // never tunes. A refusal that looks like a success is how this went unnoticed.
+      WriteJson(res, 403,
+                R"({"status":"error","station":false,)"
+                R"("message":"Amp tune needs the station right. Grant it with )"
+                R"(/api/admin/user/station/enable/<user>."})");
+      return;
     }
     if (!amp) {
-      return std::string(R"({"status":"error","available":false,"tuner":"amp",)"
-                         R"("message":"Amp tuner is not configured on this host"})");
+      WriteJson(res, 200,
+                R"({"status":"error","available":false,"tuner":"amp",)"
+                R"("message":"Amp tuner is not configured on this host"})");
+      return;
     }
     const auto r = amp->Tune();
-    return std::format(
+    WriteJson(res, 200, std::format(
         R"({{"status":"{}","tuner":"amp","available":true,"tuning":{},)"
         R"("action":"{}","message":"{}"}})",
-        r.ok ? "ok" : "error", JsonBool(r.tuning), r.action, r.message);
+        r.ok ? "ok" : "error", JsonBool(r.tuning), r.action, r.message));
   };
-  generated.push_back({"/api/tune/amp", amp_tune});
-  generated.push_back({"/api/amp/tune", amp_tune});
+  server.Get("/api/tune/amp", amp_tune);
+  server.Get("/api/amp/tune", amp_tune);
   generated.push_back({"/api/tune/amp/status", [amp](bool) {
       return std::format(R"({{"status":"ok","tuning":{},"available":{}}})",
                          JsonBool(amp && amp->IsActive()), JsonBool(amp != nullptr)); }});
@@ -1717,12 +1762,15 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
   // ⚠️ Amp tune again, this time as a prefix. The refusal has to be repeated
   // here: a caller reaching /api/tune/amp/anything must not slip past the exact
   // route's check.
-  server.GetPrefix("/api/tune/amp/", [trusted](const std::string&, const HttpRequest&,
-                                               HttpResponse& res) {
-    if (!trusted) {
-      WriteJson(res, 200,
-                R"({"status":"error",)"
-                R"("message":"Amp tune is only available when connected locally."})");
+  server.GetPrefix("/api/tune/amp/", [trusted, amp_auth](const std::string&,
+                                                         const HttpRequest& req,
+                                                         HttpResponse& res) {
+    const std::string amp_token = ExtractToken(req);
+    if (!(trusted || (amp_auth && amp_auth->IsStation(amp_token) &&
+                      amp_auth->CanTransmit(amp_token)))) {
+      WriteJson(res, 403,
+                R"({"status":"error","station":false,)"
+                R"("message":"Amp tune needs the station right."})");
       return;
     }
     WriteJson(res, 200,
@@ -1933,6 +1981,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
         cu.username = u.username;
         cu.is_admin = u.is_admin;
         cu.can_transmit = u.can_transmit;
+        cu.is_station = u.is_station;
         cu.password_hash = auth->PasswordHashOf(u.username);
         cfg->web_users.push_back(cu);
       }
@@ -1944,8 +1993,10 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       if (auth) {
         for (const auto& u : auth->ListUsers()) {
           if (!rows.empty()) rows += ",";
-          rows += std::format(R"({{"username":"{}","is_admin":{},"can_transmit":{}}})",
-                              u.username, JsonBool(u.is_admin), JsonBool(u.can_transmit));
+          rows += std::format(
+              R"({{"username":"{}","is_admin":{},"can_transmit":{},"is_station":{}}})",
+              u.username, JsonBool(u.is_admin), JsonBool(u.can_transmit),
+              JsonBool(u.is_station));
         }
       }
       WriteJson(res, 200, std::format(R"({{"status":"ok","users":[{}]}})", rows));
@@ -1981,7 +2032,10 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       }
       // ⚠️ Hashed here, immediately. A plaintext password must never reach the
       // config file, and the only way to guarantee that is never to store one.
-      auth->AddUser(user, AuthService::HashPassword(pass), is_admin, can_tx);
+      // ⚠️ A new account is never a station account. Granting it is a separate,
+      // named act - /api/admin/user/station/enable/<user>.
+      auth->AddUser(user, AuthService::HashPassword(pass), is_admin, can_tx,
+                    /*is_station=*/false);
       std::string err;
       if (!persist_users(err)) {
         WriteJson(res, 500,
@@ -2097,6 +2151,47 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       }
       WriteJson(res, 200,
                 std::format(R"({{"status":"ok","username":"{}","can_transmit":{}}})",
+                            user, JsonBool(allow)));
+    });
+
+    // /api/admin/user/station/enable/<user> and .../disable/<user>
+    //
+    // ⚠️ Deliberately its own route rather than a flag on the tx one. Transmit is
+    // "may key the rig". This is "may start an unattended carrier into an
+    // amplifier", and granting the first must never quietly grant the second.
+    server.GetPrefix("/api/admin/user/station/",
+                     [auth, persist_users](const std::string& suffix, const HttpRequest&,
+                                           HttpResponse& res) {
+      const auto slash = suffix.find('/');
+      if (slash == std::string::npos) {
+        WriteJson(res, 400,
+                  R"({"status":"error","message":"expected enable|disable/<username>"})");
+        return;
+      }
+      const std::string verb = suffix.substr(0, slash);
+      const std::string user = suffix.substr(slash + 1);
+      if (verb != "enable" && verb != "disable") {
+        WriteJson(res, 400, R"({"status":"error","message":"expected enable or disable"})");
+        return;
+      }
+      const bool allow = (verb == "enable");
+      if (!auth->SetIsStation(user, allow)) {
+        WriteJson(res, 404, R"({"status":"error","message":"no such user"})");
+        return;
+      }
+      std::string err;
+      // ⚠️ An unsaved grant is the friendlier failure; an unsaved REVOKE is a
+      // right you believe you took away and did not, and it comes back at the
+      // next power cut. Both are reported rather than assumed to have stuck.
+      if (!persist_users(err)) {
+        WriteJson(res, 500,
+                  std::format(R"({{"status":"error","message":"station right changed on )"
+                              R"(the running host but NOT saved - it reverts on restart: )"
+                              R"({}"}})", err));
+        return;
+      }
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","username":"{}","is_station":{}}})",
                             user, JsonBool(allow)));
     });
 

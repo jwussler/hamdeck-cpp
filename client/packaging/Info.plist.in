@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ⚠️ A HAND-WRITTEN TEMPLATE, NOT CMake's DEFAULT, FOR ONE REASON:
+  NSMicrophoneUsageDescription. CMake's stock MacOSXBundleInfo.plist.in has no slot for
+  it, and macOS does not deny a mic request that has no usage string - it SIGKILLs the
+  process. The panel would vanish the instant the operator keyed up, with no dialog and
+  nothing in the app's own log. The entitlement in entitlements.plist is not this: the
+  entitlement says the app is ALLOWED to ask, this string is what it asks WITH, and
+  without both the answer is death rather than a prompt.
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>        <string>en</string>
+  <key>CFBundleExecutable</key>               <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+  <key>CFBundleIdentifier</key>               <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+  <key>CFBundleInfoDictionaryVersion</key>    <string>6.0</string>
+  <key>CFBundlePackageType</key>              <string>APPL</string>
+
+  <!-- ⚠️ CFBundleName IS THE MENU BAR, and it is truncated past about 15 characters.
+       "HamDeck Remote" is 14. CFBundleDisplayName is what Finder and the Dock label,
+       and the two are set separately on purpose - a bundle that sets only one of them
+       falls back to the executable file name for the other, which is how an app ends
+       up called "hamdeck-qml" in one place and something sensible in another. -->
+  <key>CFBundleName</key>                     <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+  <key>CFBundleDisplayName</key>              <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+
+  <key>CFBundleShortVersionString</key>       <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+  <key>CFBundleVersion</key>                  <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+  <key>CFBundleIconFile</key>                 <string>${MACOSX_BUNDLE_ICON_FILE}</string>
+  <key>NSHumanReadableCopyright</key>         <string>${MACOSX_BUNDLE_COPYRIGHT}</string>
+
+  <!-- Without this the app renders at 1x and is scaled up: soft text on every Mac made
+       since 2012. Qt is Retina-aware; it just has to be told the bundle is. -->
+  <key>NSHighResolutionCapable</key>          <true/>
+  <key>LSMinimumSystemVersion</key>           <string>11.0</string>
+  <key>LSApplicationCategoryType</key>        <string>public.app-category.utilities</string>
+  <key>NSPrincipalClass</key>                 <string>NSApplication</string>
+
+  <!-- Shown verbatim in the system prompt, so it says what the mic is FOR. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>HamDeck Remote sends your voice to the radio when you transmit.</string>
+</dict>
+</plist>

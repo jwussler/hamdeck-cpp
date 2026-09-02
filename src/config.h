@@ -20,6 +20,18 @@ struct ConfigUser {
   std::string password_hash;   // pbkdf2:<hex salt>:<hex hash>
   bool is_admin = false;
   bool can_transmit = true;
+  // ⚠️ "This account is the operator sitting at the station."
+  //
+  // It exists because the amp tune's old test - did the request arrive on the
+  // loopback listener - stopped meaning what it was written to mean. That test
+  // was correct when the host ran ON the station PC, so loopback proved a human
+  // was present. The rig now has its own box: loopback there proves the caller
+  // is on the rig box, which is the one place nobody sits.
+  //
+  // So the question moved from WHERE a request came from to WHO sent it. This
+  // right answers the new one, and it defaults to false: an account gets it by a
+  // deliberate act, never by upgrading.
+  bool is_station = false;
 };
 
 struct Config {

@@ -170,12 +170,17 @@ int main(int argc, char** argv) {
 
   AuthService auth(config.web_session_timeout);
   for (const auto& u : config.web_users) {
-    auth.AddUser(u.username, u.password_hash, u.is_admin, u.can_transmit);
+    auth.AddUser(u.username, u.password_hash, u.is_admin, u.can_transmit,
+                 u.is_station);
   }
   // Env override, for a throwaway run without writing a config file. It does not
   // replace the configured users, it adds to them.
   if (const char* hash = std::getenv("HAMDECK_ADMIN_HASH")) {
-    auth.AddUser("admin", hash, /*is_admin=*/true);
+    auth.AddUser("admin", hash, /*is_admin=*/true, /*can_transmit=*/true,
+                 // ⚠️ NOT a station account. This is the break-glass override for a
+                 // throwaway run; it must not carry the right to start an unattended
+                 // carrier just because it happens to be admin.
+                 /*is_station=*/false);
   }
 
   // Synthetic RX audio: the codec is passed through to the reference host, so

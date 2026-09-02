@@ -91,6 +91,13 @@ add_test(NAME cw COMMAND test_cw)
 add_executable(test_transmit_gate tests/test_transmit_gate.cpp src/transmit_routes.cpp)
 add_test(NAME transmit_gate COMMAND test_transmit_gate)
 
+# ⚠️ Drives the REAL binary over HTTP, because the amp gate's failure mode was a
+# refusal served as HTTP 200 - which every unit test and every route inventory
+# read as success while the Stream Deck button sat dead. Needs the host built.
+add_test(NAME amp_gate COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tools/amp_gate_check.sh
+         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(amp_gate PROPERTIES DEPENDS transmit_gate)
+
 add_executable(test_remote_active tests/test_remote_active.cpp src/auth.cpp)
 target_link_libraries(test_remote_active PRIVATE OpenSSL::Crypto)
 add_test(NAME remote_active COMMAND test_remote_active)
