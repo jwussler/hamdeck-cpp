@@ -148,6 +148,20 @@ else
   bad "control listener did not reach the amp route, HTTP $c body: $b"
 fi
 
+say "5b. THE ACTUAL STREAM DECK URL - note the trailing slash"
+# â ï¸ This is the bug the operator kept reporting. The deck button sends
+# "/api/tune/amp/", which did not match the exact route and fell through to the
+# prefix catch-all - answering 200 "Amp tuner is not configured" and never tuning.
+# The reference host trims trailing slashes on /api/ paths (ApiServer.cs:766);
+# this host did not. Measured from the live journal, not guessed:
+#     dash GET /api/tune/amp/
+b=$(curl -s "http://127.0.0.1:$CTRL/api/tune/amp/")
+if printf '%s' "$b" | grep -q '"action":"started"\|"action":"stopped"'; then
+  ok "trailing-slash URL reaches the real tuner: $b"
+else
+  bad "trailing slash did not reach the tuner: $b"
+fi
+
 say "6. the prefix guard agrees with the exact route"
 c=$(code "http://127.0.0.1:$DASH/api/tune/amp/anything?token=$DECK")
 [ "$c" = "403" ] && ok "/api/tune/amp/... refuses too" || bad "prefix guard disagrees, got $c"
