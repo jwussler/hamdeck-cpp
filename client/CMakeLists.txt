@@ -206,6 +206,28 @@ if(IOS)
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${HAMDECK_IOS_BUNDLE_ID}"
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
     message(STATUS "iOS bundle id: ${HAMDECK_IOS_BUNDLE_ID}")
+
+    # ⚠️ SIMULATOR ONLY, AND IT MUST STAY THAT WAY.
+    #
+    # Qt's iOS package ships the permission plugins' _init objects as DEVICE
+    # slices only, so a simulator link dies with:
+    #
+    #   ld: building for 'iOS-simulator', but linking in object file
+    #       (.../plugins/permissions/.../QDarwinMicrophonePermissionPlugin_init.cpp.o)
+    #       built for 'iOS'
+    #
+    # Everything COMPILES; only the link fails, which is why this looks like a
+    # code problem and is not one. Dropping the plugin type is harmless for a
+    # smoke test - a simulator has no microphone to authorise - and it is WRONG
+    # for a device build, where asking for the mic is the entire point of the
+    # app. Hence the explicit flag rather than sniffing the sysroot: a build that
+    # silently dropped the permission plugin would install on a phone, run, and
+    # then fail to transmit with nothing to say why.
+    if(HAMDECK_IOS_SIMULATOR)
+        message(WARNING "iOS SIMULATOR build: permission plugins excluded. "
+                        "This bundle cannot request the microphone - smoke test only.")
+        qt_import_plugins(hamdeck-qml EXCLUDE_BY_TYPE permissions)
+    endif()
 endif()
 
 if(WIN32)
