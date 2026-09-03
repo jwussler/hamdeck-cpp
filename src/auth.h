@@ -20,6 +20,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 struct SessionInfo {
   std::string username;
@@ -148,6 +149,8 @@ class AuthService {
 
  private:
   void PurgeExpired();
+  // Returns the session only if it has NOT timed out. Callers must hold mu_.
+  const SessionInfo* LiveSession(const std::string& token) const;
 
   mutable std::mutex mu_;
   std::map<std::string, UserInfo> users_;
