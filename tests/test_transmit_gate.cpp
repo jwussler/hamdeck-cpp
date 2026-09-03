@@ -21,8 +21,12 @@ int main() {
 
   // ── Everything the reference host gates ──────────────────────────────────
   const char* transmits[] = {
-      "/api/ptt/on", "/api/ptt/off", "/api/ptt/key", "/api/ptt/unkey",
-      "/api/ptt/toggle",
+      "/api/ptt/on", "/api/ptt/key", "/api/ptt/toggle",
+      // ⚠️ THE TUNERS KEY THE TRANSMITTER and were never in the set. main.cpp: the
+      // TGXL tune saves power and mode, sets 15 W CW, KEYS THE RIG, tunes, then puts
+      // both back; /api/tune is the rig's internal ATU and keys it too. Any session,
+      // including can_transmit=false, could put a carrier on the air through them.
+      "/api/tune", "/api/tune/tgxl", "/api/tgxl/tune",
       "/api/cw/memory/1", "/api/cw/memory/5",
       "/api/cw/send/CQ%20CQ",
       "/api/voice/play/1", "/api/voice/play/4",
@@ -46,6 +50,8 @@ int main() {
       "/api/cw-speed/get", "/api/cw-speed/set/25", "/api/cw/status", "/api/cw/stop",
       "/api/voice/status", "/api/voice/stop",
       "/api/remote/status", "/api/tx-audio/status", "/api/record/start",
+      // Reading whether a tuner is running transmits nothing.
+      "/api/tune/tgxl/status", "/api/tune/amp/status",
   };
   for (const char* p : harmless) {
     if (IsTransmitRoute(p)) {
@@ -64,6 +70,15 @@ int main() {
   CHECK(!IsTransmitRoute("/api/voice/stop"));
   CHECK(IsTransmitRoute("/api/cw/send/E"));
   std::printf("prefixes: cw/send and voice/play match, their neighbours do not\n");
+
+  // ── ⚠️ NEVER GATE THE WAY OUT ─────────────────────────────────────────────
+  // can_transmit is pushed into LIVE sessions (auth.cpp SetCanTransmit), so gating
+  // the unkey routes means revoking transmit from someone mid-over answers their own
+  // stop button with 403 and the rig stays keyed until the 180 s watchdog. A
+  // permission check must never block the direction that makes the station safe.
+  CHECK(!IsTransmitRoute("/api/ptt/off"));
+  CHECK(!IsTransmitRoute("/api/ptt/unkey"));
+  std::printf("way out:  unkeying is never refused\n");
 
   // A bare prefix with no argument is not a route this host serves, and must not be
   // treated as one by accident.

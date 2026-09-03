@@ -1,4 +1,5 @@
 #include "api.h"
+#include "admin_page.h"
 #include "log.h"
 #include <optional>
 #include <filesystem>
@@ -63,6 +64,11 @@ const std::set<std::string> kAlwaysAnonymous = {
     // able to prove which binary answered BEFORE it has a session, and a
     // deploy check that needs a credential is a deploy check that gets skipped.
     "/api/health", "/api/auth/status", "/api/build",
+    // ⚠️ The admin console itself. It is markup and script with no station data
+    // in it, and it has to render BEFORE there is a session or there is nowhere
+    // to type a password. Every button on it calls /api/admin/*, which the admin
+    // gate already covers - the page is anonymous, the console is not.
+    "/", "/admin",
 };
 
 // Read rig state without changing it. Anonymous ONLY when allow_anonymous_status
@@ -778,6 +784,22 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                      *token, deps.auth->session_timeout_minutes() * 60)});
     WriteJson(res, 200, R"({"status":"ok","message":"Login successful"})");
   });
+
+  // ── The admin console ──────────────────────────────────────────────────────
+  // ⚠️ THE HOST SERVED NO HTML AT ALL. Every route was /api/*, so the only way to
+  // add a user or end a stuck session was curl, and pointing a browser at the
+  // station answered {"message":"Authentication required"} - which reads as a
+  // broken host rather than a missing page.
+  //
+  // ⚠️ It is NOT an operating position: no VFO, no mode, no audio, no PTT-on. The
+  // one control here that reaches the radio is the one that STOPS it.
+  auto admin_page = [](const HttpRequest&, HttpResponse& res) {
+    res.status = 200;
+    res.content_type = "text/html; charset=utf-8";
+    res.body = kAdminPageHtml;
+  };
+  server.Get("/", admin_page);
+  server.Get("/admin", admin_page);
 
   // ── The declarative table ──────────────────────────────────────────────────
   // Most of the 141 C# routes are one CAT verb each. They belong in a table, not
@@ -1942,6 +1964,18 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
             // first and ignores the rest, silently (§8g). One task so the
             // sequence cannot be interleaved with anything else on the port.
             rigp->EnqueueTask([](CatTransport& cat) {
+              // ⚠️ UNKEY FIRST, AND UNCONDITIONALLY. This handler restored the power
+              // and the mic and did NOT drop PTT, so a client that backgrounded,
+              // crashed or lost its link left the rig KEYED - and the very next
+              // command here put MOD SOURCE back to MIC, so the open carrier was
+              // then modulated by whatever the shack could hear, with nobody at the
+              // station. The only thing that ended it was the 180 s watchdog.
+              //
+              // Unconditional on purpose: the poll cache is up to 200 ms old, and
+              // TX0; to a rig that is already receiving costs nothing. Nothing is
+              // worth an open carrier.
+              cat.Send("TX0;");
+              std::this_thread::sleep_for(std::chrono::milliseconds(50));
               cat.Send("PC" + Pad(kLocalPowerCap, 3) + ";");
               std::this_thread::sleep_for(std::chrono::milliseconds(50));
               cat.Send("EX0101110;");   // SSB MOD SOURCE -> MIC
@@ -2002,18 +2036,36 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
       WriteJson(res, 200, std::format(R"({{"status":"ok","users":[{}]}})", rows));
     });
 
-    server.Get("/api/admin/sessions", [auth](const HttpRequest&, HttpResponse& res) {
+    TxAudioReceiver* sess_tx = deps.tx_audio;
+    server.Get("/api/admin/sessions", [auth, sess_tx](const HttpRequest&,
+                                                      HttpResponse& res) {
+      const std::string tx_holder = sess_tx ? sess_tx->Holder() : std::string();
       std::string rows;
       if (auth) {
         for (const auto& x : auth->ListSessions()) {
           if (!rows.empty()) rows += ",";
           // ⚠️ token_short only - a full session token in an admin listing is a
           // credential in a log, a screenshot and a support ticket.
+          //
+          // ⚠️ is_station WAS MISSING. SessionRow has carried it all along and the
+          // listing dropped it, so the console could show every right EXCEPT the
+          // strongest one - permission to start an unattended carrier into an
+          // amplifier. An admin page that cannot show a right cannot audit it.
+          //
+          // ⚠️ AND WHO IS HOLDING THE TRANSMITTER. "Kill the session that has the
+          // transmitter locked open" is the job this listing exists for, and
+          // without this the operator cannot tell WHICH session that is - so the
+          // only safe move is to kick everybody, including the people operating
+          // correctly. The claim is per USERNAME (TxAudioReceiver::Claim takes the
+          // login name), so every session for that account is marked.
           rows += std::format(
               R"({{"token_short":"{}","username":"{}","is_admin":{},)"
-              R"("can_transmit":{},"idle_seconds":{}}})",
+              R"("can_transmit":{},"is_station":{},"holds_transmitter":{},)"
+              R"("idle_seconds":{}}})",
               x.token_short, x.username, JsonBool(x.is_admin),
-              JsonBool(x.can_transmit), x.idle_seconds);
+              JsonBool(x.can_transmit), JsonBool(x.is_station),
+              JsonBool(!tx_holder.empty() && x.username == tx_holder),
+              x.idle_seconds);
         }
       }
       WriteJson(res, 200, std::format(R"({{"status":"ok","sessions":[{}]}})", rows));
@@ -2194,6 +2246,74 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                 std::format(R"({{"status":"ok","username":"{}","is_station":{}}})",
                             user, JsonBool(allow)));
     });
+
+    // ── ⚠️ THE KILL BUTTON ────────────────────────────────────────────────
+    // The console exists to end a session that has left the transmitter locked
+    // open, and ending the session did not touch the radio - KillUserSessions
+    // erases rows and nothing else. The account vanished while the carrier
+    // stayed up. This is the route that actually stops it.
+    //
+    // ⚠️ IT RUNS ON THE POLLER THREAD. RadioPoller::UnkeyAndConfirm talks
+    // straight down the port and its own comment says that is only safe after
+    // Stop(); calling it from a request handler would put two threads on one
+    // serial port. The task queue is drained at the top of every poll cycle, so
+    // the cost is at most one 200 ms cycle.
+    //
+    // ⚠️ AND IT CONFIRMS. "Sent TX0;" is not "the transmitter is off". An
+    // operator who walks away from an open carrier believing they closed it is
+    // the exact failure this page was asked for, so a rig that does not answer
+    // has to come back as a refusal, not a tidy 200.
+    {
+      RadioPoller* kill_rig = deps.poller;
+      TxAudioReceiver* kill_tx = deps.tx_audio;
+      server.Get("/api/admin/unkey", [kill_rig, kill_tx](const HttpRequest&,
+                                                         HttpResponse& res) {
+        if (!kill_rig) {
+          WriteJson(res, 503,
+                    R"({"status":"error","unkeyed":false,"confirmed":false,)"
+                    R"("message":"There is no rig on this host."})");
+          return;
+        }
+        auto done = std::make_shared<std::promise<bool>>();
+        auto fut = done->get_future();
+        kill_rig->EnqueueTask([done](CatTransport& cat) {
+          bool ok = false;
+          // Keep asking. A single dropped byte on the CAT link must not be the
+          // reason a carrier stays up.
+          for (int i = 0; i < 8 && !ok; ++i) {
+            cat.Send("TX0;");
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            const auto r = cat.Exchange("TX;");
+            ok = r && r->size() >= 3 && r->at(2) == '0';
+          }
+          done->set_value(ok);
+        });
+        bool confirmed = false;
+        if (fut.wait_for(std::chrono::seconds(2)) == std::future_status::ready) {
+          try { confirmed = fut.get(); } catch (...) { confirmed = false; }
+        }
+        // ⚠️ Hand the transmitter back too. A client that died holding the claim
+        // blocks the next one, so the operator stops the carrier and then cannot
+        // transmit - which looks like a second fault.
+        std::string released;
+        if (kill_tx) {
+          released = kill_tx->Holder();
+          if (!released.empty()) kill_tx->Release(released);
+        }
+        hdlog::Line(hdlog::kInfo, "TX",
+                    std::string("admin kill: ") +
+                        (confirmed ? "rig confirmed unkeyed" : "NO CONFIRMATION FROM RIG") +
+                        (released.empty() ? "" : " (transmit claim released from " + released + ")"));
+        WriteJson(res, confirmed ? 200 : 500,
+                  std::format(R"({{"status":"{}","unkeyed":true,"confirmed":{},)"
+                              R"("released":"{}","message":"{}"}})",
+                              confirmed ? "ok" : "error", JsonBool(confirmed), released,
+                              confirmed
+                                  ? "Transmitter off - the rig confirmed it."
+                                  : "TX0 was sent but the rig did not confirm it is "
+                                    "receiving. Go to the radio."));
+      });
+    }
 
     server.GetPrefix("/api/admin/kick/", [auth](const std::string& user,
                                                 const HttpRequest&, HttpResponse& res) {
