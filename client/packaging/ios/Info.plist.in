@@ -37,6 +37,13 @@
   <key>CFBundleShortVersionString</key>    <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
   <key>CFBundleVersion</key>               <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
 
+  <!-- ⚠️ WITHOUT THIS THE UPLOAD IS REJECTED, and the build is otherwise
+       perfect: it compiles, links, signs and exports. altool 90713 - "a value
+       for the Info.plist key 'CFBundleIconName' is missing". It names the asset
+       catalog's icon SET, not a file; the catalog is compiled by actool and the
+       loose PNG never appears in the bundle. Two more rejections (90022, 90023)
+       come from the same root: no 120x120 and no 152x152 icon. -->
+  <key>CFBundleIconName</key>              <string>AppIcon</string>
   <key>LSRequiresIPhoneOS</key>            <true/>
   <key>MinimumOSVersion</key>              <string>16.0</string>
   <key>UIRequiredDeviceCapabilities</key>  <array><string>arm64</string></array>

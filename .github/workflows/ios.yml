@@ -256,6 +256,13 @@ jobs:
           APP=$(ls -d Payload/*.app | head -1)
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -dvvv "$APP" 2>&1 | grep -E 'Authority|TeamIdentifier|Identifier'
+          # ⚠️ THE ICON IS CHECKED HERE, because the only other place that looks
+          # at it is Apple's upload - after a 6-minute build. A missing catalog
+          # is rejected with 90713/90022/90023 and nothing local ever noticed.
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIconName" "$APP/Info.plist"
+          ls "$APP"/AppIcon*.png >/dev/null 2>&1 \
+            || { echo "no AppIcon PNGs in the bundle - the asset catalog did not compile"; ls "$APP" | head -30; exit 1; }
+          echo "icons present: $(ls "$APP"/AppIcon*.png | wc -l) sizes"
           echo "IPA=$IPA" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4

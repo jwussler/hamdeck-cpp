@@ -223,6 +223,24 @@ if(IOS)
     # app. Hence the explicit flag rather than sniffing the sysroot: a build that
     # silently dropped the permission plugin would install on a phone, run, and
     # then fail to transmit with nothing to say why.
+    # ── The app icon ────────────────────────────────────────────────────
+    # ⚠️ AN ASSET CATALOG, NOT A LOOSE PNG. Since iOS 11 the App Store REQUIRES
+    # icons to come from a compiled catalog, and the upload is where you find
+    # out: the build compiles, links, signs and exports perfectly, then altool
+    # rejects it with 90713 / 90022 / 90023. Nothing earlier in the chain looks
+    # at icons at all.
+    #
+    # One 1024x1024 entry - Xcode derives every other size from it. The art is
+    # FULL-BLEED and has NO ALPHA: iOS applies its own superellipse mask, so a
+    # pre-rounded tile would be masked twice, and an icon with an alpha channel
+    # is rejected outright.
+    set(IOS_ASSETS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ios/Assets.xcassets")
+    target_sources(hamdeck-qml PRIVATE "${IOS_ASSETS}")
+    set_source_files_properties("${IOS_ASSETS}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(hamdeck-qml PROPERTIES
+        XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME "AppIcon")
+
     # ⚠️ NOT THE FFmpeg MEDIA BACKEND. Qt's iOS package ships
     # libQt6FFmpegMediaPluginImpl.a but NOT the FFmpeg libraries it calls, so a
     # static link ends in a wall of undefined _sws_* and _av_* symbols. Nothing

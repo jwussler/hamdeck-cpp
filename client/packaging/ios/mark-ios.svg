@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="HamDeck">
+  <!--
+    HamDeck mark — a beam antenna seen from the side, pointing right.
+
+    Boom horizontal, elements vertical and shortening toward the front, which is
+    what a Yagi actually looks like. The asymmetry is the point: it reads as
+    DIRECTIONAL, which suits a product about reaching a station somewhere else,
+    and it cannot be mistaken for the tree shape a symmetric vertical mast makes.
+
+    Amber #FFB020 — the VFO segment colour, and the one thing in this product
+    nobody else in the space is using.
+  -->
+  <rect width="256" height="256" fill="#0E1013"/>
+
+  <g stroke="#FFB020" stroke-width="16" stroke-linecap="round" fill="none">
+    <path d="M58 128 H198"/>   <!-- boom -->
+    <path d="M78 66 V190"/>    <!-- reflector -->
+    <path d="M126 86 V170"/>   <!-- driven -->
+    <path d="M172 104 V152"/>  <!-- director -->
+  </g>
+</svg>
