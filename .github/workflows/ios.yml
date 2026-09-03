@@ -34,6 +34,15 @@ on:
       - 'client/**'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
+    inputs:
+      sign:
+        description: "Sign the build (needs the Apple secrets)"
+        type: boolean
+        default: false
+      upload:
+        description: "⚠️ UPLOAD to TestFlight. This is DISTRIBUTION - see docs/IOS.md on static-Qt LGPL."
+        type: boolean
+        default: false
 
 jobs:
   simulator:
@@ -144,3 +153,128 @@ jobs:
           path: |
             client/build-ios/Release-iphoneos/*.app
           if-no-files-found: warn
+
+  # ── Signed build, and optionally the upload ─────────────────────────────────
+  # ⚠️ A SEPARATE JOB, ONLY ON workflow_dispatch, AND IT NEVER SKIPS QUIETLY.
+  # If it is asked to sign and a secret is missing it FAILS. A signing job that
+  # silently produced an unsigned artifact would be indistinguishable from a
+  # working one until the upload rejected it, hours later, with an error about
+  # entitlements.
+  #
+  # ⚠️ SIGNING IS NOT DISTRIBUTION; UPLOADING IS. Producing the .ipa is safe to
+  # do at any time. The upload is the moment the static-Qt LGPL obligation binds
+  # (docs/IOS.md), which is why it is a separate opt-in and defaults to false.
+  signed:
+    if: github.event_name == 'workflow_dispatch' && inputs.sign
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to pretend
+        env:
+          P12:     ${{ secrets.APPLE_IOS_DIST_P12 }}
+          P12PW:   ${{ secrets.APPLE_IOS_DIST_P12_PASSWORD }}
+          PROFILE: ${{ secrets.APPLE_IOS_PROFILE }}
+        run: |
+          for v in P12 P12PW PROFILE; do
+            eval "val=\$$v"
+            [ -n "$val" ] || { echo "MISSING SECRET: APPLE_IOS_$v - refusing to build something that only looks signed"; exit 1; }
+          done
+          echo "signing material present"
+
+      - uses: jurplel/install-qt-action@v4
+        with: { version: '6.9.2', host: 'mac', target: 'desktop', modules: 'qtwebsockets qtmultimedia', set-env: false, dir: '${{ runner.temp }}/qt-host' }
+      - uses: jurplel/install-qt-action@v4
+        with: { version: '6.9.2', host: 'mac', target: 'ios', modules: 'qtwebsockets qtmultimedia', dir: '${{ runner.temp }}/qt-ios' }
+
+      # ⚠️ A THROWAWAY KEYCHAIN, unlocked, with the partition list set. Without
+      # set-key-partition-list codesign blocks on a GUI prompt that nothing on a
+      # runner can answer, and the job hangs until it is cancelled - which reads
+      # as a slow build, not a failure.
+      - name: Import the signing identity
+        env:
+          P12:   ${{ secrets.APPLE_IOS_DIST_P12 }}
+          P12PW: ${{ secrets.APPLE_IOS_DIST_P12_PASSWORD }}
+          PROFILE: ${{ secrets.APPLE_IOS_PROFILE }}
+        run: |
+          set -eu
+          KC="$RUNNER_TEMP/hamdeck.keychain-db"
+          KCPW=$(uuidgen)
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          echo "$P12" | base64 -d > "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -k "$KC" -P "$P12PW" \
+            -T /usr/bin/codesign -T /usr/bin/security -f pkcs12
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPW" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          # ⚠️ Read the identity back rather than hardcoding its name. The CN is
+          # "iPhone Distribution: ..." on this cert and "Apple Distribution: ..."
+          # on newer ones, and guessing wrong fails deep inside xcodebuild.
+          security find-identity -v -p codesigning "$KC"
+          IDENT=$(security find-identity -v -p codesigning "$KC" | grep -o '"[^"]*"' | head -1 | tr -d '"')
+          [ -n "$IDENT" ] || { echo "no codesigning identity in the keychain"; exit 1; }
+          echo "IDENT=$IDENT" >> "$GITHUB_ENV"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          echo "$PROFILE" | base64 -d > "$HOME/Library/MobileDevice/Provisioning Profiles/HamDeck.mobileprovision"
+
+      - name: Archive
+        run: |
+          set -eux
+          HOST_QT=${{ runner.temp }}/qt-host/Qt/6.9.2/macos
+          IOS_QT=${{ runner.temp }}/qt-ios/Qt/6.9.2/ios
+          VER="0.1.0"
+          cmake -S client -B client/build-ios -G Xcode \
+            -DCMAKE_TOOLCHAIN_FILE="$IOS_QT/lib/cmake/Qt6/qt.toolchain.cmake" \
+            -DQT_HOST_PATH="$HOST_QT" \
+            -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DHAMDECK_VERSION="$VER" \
+            -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM=V829EBE8HH \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_STYLE=Manual \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="$IDENT" \
+            -DCMAKE_XCODE_ATTRIBUTE_PROVISIONING_PROFILE_SPECIFIER="HamDeck iOS App Store"
+          xcodebuild -project client/build-ios/hamdeck-client.xcodeproj \
+            -scheme hamdeck-qml -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/HamDeck.xcarchive" archive
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/HamDeck.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist client/packaging/ios/ExportOptions.plist
+          ls -la "$RUNNER_TEMP/export"
+
+      # ⚠️ VERIFY THE SIGNATURE ON THE ARTIFACT, not on the intention. An
+      # unsigned or wrongly-signed .ipa is accepted by every step up to the
+      # upload, which rejects it with an entitlements error naming nothing.
+      - name: The .ipa is actually signed
+        run: |
+          set -eu
+          IPA=$(ls "$RUNNER_TEMP/export"/*.ipa | head -1)
+          [ -n "$IPA" ] || { echo "no .ipa was exported"; exit 1; }
+          cd "$RUNNER_TEMP" && rm -rf verify && mkdir verify && cd verify && unzip -q "$IPA"
+          APP=$(ls -d Payload/*.app | head -1)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dvvv "$APP" 2>&1 | grep -E 'Authority|TeamIdentifier|Identifier'
+          echo "IPA=$IPA" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with: { name: hamdeck-ios-ipa, path: '${{ runner.temp }}/export/*.ipa' }
+
+      # ⚠️ THE DISTRIBUTION STEP. Opt-in, separate, and last.
+      - name: Upload to TestFlight
+        if: inputs.upload
+        env:
+          ASC_KEY_P8:    ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID:    ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -eu
+          [ -n "$ASC_KEY_P8" ] || { echo "MISSING SECRET: ASC_KEY_P8"; exit 1; }
+          # altool looks for the key HERE, by this exact filename, and says
+          # "could not find the API key" rather than naming the path it wanted.
+          mkdir -p "$HOME/private_keys"
+          echo "$ASC_KEY_P8" | base64 -d > "$HOME/private_keys/AuthKey_$ASC_KEY_ID.p8"
+          xcrun altool --upload-app -f "$IPA" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          echo "uploaded - TestFlight processing takes a few minutes before it appears"
