@@ -1637,3 +1637,55 @@ parsed from the comment.
 
 ⚠️ **Connection details come from the environment** (`WAVELOG_DB_*`, or `WAVELOG_DB_DOCKER`),
 never from the file — same rule as the rest of this repo.
+
+## 09/03/2026 — the App Store rejected 0.1.0 for a camera the app does not have
+
+Apple refused the first upload minutes after it landed:
+
+```
+ITMS-90683: Missing purpose string in Info.plist - ... the "hamdeck-qml.app"
+bundle should contain a NSCameraUsageDescription key ...
+```
+
+Nothing was wrong with the build. It compiled, linked, signed, exported and uploaded; every
+gate in the repo was green, and **not one of them looked at this**. There is no build record in
+App Store Connect at all — a delivery rejection happens before the build exists, which is why
+the portal shows an empty Builds list and gives no clue what to fix beyond the email.
+
+⚠️ **The rejection was correct, and the app really has no camera.** Qt for iOS is **static**, so
+`QDarwinMediaPlugin` — the AVFoundation backend `QAudioSource` and `QAudioSink` run on, and the
+only iOS backend that can reach the microphone at all — is linked whole and brings
+`AVCaptureDevice` with it. **Apple scans the linked binary, not the code paths.** A referenced
+class obliges its purpose string whether or not anything calls it. Dropping the plugin is not
+the alternative: it takes the microphone with it.
+
+So the string is in the plist, and it says plainly that the camera is unused and why the key is
+there anyway — an operator reads that text in the prompt.
+
+### The gate: `tools/check_ios_bundle.py`
+
+It reads **the same two things Apple reads** and refuses when they disagree — the Info.plist
+keys, and the protected-API classes actually present in the built executable, each mapped to the
+purpose string it obliges. Pure `plistlib` plus a byte scan, so the template check runs on the
+**Linux** leg with no Xcode and no phone. Three places: Linux on every push (`--template`), the
+device job on the built `.app`, and the signed job on the bundle **inside the exported `.ipa`** —
+the exact bytes Apple receives, after archive and export have each had a chance to rewrite the
+plist.
+
+⚠️ **The purpose strings are DERIVED from the linked-API list, not listed beside it.** Two hand-
+maintained lists drift, and the drift is invisible until Apple names it. Adding a framework to
+`EXPECTED_APIS` now demands its string in the same breath — and an API appearing in the binary
+that is **not** in that list fails too, which is the version of this that has not bitten yet.
+
+**Proven by failing, four ways, before it was believed:** the 0.1.0 template with the camera key
+removed (the exact rejection, reproduced on Linux), a stand-in bundle whose binary references
+`AVCaptureDevice` with no string, a binary that grows a `CLLocationManager` reference nobody has
+answered for, and a bundle whose `${MACOSX_BUNDLE_GUI_IDENTIFIER}` was never substituted.
+
+### ⚠️ A rejected upload still burns its build number
+
+`CFBundleVersion` may never repeat — a re-upload at the same build is refused as a redundant
+binary, which reads exactly like the fix not taking. Version and build are separate inputs now
+(`-DHAMDECK_VERSION=`, `-DHAMDECK_IOS_BUILD=`, wired to the workflow's `version` and `build`),
+the signed job asserts the build number it was asked for actually reached the plist, and 0.1.0
+build `0.1.0` is spent. **Next upload is build `2`.**

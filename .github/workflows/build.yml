@@ -46,6 +46,15 @@ jobs:
           fi
           echo "ok: unknown flag rejected"
 
+      # ⚠️ THE iOS PLIST IS CHECKED ON LINUX, ON EVERY PUSH, DELIBERATELY.
+      # There is no Mac in this loop and the iOS job only runs on client/**
+      # changes, so the one thing that got 0.1.0 rejected - a missing purpose
+      # string - could be edited out of the template and nothing here would
+      # notice until Apple did, minutes after an upload. This reads the template
+      # with plistlib; it needs no Xcode and no phone.
+      - name: The iOS plist answers for everything the app links
+        run: python3 tools/check_ios_bundle.py --template client/packaging/ios/Info.plist.in
+
   pusher:
     # ⚠️ Runs on every push, not only on a tag. The .NET client's whole five-release
     # evening happened because 49 tests existed and CI never called them.

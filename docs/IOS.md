@@ -11,7 +11,7 @@ is not mine to make, and the exact steps that need an Apple account.
 |---|---|
 | C++ / QML source | **No port needed.** Qt Quick, Qt Multimedia and Qt WebSockets are all supported on iOS, and the only non-portable code (`src/global_hotkey.cpp`, three `#ifdef _WIN32` blocks in `main_qml.cpp`) is already guarded and meaningless on a handset. |
 | CMake | **Done.** `client/CMakeLists.txt` has an `if(IOS)` bundle block; `-DHAMDECK_IOS_BUNDLE_ID=` sets the identifier. |
-| `Info.plist` | **Done.** `client/packaging/ios/Info.plist.in`. |
+| `Info.plist` | **Done.** `client/packaging/ios/Info.plist.in`, gated by `tools/check_ios_bundle.py` — see the rejections section below. |
 | Device build in CI | ✅ **Green.** `.github/workflows/ios.yml`, unsigned, so it needs no App ID or profile — it proves the client compiles and links for a phone and uploads the `.app` (~12.8 MB). ⚠️ **It does not run the app** — see below. |
 | Device build | Needs the portal work below. |
 | TestFlight | Needs the portal work **and** the licence decision below. |
@@ -150,6 +150,55 @@ cmake -S client -B client/build-ios -G Xcode \
   -DCMAKE_OSX_ARCHITECTURES=arm64
 cmake --build client/build-ios --config Release
 ```
+
+---
+
+## ⚠️ Delivery rejections — what Apple checks after a perfect build
+
+Everything from `cmake` to `altool` can pass and the app still be refused, by
+email, minutes later. Three have happened; all three were the **bundle**, none
+were the code, and none of them failed anything local at the time.
+
+| | |
+|---|---|
+| **90713 / 90022 / 90023** | No `CFBundleIconName`, no 120x120, no 152x152. Fixed by the compiled asset catalog — a loose PNG never enters the bundle. |
+| **ITMS-90683** | `NSCameraUsageDescription` missing. 09/03/2026, version 0.1.0. |
+
+### ITMS-90683, and why an app with no camera needs a camera string
+
+Qt for iOS is **static**. `QDarwinMediaPlugin` — the AVFoundation backend that
+`QAudioSource` and `QAudioSink` run on, and the only one on a phone that can
+reach the microphone at all — is linked whole, and it carries `AVCaptureDevice`
+with it. **Apple scans the linked binary, not the code paths.** A class that is
+merely present obliges its purpose string, whether or not anything ever calls it,
+and there is no arguing with an automated delivery check.
+
+So the string is in `client/packaging/ios/Info.plist.in` and it says plainly that
+the camera is not used and why the key is there anyway. Dropping the plugin is
+not the alternative: it would take the microphone with it.
+
+**The gate is `tools/check_ios_bundle.py`**, which reads the same two things
+Apple reads — the plist keys, and the protected-API classes actually present in
+the built executable — and refuses when they disagree. It runs three times:
+
+- on the **Linux** job, against the template, on every push (`--template`);
+- on the **device** job, against the built `.app`;
+- on the **signed** job, against the bundle **inside the exported `.ipa`** — the
+  exact bytes Apple receives.
+
+It also fails when the binary starts referencing a protected API nobody has
+answered for yet, which is the version of this that has not bitten: the next
+Qt module that quietly links `CLLocationManager` would otherwise be found by
+Apple, not here.
+
+### ⚠️ A rejected upload still burns its build number
+
+`CFBundleShortVersionString` is the version a user sees; **`CFBundleVersion` is
+the build number, and it may never repeat** — including after a rejection, where
+App Store Connect shows nothing to explain what the collision is with. The two
+are separate inputs now: `-DHAMDECK_VERSION=` and `-DHAMDECK_IOS_BUILD=`, wired
+to the `version` and `build` inputs of the `ios` workflow. **Raise `build` on
+every dispatch.** 0.1.0 build `0.1.0` is spent; the next upload is build `2`.
 
 ---
 

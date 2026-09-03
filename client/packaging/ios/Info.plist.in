@@ -8,7 +8,8 @@
   installs, and is then rejected on upload or launches to a black screen, both of
   which look like a code problem and are not.
 
-  Three keys here are load-bearing and each has a failure that does not name itself:
+  Four keys here are load-bearing and each has a failure that does not name itself
+  (the fourth, NSCameraUsageDescription, is documented at the key itself):
 
   - NSMicrophoneUsageDescription. iOS does not deny a mic request with no usage
     string, it SIGKILLs the process. On a transmit app that means the panel
@@ -60,6 +61,26 @@
   <!-- Shown verbatim in the system prompt, so it says what the mic is FOR. -->
   <key>NSMicrophoneUsageDescription</key>
   <string>HamDeck sends your voice to the radio when you transmit.</string>
+
+  <!-- ⚠️ THE APP HAS NO CAMERA AND STILL NEEDS THIS KEY. Apple rejected the
+       0.1.0 upload with ITMS-90683 naming NSCameraUsageDescription, and the
+       binary was right: Qt for iOS is STATIC, so QDarwinMediaPlugin - the
+       AVFoundation backend QAudioSource and QAudioSink run on - is linked whole,
+       and it carries AVCaptureDevice references for capture it never performs
+       here. Apple's scanner reads the linked binary, not the code paths, so the
+       string is required whether or not a camera is ever opened. Dropping the
+       plugin is not the alternative: it is the only backend on iOS that can
+       reach the microphone at all.
+
+       ⚠️ AND IT IS A DELIVERY-TIME REJECTION, NOT A BUILD ERROR. Everything up
+       to the upload passes - compile, link, sign, export - and the mail arrives
+       minutes later. tools/check_ios_bundle.py now reads the same thing Apple
+       reads, so this fails on a push instead of on a submission.
+
+       The string is what the operator would see in the prompt, so it is honest
+       about there being nothing behind it. -->
+  <key>NSCameraUsageDescription</key>
+  <string>HamDeck does not use the camera. This declaration is required because the audio framework it uses for transmit and receive also provides camera capture.</string>
 
   <!-- ⚠️ Receive audio must survive a locked screen. See the note above. -->
   <key>UIBackgroundModes</key>

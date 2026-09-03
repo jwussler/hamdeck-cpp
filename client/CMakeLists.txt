@@ -22,6 +22,16 @@ project(hamdeck-client VERSION ${HAMDECK_VERSION} LANGUAGES CXX)
 if(NOT DEFINED HAMDECK_IOS_BUNDLE_ID OR HAMDECK_IOS_BUNDLE_ID STREQUAL "")
     set(HAMDECK_IOS_BUNDLE_ID "com.wa0o.hamdeck")
 endif()
+
+# ⚠️ THE BUILD NUMBER IS SEPARATE FROM THE VERSION, because Apple treats them as
+# two different things and only one of them may repeat. CFBundleShortVersionString
+# is what a user sees (0.1.0); CFBundleVersion is the BUILD, and App Store Connect
+# refuses a second upload that reuses one - including after a rejected delivery,
+# where nothing is visible in the portal to explain what the collision is with.
+# Defaults to the version so a local build needs nothing; CI passes it.
+if(NOT DEFINED HAMDECK_IOS_BUILD OR HAMDECK_IOS_BUILD STREQUAL "")
+    set(HAMDECK_IOS_BUILD "${HAMDECK_VERSION}")
+endif()
 message(STATUS "hamdeck-client version: ${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -201,11 +211,11 @@ if(IOS)
         MACOSX_BUNDLE_INFO_PLIST     "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ios/Info.plist.in"
         MACOSX_BUNDLE_BUNDLE_NAME    "HamDeck"
         MACOSX_BUNDLE_GUI_IDENTIFIER "${HAMDECK_IOS_BUNDLE_ID}"
-        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${HAMDECK_IOS_BUILD}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${HAMDECK_IOS_BUNDLE_ID}"
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
-    message(STATUS "iOS bundle id: ${HAMDECK_IOS_BUNDLE_ID}")
+    message(STATUS "iOS bundle id: ${HAMDECK_IOS_BUNDLE_ID}, version ${PROJECT_VERSION}, build ${HAMDECK_IOS_BUILD}")
 
     # ⚠️ SIMULATOR ONLY, AND IT MUST STAY THAT WAY.
     #

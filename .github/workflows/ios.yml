@@ -43,6 +43,14 @@ on:
         description: "⚠️ UPLOAD to TestFlight. This is DISTRIBUTION - see docs/IOS.md on static-Qt LGPL."
         type: boolean
         default: false
+      version:
+        description: "Marketing version (CFBundleShortVersionString), e.g. 0.1.0"
+        type: string
+        default: "0.1.0"
+      build:
+        description: "⚠️ BUILD NUMBER (CFBundleVersion). MUST BE HIGHER THAN EVERY UPLOAD BEFORE IT, including rejected ones."
+        type: string
+        default: "2"
 
 jobs:
   simulator:
@@ -127,24 +135,22 @@ jobs:
           echo "app=$APP" >> "$GITHUB_OUTPUT"
           /usr/libexec/PlistBuddy -c Print "$APP/Info.plist" | head -40
 
-      # ⚠️ THE PLIST IS CHECKED, because it is the half of an iOS bundle that
-      # fails silently. A missing NSMicrophoneUsageDescription does not warn: iOS
-      # SIGKILLs the process the moment it asks for the mic, which on a transmit
-      # app means the panel vanishes when the operator keys up.
+      # ⚠️ THE PLIST IS CHECKED AGAINST THE BINARY, not against a wish list.
+      # This is the half of an iOS bundle that fails silently in two directions:
+      # a missing NSMicrophoneUsageDescription is a SIGKILL the moment the
+      # operator keys up, and a missing NSCameraUsageDescription is an ITMS-90683
+      # rejection minutes after an upload that compiled, linked, signed and
+      # exported perfectly. 0.1.0 shipped the second one.
+      #
+      # check_ios_bundle.py scans the built executable for the protected-API
+      # classes static Qt drags in and demands the purpose string each one obliges,
+      # which is the same thing Apple's delivery scan does.
       - name: The bundle says what it must
         run: |
           set -eux
           APP="${{ steps.app.outputs.app }}"
-          P="$APP/Info.plist"
-          for KEY in NSMicrophoneUsageDescription UIBackgroundModes UILaunchScreen \
-                     CFBundleIdentifier CFBundleExecutable MinimumOSVersion; do
-            /usr/libexec/PlistBuddy -c "Print :$KEY" "$P" >/dev/null \
-              || { echo "MISSING from Info.plist: $KEY"; exit 1; }
-          done
-          # audio, specifically - the key existing but empty would pass the loop
-          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$P" | grep -q audio \
-            || { echo "UIBackgroundModes does not contain 'audio'"; exit 1; }
-          echo "Info.plist carries every key the app depends on"
+          /usr/libexec/PlistBuddy -c Print "$APP/Info.plist" | head -40
+          python3 tools/check_ios_bundle.py "$APP"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -224,13 +230,19 @@ jobs:
           set -eux
           HOST_QT=${{ runner.temp }}/qt-host/Qt/6.9.2/macos
           IOS_QT=${{ runner.temp }}/qt-ios/Qt/6.9.2/ios
-          VER="0.1.0"
+          # ⚠️ A REJECTED UPLOAD STILL BURNS ITS BUILD NUMBER. 0.1.0/0.1.0 was
+          # rejected for the missing camera string; re-uploading with the same
+          # CFBundleVersion is refused by App Store Connect with a message about
+          # a redundant binary, which reads like the fix did not take.
+          VER="${{ inputs.version }}"
+          BUILD="${{ inputs.build }}"
           cmake -S client -B client/build-ios -G Xcode \
             -DCMAKE_TOOLCHAIN_FILE="$IOS_QT/lib/cmake/Qt6/qt.toolchain.cmake" \
             -DQT_HOST_PATH="$HOST_QT" \
             -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DHAMDECK_VERSION="$VER" \
+            -DHAMDECK_IOS_BUILD="$BUILD" \
             -DCMAKE_XCODE_ATTRIBUTE_DEVELOPMENT_TEAM=V829EBE8HH \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_STYLE=Manual \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="$IDENT" \
@@ -263,6 +275,19 @@ jobs:
           ls "$APP"/AppIcon*.png >/dev/null 2>&1 \
             || { echo "no AppIcon PNGs in the bundle - the asset catalog did not compile"; ls "$APP" | head -30; exit 1; }
           echo "icons present: $(ls "$APP"/AppIcon*.png | wc -l) sizes"
+          # ⚠️ CHECKED ON THE BUNDLE INSIDE THE .ipa - the exact bytes Apple's
+          # delivery scan reads. The device job checks the same thing on an
+          # unsigned build, and that is not the same artifact: this one has been
+          # through archive and export, either of which can rewrite the plist.
+          # A purpose string missing HERE is ITMS-90683, and the only other place
+          # that would notice is the rejection email.
+          cd "$GITHUB_WORKSPACE"
+          python3 tools/check_ios_bundle.py "$RUNNER_TEMP/verify/$APP"
+          # And the build number is the one that was asked for, not a stale
+          # default: a repeat is rejected as a redundant binary.
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$RUNNER_TEMP/verify/$APP/Info.plist" \
+            | grep -qx "${{ inputs.build }}" \
+            || { echo "CFBundleVersion is not ${{ inputs.build }} - the build number did not apply"; exit 1; }
           echo "IPA=$IPA" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
