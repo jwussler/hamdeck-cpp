@@ -127,11 +127,33 @@ Item {
         }
     }
 
+    // ⚠️ AN EMPTY PASSWORD IS NEVER SENT, AND THIS IS WHY. The password is wiped
+    // the moment it has been used, and on a phone the software keyboard stays up
+    // after Connect - so a second Return, or a stray tap on Go, re-submitted the
+    // same host and username with NOTHING in the password. The host answered 401,
+    // which dropped the live session, and the operator was thrown back to this
+    // screen to log in again mid-session. It reads as the app randomly logging
+    // out and it was this.
     function doConnect() {
+        if (backend.connecting || backend.sessionActive) return
+        if (passField.text === "") {
+            passField.focusField()
+            return
+        }
         root.connectRequested(hostField.text, parseInt(portField.text) || 5002,
                               userField.text, passField.text)
         // Never keep the password in a property once it has been used.
         passField.text = ""
+    }
+
+    // ⚠️ AND THE KEYBOARD GOES AWAY ON SUCCESS. It covers half a handset, it is
+    // over the panel the operator just asked for, and every key it hides is a
+    // key on a transmitter.
+    Connections {
+        target: backend
+        function onSessionChanged() {
+            if (backend.sessionActive) Qt.inputMethod.hide()
+        }
     }
 
     Component.onCompleted: {

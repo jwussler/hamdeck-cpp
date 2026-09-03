@@ -857,6 +857,141 @@ ApplicationWindow {
                 }
             }
 
+            // ⚠️ THE DRIVE TEST. One of these keys the transmitter and the other
+            // does not, and the buttons say which - a control that transmits must
+            // never be discoverable only by pressing it.
+            Group {
+                title: "Drive test"
+                visible: !win.phone || win.tab === "tx"
+                Layout.fillWidth: true
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.u(8)
+
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: "A tone sweep TRANSMITS: it keys the rig and walks the mic gain " +
+                              "up a ladder, recording what the radio reports at each step. " +
+                              "A voice check keys nothing - you transmit as usual and it watches " +
+                              "your peaks. A steady tone holds ALC where speech only touches it, " +
+                              "so the sweep tells you the chain works and over what range, and " +
+                              "the voice check tells you where YOUR peaks land."
+                        font.family: Theme.body; font.pixelSize: Theme.f(12)
+                        color: Theme.dim
+                    }
+
+                    GridLayout {
+                        Layout.fillWidth: true
+                        columns: 2
+                        columnSpacing: Theme.gap; rowSpacing: Theme.gap
+
+                        PanelKey {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Theme.u(46)
+                            text: backend.driveTestMode === "sweep" ? "STOP" : "TONE SWEEP · TX"
+                            danger: true
+                            lit: backend.driveTestMode === "sweep"
+                            enabledKey: !backend.driveTestActive || backend.driveTestMode === "sweep"
+                            onClicked: backend.driveTestMode === "sweep"
+                                       ? backend.stopDriveTest() : backend.startToneSweep()
+                        }
+                        PanelKey {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Theme.u(46)
+                            text: backend.driveTestMode === "voice" ? "STOP" : "VOICE CHECK"
+                            lit: backend.driveTestMode === "voice"
+                            enabledKey: !backend.driveTestActive || backend.driveTestMode === "voice"
+                            onClicked: backend.driveTestMode === "voice"
+                                       ? backend.stopDriveTest() : backend.startVoiceCheck()
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: backend.driveTestStatus !== ""
+                        wrapMode: Text.WordWrap
+                        text: backend.driveTestStatus
+                        font.family: Theme.body; font.pixelSize: Theme.f(13)
+                        color: backend.driveTestMode === "sweep" ? Theme.txRed : Theme.text
+                    }
+
+                    // ⚠️ THE WHOLE CURVE, not just the pick. A single recommended
+                    // number hides whether the radio responded gently across the
+                    // range or slammed from nothing to pinned between two steps,
+                    // and those want different things done about them.
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        visible: backend.driveTestRows.length > 0
+                        spacing: 2
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            SilkLabel { text: "Gain"; Layout.preferredWidth: Theme.u(52) }
+                            SilkLabel { text: "Drive"; Layout.preferredWidth: Theme.u(52) }
+                            SilkLabel { text: "ALC"; Layout.preferredWidth: Theme.u(52) }
+                            SilkLabel { text: "Power"; Layout.fillWidth: true }
+                        }
+                        Repeater {
+                            model: backend.driveTestRows
+                            delegate: RowLayout {
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Text {
+                                    text: modelData.gain + "%"
+                                    Layout.preferredWidth: Theme.u(52)
+                                    font.family: Theme.mono; font.pixelSize: Theme.f(12)
+                                    color: Theme.text
+                                }
+                                Text {
+                                    text: modelData.drive + "%"
+                                    Layout.preferredWidth: Theme.u(52)
+                                    font.family: Theme.mono; font.pixelSize: Theme.f(12)
+                                    color: modelData.drive === 0 ? Theme.txRed : Theme.text
+                                }
+                                Text {
+                                    text: modelData.alc + "%"
+                                    Layout.preferredWidth: Theme.u(52)
+                                    font.family: Theme.mono; font.pixelSize: Theme.f(12)
+                                    // In the band the rig wants, or not.
+                                    color: modelData.alc >= 50 && modelData.alc <= 75
+                                           ? Theme.okGreen
+                                           : (modelData.alc > 90 ? Theme.txRed : Theme.dim)
+                                }
+                                Text {
+                                    text: modelData.pwr + "%"
+                                    Layout.fillWidth: true
+                                    font.family: Theme.mono; font.pixelSize: Theme.f(12)
+                                    color: Theme.text
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: backend.driveTestResult !== ""
+                        wrapMode: Text.WordWrap
+                        text: backend.driveTestResult
+                        font.family: Theme.body; font.pixelSize: Theme.f(13)
+                        color: Theme.text
+                    }
+
+                    PanelKey {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Theme.u(42)
+                        visible: backend.driveTestBestGain > 0 && !backend.driveTestActive
+                        text: "SET MIC GAIN TO " + backend.driveTestBestGain + "%"
+                        onClicked: backend.applyBestGain()
+                    }
+                }
+            }
+
             // ⚠️ WHERE THE ALC NUMBER COMES FROM, said out loud next to the
             // control it is used to set. The host derives alc_pct from hamlib's
             // yaesu_default_alc_cal (see /api/meters/scale), which is a default

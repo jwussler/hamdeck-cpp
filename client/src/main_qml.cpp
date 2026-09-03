@@ -339,11 +339,14 @@ int main(int argc, char** argv) {
     QCommandLineOption shotsize_opt("screenshot-size", "Screenshot size, WxH.", "WxH");
     QCommandLineOption reset_opt("reset-window",
                                 "Forget the saved window position and exit.");
+    QCommandLineOption sweep_opt("drive-sweep",
+                                 "Arm, run the tone sweep against the connected host, print the "
+                                 "curve, and check the mic gain is restored. TRANSMITS.");
     QCommandLineOption res_opt("check-resolutions",
                                "Walk the panel across screen sizes; PNGs into DIR.", "dir");
     QCommandLineOption audio_opt("list-audio",
                                  "List capture devices and what they can actually do, then exit.");
-    for (auto* o : {&selftest, &host_opt, &port_opt, &user_opt, &pass_opt, &shot_opt, &tone_opt,
+    for (auto* o : {&selftest, &sweep_opt, &host_opt, &port_opt, &user_opt, &pass_opt, &shot_opt, &tone_opt,
                     &scale_opt, &shotsize_opt, &res_opt, &reset_opt, &audio_opt}) {
         parser.addOption(*o);
     }
@@ -463,6 +466,57 @@ int main(int argc, char** argv) {
     if (parser.isSet(host_opt) && parser.isSet(user_opt) && parser.isSet(pass_opt)) {
         backend.connectTo(parser.value(host_opt), parser.value(port_opt).toInt(),
                           parser.value(user_opt), parser.value(pass_opt));
+    }
+
+    // ⚠️ THE SWEEP IS RUN HERE, HEADLESS, BECAUSE OTHERWISE IT IS ONLY COMPILED.
+    // It keys a transmitter and restores the operator's gain afterwards, and both
+    // of those must be watched happening against a SIMULATED rig before they are
+    // shipped at a real one. Prints every row, then checks the gain came back.
+    if (parser.isSet(sweep_opt)) {
+        // ⚠️ `before` IS CAPTURED BY VALUE. The first version captured the outer
+        // lambda's local by reference and read it 700 ms later, after that stack
+        // frame was gone: it printed a mic gain of 23584% and failed a check that
+        // was actually fine. A test that lies about the thing it is testing is
+        // worse than no test.
+        QTimer::singleShot(2500, &app, [&] {
+            const int before = backend.micGain();
+            backend.toggleArm();
+            QTimer::singleShot(700, &app, [&, before] {
+                backend.startToneSweep();
+                // ⚠️ BY VALUE HERE TOO. Fixing the middle lambda and leaving this
+                // one capturing by reference read the same dead frame and printed
+                // a mic gain of -1%. One dangling capture per nesting level.
+                QObject::connect(&backend, &Backend::driveTestChanged, &app, [&, before] {
+                    if (backend.driveTestActive()) return;
+                    std::cout << "  status: " << backend.driveTestStatus().toStdString() << "\n";
+                    for (const QVariant& v : backend.driveTestRows()) {
+                        const QVariantMap m = v.toMap();
+                        std::cout << "  gain " << m["gain"].toInt() << "%\tdrive "
+                                  << m["drive"].toInt() << "%\talc " << m["alc"].toInt()
+                                  << "%\tpwr " << m["pwr"].toInt() << "%\n";
+                    }
+                    std::cout << "  result: " << backend.driveTestResult().toStdString() << "\n";
+                    const int after = backend.micGain();
+                    const bool restored = (after == before);
+                    std::cout << (restored ? "  ok   " : "  FAIL ")
+                              << "mic gain " << before << "% -> " << after << "%\n";
+                    // ⚠️ AND WAIT FOR THE CARRIER TO DROP. Exiting the instant the
+                    // sweep reported done tore the app down before the unkey had
+                    // been answered, and left the simulated rig transmitting -
+                    // which is exactly the fault this check now exists to catch.
+                    QTimer::singleShot(2500, &app, [&, restored] {
+                        const bool keyed = backend.tx();
+                        std::cout << (keyed ? "  FAIL rig is STILL transmitting\n"
+                                            : "  ok   rig unkeyed\n");
+                        const bool pass = restored && !keyed;
+                        std::cout << (pass ? "SWEEP CHECK PASSED\n" : "SWEEP CHECK FAILED\n");
+                        backend.shutdown();
+                        app.exit(pass ? 0 : 1);
+                    });
+                });
+            });
+        });
+        return app.exec();
     }
 
     if (parser.isSet(res_opt)) {

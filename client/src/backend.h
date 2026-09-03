@@ -53,6 +53,16 @@ class Backend : public QObject {
   // high-water mark, because a mark that only ever rises cannot show a gain
   // being turned DOWN - which is the entire job when setting drive (WIP.md 8g).
   Q_PROPERTY(int txDrivePct READ txDrivePct NOTIFY metersChanged)
+
+  // ── The drive test ─────────────────────────────────────────────────────────
+  // ⚠️ ONE OF THESE TRANSMITS AND THE OTHER DOES NOT, and they answer different
+  // questions. See the long note in backend.cpp above StartToneSweep.
+  Q_PROPERTY(bool driveTestActive READ driveTestActive NOTIFY driveTestChanged)
+  Q_PROPERTY(QString driveTestMode READ driveTestMode NOTIFY driveTestChanged)
+  Q_PROPERTY(QString driveTestStatus READ driveTestStatus NOTIFY driveTestChanged)
+  Q_PROPERTY(QVariantList driveTestRows READ driveTestRows NOTIFY driveTestChanged)
+  Q_PROPERTY(QString driveTestResult READ driveTestResult NOTIFY driveTestChanged)
+  Q_PROPERTY(int driveTestBestGain READ driveTestBestGain NOTIFY driveTestChanged)
   Q_PROPERTY(int powerPct READ powerPct NOTIFY metersChanged)
   // Tick marks for the meter face, supplied by the HOST so the scale follows the
   // rig rather than being hard-coded per client.
@@ -187,6 +197,10 @@ class Backend : public QObject {
                              const QString& password);
   Q_INVOKABLE void send(const QString& path);      // fire a rig route
   Q_INVOKABLE void toggleArm();
+  Q_INVOKABLE void startToneSweep();
+  Q_INVOKABLE void startVoiceCheck();
+  Q_INVOKABLE void stopDriveTest();
+  Q_INVOKABLE void applyBestGain();
   // ⚠️ KEYS ARE FILTERED AT THE APPLICATION, NOT HANDLED BY AN ITEM IN THE QML.
   // A `Keys.onPressed` handler only ever fires on the item that holds focus,
   // and the panel is full of things that take it: the connect screen's text
@@ -280,6 +294,16 @@ class Backend : public QObject {
   QString sUnit() const { return meters_.value("s_unit").toString(); }
   QString swr() const;
   int alcPct() const { return meters_.value("alc_pct").toInt(); }
+  bool driveTestActive() const { return drive_mode_ != DriveMode::kOff; }
+  QString driveTestMode() const {
+    return drive_mode_ == DriveMode::kSweep ? "sweep"
+         : drive_mode_ == DriveMode::kVoice ? "voice" : "";
+  }
+  QString driveTestStatus() const { return drive_status_; }
+  QVariantList driveTestRows() const { return drive_rows_; }
+  QString driveTestResult() const { return drive_result_; }
+  int driveTestBestGain() const { return drive_best_gain_; }
+
   int txDrivePct() const {
     // 32767 is full scale on the wire format the host receives.
     return qBound(0, static_cast<int>(qRound(tx_peak_ * 100.0 / 32767.0)), 100);
@@ -346,6 +370,7 @@ class Backend : public QObject {
   void statusChanged();
   void statusFullChanged();
   void metersChanged();
+  void driveTestChanged();
   void scaleChanged();
   void audioChanged();
   void txChanged();
@@ -378,6 +403,26 @@ class Backend : public QObject {
   bool was_tx_ = false;
   int safe_top_ = 0, safe_bottom_ = 0, safe_left_ = 0, safe_right_ = 0;
   int tx_peak_ = 0;      // host-reported, 0-32767
+
+  // ── Drive test state ───────────────────────────────────────────────────────
+  enum class DriveMode { kOff, kSweep, kVoice };
+  DriveMode drive_mode_ = DriveMode::kOff;
+  QTimer drive_timer_;
+  QVector<int> drive_gains_;
+  int drive_idx_ = 0;
+  int drive_tick_ = 0;
+  int drive_saved_gain_ = 100;
+  bool drive_saved_tone_ = false;
+  bool drive_keyed_by_us_ = false;
+  int drive_peak_alc_ = 0;
+  int drive_peak_drive_ = 0;
+  int drive_best_gain_ = 0;
+  QVariantList drive_rows_;
+  QString drive_status_;
+  QString drive_result_;
+  void DriveTick();
+  void UnkeyAndVerify(int attempt);
+  void EndDriveTest(const QString& why, bool aborted);
   bool session_active_ = false;
   bool connecting_ = false;
   QString last_error_;

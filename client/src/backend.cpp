@@ -216,6 +216,18 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
     emit sessionChanged();
     return false;
   }
+  // ⚠️ AN EMPTY PASSWORD NEVER REACHES THE HOST, and a failed login never takes
+  // down a session that is already up. On a phone the keyboard stays over the
+  // panel after Connect and the password has already been wiped, so a second
+  // Return re-submitted an empty one; the 401 that came back tore up a working
+  // session and threw the operator back to the login screen mid-over. Guarded in
+  // the panel too - this is the half that holds when anything else calls it.
+  if (password.isEmpty()) {
+    last_error_ = "password required";
+    emit sessionChanged();
+    return false;
+  }
+  if (session_active_) return true;
   connecting_ = true;
   last_error_.clear();
   emit sessionChanged();
@@ -796,4 +808,290 @@ void Backend::setSafeArea(int top, int bottom, int left, int right) {
   }
   safe_top_ = top; safe_bottom_ = bottom; safe_left_ = left; safe_right_ = right;
   emit safeAreaChanged();
+}
+
+// ══ The drive test ══════════════════════════════════════════════════════════
+//
+// Two measurements, because "am I driving the radio hard enough" has two
+// different answers and conflating them would give a confident wrong one.
+//
+// ⚠️ THE TONE SWEEP TRANSMITS. It keys the rig, walks the mic gain through a
+// fixed ladder, and records what the RADIO reports at each step. The tone is a
+// constant sine at 6000/32767 (18% of full scale), so the ladder is repeatable:
+// run it twice and the two curves are comparable, which is what makes it a
+// calibration rather than an impression.
+//
+// ⚠️ AND A TONE IS NOT A VOICE. A steady tone holds ALC where speech only touches
+// it on peaks, so the gain that puts the TONE in the band is not the gain to
+// speak at. The sweep answers "does the chain work, and over what gain range does
+// this radio respond" - the voice check answers "are MY peaks landing in the
+// band". Anyone who ships only the first and calls it calibration has measured
+// the easy thing and reported the hard one.
+//
+// ⚠️ THE VOICE CHECK NEVER KEYS ANYTHING. The operator transmits the way they
+// always do, on their own PTT, and this only watches. A calibration that keys the
+// transmitter on its own while somebody is talking into it is not a measurement,
+// it is a surprise.
+//
+// The sweep's guards, none of them optional:
+//   - it refuses unless TX is armed and the rig is connected, with a different
+//     message for each, because "it did nothing" is not a diagnosis;
+//   - SWR at or above 3.0 aborts and unkeys immediately - that is the radio
+//     telling us to stop, and it outranks the measurement;
+//   - it only ever unkeys what it keyed, so a test started during somebody
+//     else's over cannot drop their carrier;
+//   - the operator's mic gain and tone setting are restored on EVERY exit path,
+//     including an abort, because leaving a station on a test tone at 160% gain
+//     is how the next over goes out splattering.
+
+namespace {
+// ⚠️ COARSE AND BOUNDED. Seven steps at ~0.9 s is about six seconds of carrier -
+// long enough to read, short enough that the host's transmit watchdog is never
+// the thing that ends it. A finer ladder would be a longer transmission for
+// precision the ALC reading does not have.
+const QVector<int> kSweepGains = {40, 60, 80, 100, 120, 140, 160};
+constexpr int kTickMs = 300;
+constexpr int kTicksPerStep = 3;      // set, settle, read
+constexpr int kVoiceTicks = 34;       // ~10 s
+constexpr double kSwrAbort = 3.0;
+}  // namespace
+
+void Backend::startToneSweep() {
+  if (drive_mode_ != DriveMode::kOff) return;
+  if (!session_active_) {
+    drive_status_ = "not connected";
+    emit driveTestChanged();
+    return;
+  }
+  if (!tx_audio_.armed()) {
+    // Arming is what claims the transmitter; without it the sweep would key a
+    // rig with no audio path and measure a flat zero, which looks like a broken
+    // radio rather than a missing step.
+    drive_status_ = "arm TX first - the sweep needs the audio path open";
+    emit driveTestChanged();
+    return;
+  }
+  if (!status_.value("connected").toBool()) {
+    drive_status_ = "the host has no radio";
+    emit driveTestChanged();
+    return;
+  }
+
+  drive_saved_gain_ = tx_audio_.mic_gain();
+  drive_saved_tone_ = tx_audio_.using_test_tone();
+  drive_rows_.clear();
+  drive_result_.clear();
+  drive_best_gain_ = 0;
+  drive_gains_ = kSweepGains;
+  drive_idx_ = 0;
+  drive_tick_ = 0;
+  drive_mode_ = DriveMode::kSweep;
+
+  tx_audio_.UseTestTone(true);
+  tx_audio_.SetMicGain(drive_gains_[0]);
+  api_.Get("/api/ptt/on");
+  drive_keyed_by_us_ = true;
+  drive_status_ = QString("transmitting a test tone - step 1 of %1").arg(drive_gains_.size());
+
+  drive_timer_.setInterval(kTickMs);
+  drive_timer_.disconnect();
+  connect(&drive_timer_, &QTimer::timeout, this, &Backend::DriveTick);
+  drive_timer_.start();
+  emit driveTestChanged();
+}
+
+void Backend::startVoiceCheck() {
+  if (drive_mode_ != DriveMode::kOff) return;
+  if (!session_active_) {
+    drive_status_ = "not connected";
+    emit driveTestChanged();
+    return;
+  }
+  drive_rows_.clear();
+  drive_result_.clear();
+  drive_best_gain_ = 0;
+  drive_peak_alc_ = 0;
+  drive_peak_drive_ = 0;
+  drive_tick_ = 0;
+  drive_keyed_by_us_ = false;   // ⚠️ never, in this mode
+  drive_mode_ = DriveMode::kVoice;
+  drive_status_ = "key up and talk normally - watching your peaks";
+
+  drive_timer_.setInterval(kTickMs);
+  drive_timer_.disconnect();
+  connect(&drive_timer_, &QTimer::timeout, this, &Backend::DriveTick);
+  drive_timer_.start();
+  emit driveTestChanged();
+}
+
+void Backend::DriveTick() {
+  const double swr = meters_.value("swr_ratio").toDouble();
+  const int alc = alcPct();
+  const int pwr = powerPct();
+  const int drv = txDrivePct();
+
+  // ⚠️ THE RADIO'S OBJECTION OUTRANKS THE MEASUREMENT. Only while WE are keying:
+  // an SWR reading taken with no carrier up is not about this test.
+  if (drive_keyed_by_us_ && swr >= kSwrAbort) {
+    EndDriveTest(QString("ABORTED - SWR reached %1:1").arg(swr, 0, 'f', 1), true);
+    return;
+  }
+
+  if (drive_mode_ == DriveMode::kVoice) {
+    if (status_.value("tx").toBool()) {
+      drive_peak_alc_ = qMax(drive_peak_alc_, alc);
+      drive_peak_drive_ = qMax(drive_peak_drive_, drv);
+    }
+    if (++drive_tick_ >= kVoiceTicks) {
+      // ⚠️ PEAKS, NOT AVERAGES, and it says which it used. An average over an
+      // over is dominated by the gaps between words - it would read low on a
+      // perfectly driven station and send the operator to turn the gain up.
+      QString verdict;
+      if (drive_peak_drive_ == 0) {
+        verdict = "NOTHING ARRIVED AT THE RADIO. The host saw no audio at all - "
+                  "check that TX is armed and that the microphone is the one you think.";
+      } else if (drive_peak_alc_ == 0) {
+        verdict = QString("audio reached the radio (peak %1%) but ALC never moved. "
+                          "The rig is not taking it as drive - check MOD SOURCE is "
+                          "REAR and REAR SELECT is USB.").arg(drive_peak_drive_);
+      } else if (drive_peak_alc_ > 90) {
+        verdict = QString("peaks hit %1%% ALC - too hot. Come down until peaks sit "
+                          "in the 50-75%% band.").arg(drive_peak_alc_);
+      } else if (drive_peak_alc_ < 40) {
+        verdict = QString("peaks only reached %1%% ALC - the radio is being under-driven. "
+                          "Bring the gain up.").arg(drive_peak_alc_);
+      } else {
+        verdict = QString("peaks reached %1%% ALC. That is in the band the rig wants.")
+                      .arg(drive_peak_alc_);
+      }
+      QVariantMap row;
+      row["gain"] = tx_audio_.mic_gain();
+      row["alc"] = drive_peak_alc_;
+      row["pwr"] = pwr;
+      row["drive"] = drive_peak_drive_;
+      drive_rows_.append(row);
+      EndDriveTest(verdict, false);
+      return;
+    }
+    drive_status_ = QString("listening - %1 s left · peak ALC %2%")
+                        .arg((kVoiceTicks - drive_tick_) * kTickMs / 1000)
+                        .arg(drive_peak_alc_);
+    emit driveTestChanged();
+    return;
+  }
+
+  // ── The sweep ──────────────────────────────────────────────────────────────
+  if (!status_.value("tx").toBool() && drive_tick_ > 1) {
+    // Somebody or something dropped the carrier. Stop rather than carry on
+    // recording zeros and calling them a curve.
+    EndDriveTest("ABORTED - the rig stopped transmitting", true);
+    return;
+  }
+
+  if (++drive_tick_ < kTicksPerStep) {
+    emit driveTestChanged();
+    return;
+  }
+  drive_tick_ = 0;
+
+  QVariantMap row;
+  row["gain"] = drive_gains_[drive_idx_];
+  row["alc"] = alc;
+  row["pwr"] = pwr;
+  row["drive"] = drv;
+  drive_rows_.append(row);
+
+  if (++drive_idx_ >= drive_gains_.size()) {
+    // ⚠️ THE LOWEST GAIN THAT REACHES THE BAND, not the one with the most ALC.
+    // Past the band there is no more power to be had and the only thing still
+    // rising is distortion - the curve is not monotonic in anything useful.
+    int best = 0;
+    for (const QVariant& v : std::as_const(drive_rows_)) {
+      const QVariantMap m = v.toMap();
+      const int a = m["alc"].toInt();
+      if (a >= 50 && a <= 75) { best = m["gain"].toInt(); break; }
+    }
+    drive_best_gain_ = best;
+    QString result;
+    if (best > 0) {
+      result = QString("%1%% gain put the tone at the ALC band. That is a TONE - "
+                       "run the voice check before trusting it for speech.").arg(best);
+    } else {
+      int top = 0;
+      for (const QVariant& v : std::as_const(drive_rows_)) top = qMax(top, v.toMap()["alc"].toInt());
+      result = top == 0
+        ? "No ALC at any gain. Nothing is reaching the radio as drive - check that "
+          "MOD SOURCE is REAR and REAR SELECT is USB."
+        : QString("Nothing landed in the 50-75%% band; the highest was %1%%. "
+                  "The chain works but cannot drive the rig - check the codec's "
+                  "output level on the host.").arg(top);
+    }
+    EndDriveTest(result, false);
+    return;
+  }
+
+  tx_audio_.SetMicGain(drive_gains_[drive_idx_]);
+  drive_status_ = QString("transmitting a test tone - step %1 of %2 · gain %3%")
+                      .arg(drive_idx_ + 1).arg(drive_gains_.size()).arg(drive_gains_[drive_idx_]);
+  emit driveTestChanged();
+}
+
+void Backend::stopDriveTest() {
+  if (drive_mode_ == DriveMode::kOff) return;
+  EndDriveTest("stopped", true);
+}
+
+// ⚠️ EVERY EXIT PATH COMES THROUGH HERE - finish, abort, SWR, the operator's
+// stop. Restoring the gain on the success path only would leave a station on a
+// test tone at 160% the one time it mattered, which is the time it went wrong.
+void Backend::EndDriveTest(const QString& why, bool aborted) {
+  drive_timer_.stop();
+  const bool was_sweep = (drive_mode_ == DriveMode::kSweep);
+  drive_mode_ = DriveMode::kOff;
+
+  if (was_sweep) {
+    // ⚠️ UNKEY, THEN CHECK IT ACTUALLY UNKEYED. Firing the request and moving on
+    // is how a test run left a simulated rig transmitting: the call went out and
+    // nothing ever looked at whether the carrier dropped. Guard the OUTCOME.
+    // Two attempts, then say so loudly - a stuck PTT the operator has not been
+    // told about is the worst thing this panel could leave behind. The host's
+    // transmit watchdog is the backstop; it is not an excuse to skip this.
+    if (drive_keyed_by_us_) UnkeyAndVerify(1);
+    tx_audio_.SetMicGain(drive_saved_gain_);
+    tx_audio_.UseTestTone(drive_saved_tone_);
+    settings_.mic_gain = drive_saved_gain_;
+    emit audioChanged();
+  }
+  drive_keyed_by_us_ = false;
+  drive_status_ = aborted ? why : "done";
+  if (!aborted || !drive_result_.isEmpty()) drive_result_ = why;
+  else drive_result_ = why;
+  emit driveTestChanged();
+  emit txChanged();
+}
+
+// ⚠️ APPLYING IS THE OPERATOR'S ACT, NOT THE TEST'S. The sweep never sets the
+// gain it found: it transmitted a tone, and the gain for a tone is not the gain
+// for a voice. This is here so accepting the suggestion is one press once the
+// operator has decided - and it goes through setMicGain, so it persists and
+// reaches the host profile like any other gain change.
+void Backend::applyBestGain() {
+  if (drive_best_gain_ <= 0) return;
+  setMicGain(drive_best_gain_);
+}
+
+void Backend::UnkeyAndVerify(int attempt) {
+  api_.Get("/api/ptt/off");
+  QTimer::singleShot(900, this, [this, attempt] {
+    if (!status_.value("tx").toBool()) return;   // the carrier dropped: done
+    if (attempt < 2) {
+      UnkeyAndVerify(attempt + 1);
+      return;
+    }
+    // ⚠️ SAY IT, DO NOT SWALLOW IT. The rig is still keyed after two attempts;
+    // the operator needs to reach for the radio, not read "done".
+    drive_status_ = "⚠ THE RIG IS STILL TRANSMITTING - unkey it at the radio";
+    drive_result_ = drive_status_;
+    emit driveTestChanged();
+  });
 }
