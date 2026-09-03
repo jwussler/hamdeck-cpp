@@ -10,6 +10,7 @@
 #include <QFontDatabase>
 #include <QIcon>
 #include <QGuiApplication>
+#include <QMargins>
 #include <QAudioDevice>
 #include <QAudioFormat>
 #include <QMediaDevices>
@@ -149,15 +150,27 @@ void Pump(int ms) {
 }
 
 int CheckResolutions(QQmlApplicationEngine& engine, Backend& backend, const QString& dir) {
-    struct Size { int w, h; const char* what; };
+    // safeT/safeB are the insets to SIMULATE for that size, in logical points.
+    // 47/34 are a modern iPhone's portrait notch and home indicator; the SE has
+    // a home button and neither.
+    struct Size { int w, h; const char* what; int safeT; int safeB; };
     static const Size kSizes[] = {
-        {1024,  600, "small netbook"},
-        {1280,  720, "720p"},
-        {1366,  768, "the commonest laptop"},
-        {1600,  900, "laptop"},
-        {1920, 1080, "1080p desktop"},
-        {2560, 1440, "1440p"},
-        {3840, 2160, "4K"},
+        // ⚠️ PHONES FIRST, because they are the sizes this panel was never drawn
+        // for and the ones it will fail at. These are LOGICAL points, which is
+        // what Qt lays out in - a 390x844 iPhone is 1170x2532 physical pixels at
+        // devicePixelRatio 3, and measuring the physical number would say the
+        // panel has plenty of room while the operator cannot hit anything.
+        { 375,  667, "iPhone SE",        0,  0},
+        { 390,  844, "iPhone 13/14/15",47, 34},
+        { 430,  932, "iPhone Pro Max",  59, 34},
+        { 744, 1133, "iPad mini",         24, 20},
+        {1024,  600, "small netbook", 0, 0},
+        {1280,  720, "720p", 0, 0},
+        {1366,  768, "the commonest laptop", 0, 0},
+        {1600,  900, "laptop", 0, 0},
+        {1920, 1080, "1080p desktop", 0, 0},
+        {2560, 1440, "1440p", 0, 0},
+        {3840, 2160, "4K", 0, 0},
     };
 
     auto* w = engine.rootObjects().isEmpty()
@@ -187,6 +200,11 @@ int CheckResolutions(QQmlApplicationEngine& engine, Backend& backend, const QStr
         const int widths[2] = {s.w, static_cast<int>(w->minimumWidth())};
         for (int i = 0; i < 2; ++i) {
             backend.setScreen(s.w, s.h, 1.0);
+            // ⚠️ THE NOTCH IS SIMULATED, because the offscreen platform has no
+            // safe area to report and iOS is where it is real. Setting it here
+            // is what turns "the layout has an inset binding" into "the layout
+            // demonstrably moves", which is a different claim.
+            backend.setSafeArea(s.safeT, s.safeB, 0, 0);
             w->setWidth(widths[i]);
             w->setHeight(i == 0 ? s.h : qMin(s.h, static_cast<int>(w->minimumHeight())));
             // ⚠️ THE RESIZE IS NOT DONE WHEN setWidth RETURNS. It travels to the
@@ -195,6 +213,16 @@ int CheckResolutions(QQmlApplicationEngine& engine, Backend& backend, const QStr
             // a 459 px panel inside a 1920 px window and blamed the layout. Spin
             // the loop until the geometry has actually arrived.
             Pump(120);
+            // ⚠️ Assert the CONTENT actually starts below the notch. A binding
+            // that exists and is never applied looks identical from the QML.
+            if (s.safeT > 0) {
+                const qreal top = panel->mapToScene(QPointF(0, 0)).y();
+                if (top < s.safeT) {
+                    std::cout << "  FAIL panel top " << top << " is above the "
+                              << s.safeT << "px safe area (" << s.what << ")\n";
+                    ++failures;
+                }
+            }
             const QImage img = w->grabWindow();
             // Report the window as the WINDOW says it is, not as we asked. A
             // resize the platform declined must be visible, not assumed.
@@ -378,6 +406,29 @@ int main(int argc, char** argv) {
         std::cerr << "FATAL: QML failed to load\n";
         return 1;
     }
+
+    // ── The real safe area, on the one platform that has one ────────────────
+    // ⚠️ VERSION-GUARDED, and that is not defensive habit. QWindow gained
+    // safeAreaMargins() in Qt 6.9; this project builds against 6.4 on Linux, so
+    // an unguarded call is a change that will not compile on the machine it is
+    // written on. Everywhere else the insets stay 0 and the layout is unchanged
+    // - a desktop window has no notch, and inventing one would push the panel
+    // away from an edge for no reason.
+    //
+    // Re-read on resize because a phone ROTATES: the notch moves from the top
+    // edge to a side, and an inset measured once at launch is then applied to
+    // the wrong edge - which looks like a margin bug and is a staleness bug.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+    if (auto* qw = qobject_cast<QQuickWindow*>(engine.rootObjects().first())) {
+        auto push_safe_area = [qw, &backend] {
+            const QMargins m = qw->safeAreaMargins();
+            backend.setSafeArea(m.top(), m.bottom(), m.left(), m.right());
+        };
+        push_safe_area();
+        QObject::connect(qw, &QWindow::widthChanged,  qw, push_safe_area);
+        QObject::connect(qw, &QWindow::heightChanged, qw, push_safe_area);
+    }
+#endif
 
     if (parser.isSet(selftest)) {
         const int rc = SelfTest(engine);

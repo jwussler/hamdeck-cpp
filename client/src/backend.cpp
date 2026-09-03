@@ -718,3 +718,20 @@ void Backend::tuneTgxl() {
   // status poll. Showing "tuning" from the click would be the button lying
   // about the transmitter, which is the one thing this panel must never do.
 }
+
+
+// ⚠️ Insets are in LOGICAL pixels, the same units the layout uses. Feeding it
+// physical pixels on a devicePixelRatio-3 phone would inset the panel by three
+// times the notch and look like a layout bug rather than a units bug.
+void Backend::setSafeArea(int top, int bottom, int left, int right) {
+  // Negative margins would push content OFF the screen rather than away from
+  // the edge - the opposite of the job.
+  top = qMax(0, top); bottom = qMax(0, bottom);
+  left = qMax(0, left); right = qMax(0, right);
+  if (top == safe_top_ && bottom == safe_bottom_ &&
+      left == safe_left_ && right == safe_right_) {
+    return;
+  }
+  safe_top_ = top; safe_bottom_ = bottom; safe_left_ = left; safe_right_ = right;
+  emit safeAreaChanged();
+}

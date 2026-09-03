@@ -126,6 +126,24 @@ class Backend : public QObject {
   Q_PROPERTY(int uiScaleIndex READ uiScaleIndex WRITE setUiScaleIndex NOTIFY uiScaleChanged)
   Q_PROPERTY(QString displayInfo READ displayInfo NOTIFY uiScaleChanged)
 
+  // ── Safe-area insets ──────────────────────────────────────────────────────
+  // ⚠️ THE ONE PHONE PROBLEM --check-resolutions CANNOT SEE. It measures keys
+  // against the WINDOW, and on a handset the window includes the notch, the
+  // rounded corners and the home indicator - regions the operator cannot touch
+  // and the system draws over. Every key can measure as present, on-screen and
+  // large enough while the top row sits under the camera housing.
+  //
+  // ⚠️ CARRIED AS PLAIN PROPERTIES RATHER THAN QML's SafeArea ATTACHED TYPE,
+  // which arrived in Qt 6.9. This project builds against 6.4 on Linux, so a
+  // SafeArea binding would be a change nothing here could compile, let alone
+  // test - and an untestable safety-shaped change is the exact thing that has
+  // shipped broken in this repo before. As properties they are settable, so the
+  // resolution walk can simulate a notch and the layout can be PROVEN to move.
+  Q_PROPERTY(int safeTop    READ safeTop    NOTIFY safeAreaChanged)
+  Q_PROPERTY(int safeBottom READ safeBottom NOTIFY safeAreaChanged)
+  Q_PROPERTY(int safeLeft   READ safeLeft   NOTIFY safeAreaChanged)
+  Q_PROPERTY(int safeRight  READ safeRight  NOTIFY safeAreaChanged)
+
   // ── Hotkey ──
   Q_PROPERTY(QVariantList hotkeyChoices READ hotkeyChoices CONSTANT)
   Q_PROPERTY(int hotkeyIndex READ hotkeyIndex WRITE setHotkeyIndex NOTIFY hotkeyChanged)
@@ -176,6 +194,13 @@ class Backend : public QObject {
   // once at startup gets wrong - and a dual-monitor desk is the normal case,
   // not the exotic one.
   Q_INVOKABLE void setScreen(int availW, int availH, qreal dpr);
+
+  int safeTop()    const { return safe_top_; }
+  int safeBottom() const { return safe_bottom_; }
+  int safeLeft()   const { return safe_left_; }
+  int safeRight()  const { return safe_right_; }
+  // Set from the platform on iOS, and by --check-resolutions to simulate one.
+  Q_INVOKABLE void setSafeArea(int top, int bottom, int left, int right);
 
   void useTestTone() { tx_audio_.UseTestTone(true); }
 
@@ -302,6 +327,7 @@ class Backend : public QObject {
   void tunerChanged();
   void recordChanged();
   void uiScaleChanged();
+  void safeAreaChanged();
 
  private:
   void ApplyGlobalHotkey();
@@ -323,6 +349,7 @@ class Backend : public QObject {
   QString connection_text_ = "not connected";
   int hotkey_index_ = 0;
   bool was_tx_ = false;
+  int safe_top_ = 0, safe_bottom_ = 0, safe_left_ = 0, safe_right_ = 0;
   bool session_active_ = false;
   bool connecting_ = false;
   QString last_error_;

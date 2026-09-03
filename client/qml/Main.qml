@@ -81,8 +81,15 @@ ApplicationWindow {
     // ⚠️ Shown until a SESSION EXISTS, not until a host is configured. A
     // remembered host proves nothing about whether the credentials still work
     // or the host is reachable.
+    // ⚠️ BOTH ROOTS GET THE INSETS, not just the panel. The connect screen is
+    // where the operator types a password on a phone, and a text field under the
+    // home indicator is one the software keyboard fights for.
     ConnectPanel {
         anchors.fill: parent
+        anchors.topMargin: backend.safeTop
+        anchors.bottomMargin: backend.safeBottom
+        anchors.leftMargin: backend.safeLeft
+        anchors.rightMargin: backend.safeRight
         visible: !backend.sessionActive
         onConnectRequested: (host, port, user, password) =>
             backend.connectTo(host, port, user, password)
@@ -99,6 +106,16 @@ ApplicationWindow {
     Flickable {
         id: flick
         anchors.fill: parent
+        // ⚠️ THE WINDOW IS NOT THE USABLE AREA ON A PHONE. The notch, the
+        // rounded corners and the home indicator are inside the window and
+        // outside what a thumb can reach - so every key can measure as present
+        // and on-screen while the top row sits under the camera housing.
+        // win.color still paints edge to edge behind this, so the ground runs
+        // under the notch the way an instrument face should.
+        anchors.topMargin: backend.safeTop
+        anchors.bottomMargin: backend.safeBottom
+        anchors.leftMargin: backend.safeLeft
+        anchors.rightMargin: backend.safeRight
         clip: true
         visible: backend.sessionActive
         contentWidth: width
