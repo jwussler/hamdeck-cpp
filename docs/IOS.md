@@ -12,7 +12,7 @@ is not mine to make, and the exact steps that need an Apple account.
 | C++ / QML source | **No port needed.** Qt Quick, Qt Multimedia and Qt WebSockets are all supported on iOS, and the only non-portable code (`src/global_hotkey.cpp`, three `#ifdef _WIN32` blocks in `main_qml.cpp`) is already guarded and meaningless on a handset. |
 | CMake | **Done.** `client/CMakeLists.txt` has an `if(IOS)` bundle block; `-DHAMDECK_IOS_BUNDLE_ID=` sets the identifier. |
 | `Info.plist` | **Done.** `client/packaging/ios/Info.plist.in`. |
-| Simulator build + launch in CI | **`.github/workflows/ios.yml`.** No signing, no App ID, no profile — it can run today. |
+| Device build in CI | **`.github/workflows/ios.yml`.** Unsigned, so it needs no App ID or profile. It proves the client compiles and links for a phone. ⚠️ **It does not run the app** — see below. |
 | Device build | Needs the portal work below. |
 | TestFlight | Needs the portal work **and** the licence decision below. |
 
@@ -89,14 +89,39 @@ membership, not on their own five-year clock.
 ## Running it
 
 **In CI** — push to a branch named `ios*` or open a pull request touching
-`client/`, and `.github/workflows/ios.yml` builds for the simulator, boots one,
-installs the app, launches it with `--selftest`, and uploads a screenshot.
+`client/`, and `.github/workflows/ios.yml` builds an unsigned device bundle and
+asserts on its `Info.plist`.
 
-⚠️ **The launch step is the point, not the build.** A static Qt build that is
-missing its QML plugin imports links perfectly and then dies at startup with
-"module QtQuick is not installed". Only running it tells the two apart, and this
-repo has already shipped one client that could not launch while every check was
-green.
+### ⚠️ Nothing has run this app yet, and that is a real gap
+
+CI proves it **compiles and links**. It does not prove it **starts**. A static Qt
+build missing its QML plugin imports links perfectly and dies at launch with
+"module QtQuick is not installed", and this repo has already shipped one client
+that could not launch while every check was green. Treat "the iOS job is green"
+as meaning exactly what it says and no more.
+
+The simulator build is what would have closed that gap — it needs no signing, so
+CI could boot a simulator and launch the app. It does not link:
+
+```
+ld: building for 'iOS-simulator', but linking in object file
+    (.../ios/plugins/permissions/objects-Release/
+     QDarwinMicrophonePermissionPlugin_init/QDarwinMicrophonePermissionPlugin_init.cpp.o)
+    built for 'iOS'
+```
+
+Qt's iOS package ships the permission plugins' `_init` objects as **device slices
+only**. `qt_import_plugins(hamdeck-qml EXCLUDE_BY_TYPE permissions)` does not
+remove them — they arrive through QtMultimedia's own link interface. The
+`HAMDECK_IOS_SIMULATOR` CMake option exists and does that exclusion, for whenever
+this is solved. Things worth trying, none of them tried yet: the official Qt
+online installer instead of `aqt` (its iOS package may carry both slices), a Qt
+version other than 6.9.2, or building QtMultimedia without the permissions
+plugin.
+
+**Until then the first proof that this app runs comes from your own phone**, via
+Xcode on a Mac. That is not a bad first step anyway — it is the same step that
+gets you a device build, and it needs the App ID below.
 
 **Locally, if you ever have a Mac:**
 
