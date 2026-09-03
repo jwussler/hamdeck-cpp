@@ -12,7 +12,7 @@ is not mine to make, and the exact steps that need an Apple account.
 | C++ / QML source | **No port needed.** Qt Quick, Qt Multimedia and Qt WebSockets are all supported on iOS, and the only non-portable code (`src/global_hotkey.cpp`, three `#ifdef _WIN32` blocks in `main_qml.cpp`) is already guarded and meaningless on a handset. |
 | CMake | **Done.** `client/CMakeLists.txt` has an `if(IOS)` bundle block; `-DHAMDECK_IOS_BUNDLE_ID=` sets the identifier. |
 | `Info.plist` | **Done.** `client/packaging/ios/Info.plist.in`. |
-| Device build in CI | **`.github/workflows/ios.yml`.** Unsigned, so it needs no App ID or profile. It proves the client compiles and links for a phone. ⚠️ **It does not run the app** — see below. |
+| Device build in CI | ✅ **Green.** `.github/workflows/ios.yml`, unsigned, so it needs no App ID or profile — it proves the client compiles and links for a phone and uploads the `.app` (~12.8 MB). ⚠️ **It does not run the app** — see below. |
 | Device build | Needs the portal work below. |
 | TestFlight | Needs the portal work **and** the licence decision below. |
 
@@ -91,6 +91,23 @@ membership, not on their own five-year clock.
 **In CI** — push to a branch named `ios*` or open a pull request touching
 `client/`, and `.github/workflows/ios.yml` builds an unsigned device bundle and
 asserts on its `Info.plist`.
+
+### Two link traps, both found the hard way
+
+Everything compiled on the first attempt. Both failures were at **link**, which
+is why each one reads as a code problem and neither is.
+
+1. **The FFmpeg media backend.** Qt's iOS package ships
+   `libQt6FFmpegMediaPluginImpl.a` but not the FFmpeg libraries it calls, so a
+   static link ends in a wall of undefined `_sws_*` and `_av_*` symbols naming
+   video code this app never touches. A static build auto-imports every backend.
+   Apple platforms have a native one — `plugins/multimedia/` in the iOS install
+   contains exactly `libdarwinmediaplugin.a` and nothing else — and it is the
+   correct backend on a phone regardless. `client/CMakeLists.txt` excludes the
+   FFmpeg plugin and pins the Darwin one.
+
+2. **The permission plugins are device-only**, which is what blocks the
+   simulator. Below.
 
 ### ⚠️ Nothing has run this app yet, and that is a real gap
 
