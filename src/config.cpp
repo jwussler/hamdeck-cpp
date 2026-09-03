@@ -97,6 +97,7 @@ bool Config::Load(const std::string& path, Config& out, std::string& error) {
     Get(j, "api_bind_lan", cfg.api_bind_lan);
     Get(j, "allow_anonymous_status", cfg.allow_anonymous_status);
     Get(j, "ptt_timeout_seconds", cfg.ptt_timeout_seconds);
+    Get(j, "tx_link_timeout_ms", cfg.tx_link_timeout_ms);
     Get(j, "web_session_timeout", cfg.web_session_timeout);
     Get(j, "admin_only_login", cfg.admin_only_login);
     Get(j, "tgxl_host", cfg.tgxl_host);
@@ -135,6 +136,15 @@ bool Config::Load(const std::string& path, Config& out, std::string& error) {
   // stopping a stuck PTT.
   if (cfg.ptt_timeout_seconds < 0) {
     error = "ptt_timeout_seconds must be >= 0 (0 disables the watchdog)";
+    return false;
+  }
+  // ⚠️ A value below a second is a typo, not a tighter setting: the poll loop
+  // runs at 200 ms and a normal gap between frames is tens of milliseconds, so
+  // anything under a second would unkey healthy operators at random. Refuse it
+  // rather than ship a station that drops PTT mid-word.
+  if (cfg.tx_link_timeout_ms < 0 ||
+      (cfg.tx_link_timeout_ms > 0 && cfg.tx_link_timeout_ms < 1000)) {
+    error = "tx_link_timeout_ms must be 0 (disabled) or at least 1000";
     return false;
   }
   if (cfg.cat_proxy_port != 0 &&
@@ -186,6 +196,7 @@ bool Config::Save(const std::string& path, std::string& error) const {
   j["dashboard_port"] = dashboard_port;
   j["allow_anonymous_status"] = allow_anonymous_status;
   j["ptt_timeout_seconds"] = ptt_timeout_seconds;
+  j["tx_link_timeout_ms"] = tx_link_timeout_ms;
   j["web_session_timeout"] = web_session_timeout;
   j["admin_only_login"] = admin_only_login;
 

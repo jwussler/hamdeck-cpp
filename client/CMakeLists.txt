@@ -14,6 +14,14 @@ if(NOT DEFINED HAMDECK_VERSION OR HAMDECK_VERSION STREQUAL "")
     set(HAMDECK_VERSION "0.0.0")
 endif()
 project(hamdeck-client VERSION ${HAMDECK_VERSION} LANGUAGES CXX)
+
+# ⚠️ The iOS bundle identifier is a BUILD INPUT, not a literal, because it has to
+# match an App ID created in Apple's portal and a provisioning profile issued
+# against it. Hardcoding one means a mismatch is discovered at signing time, with
+# an error that talks about entitlements rather than about this string.
+if(NOT DEFINED HAMDECK_IOS_BUNDLE_ID OR HAMDECK_IOS_BUNDLE_ID STREQUAL "")
+    set(HAMDECK_IOS_BUNDLE_ID "com.wa0o.hamdeck")
+endif()
 message(STATUS "hamdeck-client version: ${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -52,6 +60,12 @@ set(MACOS_APP_NAME "HamDeck Remote")
 # CI must RUN the binary, not just build it. The .NET client shipped a release
 # that could not launch at all while every test passed.
 enable_testing()
+# ⚠️ NOT ON iOS. Every target below is a command-line test binary that CI runs on
+# the build machine. Cross-compiled for a phone they build into app bundles that
+# nothing can execute, and `ctest` then reports a suite that has never run as a
+# suite that passed - the exact shape of "green and never exercised" this file
+# exists to avoid.
+if(NOT IOS)
 qt_add_executable(test_hotkey tests_hotkey.cpp src/ptt_hotkey.cpp)
 target_link_libraries(test_hotkey PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets)
 add_test(NAME hotkey COMMAND test_hotkey)
@@ -87,6 +101,7 @@ target_include_directories(test_freq PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test_freq PRIVATE Qt6::Core)
 add_test(NAME freq COMMAND test_freq)
 set_tests_properties(hotkey PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()  # NOT IOS
 
 # The selftest that CI runs is qml_selftest, below.
 
@@ -136,7 +151,11 @@ set_target_properties(hamdeck-qml PROPERTIES WIN32_EXECUTABLE TRUE MACOSX_BUNDLE
 # target_sources and every non-Apple path are untouched. It applies on APPLE only:
 # Linux ships an executable called hamdeck-qml that a .desktop file points at, and a
 # binary with a space in its name there would be a gratuitous break.
-if(APPLE)
+# ⚠️ AND NOT IOS. iOS is APPLE too, and everything in this block is wrong there:
+# an iOS bundle is flat (no Contents/), OUTPUT_NAME with a space fights the
+# provisioning profile's expectation of the executable name, and LSMinimumSystemVersion
+# is a macOS key that iOS ignores while the key it actually needs is missing.
+if(APPLE AND NOT IOS)
     set_target_properties(hamdeck-qml PROPERTIES
         OUTPUT_NAME                          "${MACOS_APP_NAME}"
         MACOSX_BUNDLE_INFO_PLIST             "${CMAKE_CURRENT_SOURCE_DIR}/packaging/Info.plist.in"
@@ -168,6 +187,62 @@ endif()
 # compile and SILENTLY IGNORES IT - no warning, build succeeds, no icon. 0.1.12
 # shipped exactly that: the .rc was committed, referenced here, and never
 # compiled once. A green Windows build proved nothing.
+# ── The iOS bundle ──────────────────────────────────────────────────────────
+# ⚠️ THE EXECUTABLE KEEPS ITS TARGET NAME on iOS - no OUTPUT_NAME with a space.
+# CFBundleExecutable, the provisioning profile and the signature all have to name
+# the same file, and a space is the kind of difference that surfaces as an
+# unhelpful codesign error at the very end of a long build.
+#
+# ⚠️ QT FOR iOS IS STATIC-ONLY. There is no shared build. Read docs/IOS.md before
+# distributing anything built this way: the LGPL note at the top of this file is
+# about exactly this, and iOS is the one platform where it is unavoidable.
+if(IOS)
+    set_target_properties(hamdeck-qml PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST     "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ios/Info.plist.in"
+        MACOSX_BUNDLE_BUNDLE_NAME    "HamDeck"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "${HAMDECK_IOS_BUNDLE_ID}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${HAMDECK_IOS_BUNDLE_ID}"
+        XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2")
+    message(STATUS "iOS bundle id: ${HAMDECK_IOS_BUNDLE_ID}")
+
+    # ⚠️ SIMULATOR ONLY, AND IT MUST STAY THAT WAY.
+    #
+    # Qt's iOS package ships the permission plugins' _init objects as DEVICE
+    # slices only, so a simulator link dies with:
+    #
+    #   ld: building for 'iOS-simulator', but linking in object file
+    #       (.../plugins/permissions/.../QDarwinMicrophonePermissionPlugin_init.cpp.o)
+    #       built for 'iOS'
+    #
+    # Everything COMPILES; only the link fails, which is why this looks like a
+    # code problem and is not one. Dropping the plugin type is harmless for a
+    # smoke test - a simulator has no microphone to authorise - and it is WRONG
+    # for a device build, where asking for the mic is the entire point of the
+    # app. Hence the explicit flag rather than sniffing the sysroot: a build that
+    # silently dropped the permission plugin would install on a phone, run, and
+    # then fail to transmit with nothing to say why.
+    # ⚠️ NOT THE FFmpeg MEDIA BACKEND. Qt's iOS package ships
+    # libQt6FFmpegMediaPluginImpl.a but NOT the FFmpeg libraries it calls, so a
+    # static link ends in a wall of undefined _sws_* and _av_* symbols. Nothing
+    # in this app decodes video; the plugin is pulled in purely because static
+    # builds auto-import every backend.
+    #
+    # Apple platforms have a native backend (AVFoundation) which is the correct
+    # one here regardless - it is what QAudioSource and QAudioSink use on a
+    # phone, and it is the one that respects the microphone permission.
+    qt_import_plugins(hamdeck-qml
+        INCLUDE_BY_TYPE multimedia Qt6::QDarwinMediaPlugin
+        EXCLUDE Qt6::QFFmpegMediaPlugin)
+
+    if(HAMDECK_IOS_SIMULATOR)
+        message(WARNING "iOS SIMULATOR build: permission plugins excluded. "
+                        "This bundle cannot request the microphone - smoke test only.")
+        qt_import_plugins(hamdeck-qml EXCLUDE_BY_TYPE permissions)
+    endif()
+endif()
+
 if(WIN32)
     enable_language(RC)
     target_sources(hamdeck-qml PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../packaging/hamdeck.rc)
@@ -219,7 +294,11 @@ endif()
 # OFL requires it of anything that embeds the fonts, and a .app that leaves them behind
 # is a licence problem rather than a packaging preference. Inside a bundle that means
 # Resources/, not a Unix docdir.
-if(APPLE)
+# ⚠️ AND NOT IOS: an iOS bundle is FLAT, so Contents/Resources does not exist
+# there and install() would create a directory Apple's tooling does not expect.
+# The fonts are already inside the binary via resources.qrc; on iOS the licence
+# texts travel in the repo and the App Store listing rather than in the bundle.
+if(APPLE AND NOT IOS)
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/OFL.txt
             DESTINATION "${MACOS_APP_NAME}.app/Contents/Resources" RENAME OFL-fonts.txt)
     install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/fonts/README.md

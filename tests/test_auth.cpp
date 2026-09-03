@@ -10,6 +10,9 @@
 // for what it is worth, not first.
 
 #include "check.h"
+#include <atomic>
+#include <chrono>
+#include <thread>
 #include <cstdio>
 #include <string>
 
@@ -76,6 +79,57 @@ int main() {
   }
   CHECK(t.IsLockedOut("bob"));
   std::printf("throttle: locked out after %d failures\n", AuthService::kMaxLoginFails);
+
+  // ── ⚠️ A LOGIN MUST NOT STALL THE HOST ───────────────────────────────────
+  // Login held mu_ across 350,000 PBKDF2 rounds - ~200 ms - and ValidateSession
+  // takes the same mutex on EVERY request. One login froze the whole host, and a
+  // phone retrying on a flaky link does that repeatedly. On a box that keys a
+  // transmitter it means /api/ptt/off queues behind somebody's password.
+  {
+    AuthService c;
+    c.AddUser("op", AuthService::HashPassword("pw"), false, true, false);
+    const auto tok = c.Login("op", "pw");
+    CHECK(tok.has_value());
+
+    std::atomic<bool> go{false};
+    std::thread slow([&] {
+      while (!go.load()) std::this_thread::yield();
+      for (int i = 0; i < 4; ++i) c.Login("op", "wrong");   // ~800 ms of PBKDF2
+    });
+    go.store(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));  // let it get in
+
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < 50; ++i) CHECK(c.ValidateSession(*tok));
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0).count();
+    slow.join();
+    if (ms > 150) std::fprintf(stderr, "ValidateSession blocked for %lld ms\n", (long long)ms);
+    // Generous on purpose: the point is 50 lookups take milliseconds, not the
+    // ~800 ms of key derivation running beside them.
+    CHECK(ms <= 150);
+    std::printf("lock:     50 session checks took %lld ms beside a running login\n",
+                (long long)ms);
+  }
+
+  // ── ⚠️ AN EXPIRED SESSION KEEPS NO RIGHTS ────────────────────────────────
+  // IsAdmin/CanTransmit/IsStation answered from the session map alone, so an
+  // expired session kept every right. On the loopback listener nothing ever
+  // calls ValidateSession, so an expired ADMIN token opened /api/admin/*
+  // indefinitely - and PurgeExpired only ran on a successful login.
+  {
+    AuthService z(0);   // zero-minute timeout: every session is already expired
+    z.AddUser("ghost", AuthService::HashPassword("pw"), true, true, true);
+    const auto tok = z.Login("ghost", "pw");
+    CHECK(tok.has_value());
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    CHECK(!z.ValidateSession(*tok));
+    CHECK(!z.IsAdmin(*tok));
+    CHECK(!z.CanTransmit(*tok));
+    CHECK(!z.IsStation(*tok));
+    CHECK(!z.Username(*tok).has_value());
+    std::printf("expiry:   an expired session is not admin, cannot transmit, has no name\n");
+  }
 
   std::printf("PASS\n");
   return 0;

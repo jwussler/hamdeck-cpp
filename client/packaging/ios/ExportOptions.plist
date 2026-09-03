@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- ⚠️ app-store-connect, NOT ad-hoc or development. The others produce an
+       .ipa that installs on registered devices and is REJECTED by TestFlight
+       with an error about the profile rather than about the method. -->
+  <key>method</key>                        <string>app-store-connect</string>
+  <key>teamID</key>                        <string>V829EBE8HH</string>
+  <key>signingStyle</key>                  <string>manual</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>com.wa0o.hamdeck</key>            <string>HamDeck iOS App Store</string>
+  </dict>
+  <!-- Bitcode is dead and Apple rejects uploads that still carry it. -->
+  <key>uploadBitcode</key>                 <false/>
+  <key>uploadSymbols</key>                 <true/>
+  <key>compileBitcode</key>                <false/>
+  <!-- ⚠️ Never let Xcode "fix" a signing problem by silently switching to a
+       different identity or profile. A build signed with something other than
+       what we asked for is a build nobody can reason about. -->
+  <key>manageAppVersionAndBuildNumber</key><false/>
+</dict>
+</plist>

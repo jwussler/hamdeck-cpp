@@ -20,6 +20,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 struct SessionInfo {
   std::string username;
@@ -82,6 +83,12 @@ class AuthService {
   bool ChangePassword(const std::string& username, const std::string& new_hash);
   bool SetCanTransmit(const std::string& username, bool allow);
   bool SetIsStation(const std::string& username, bool allow);
+  // ⚠️ Granting or revoking the ADMIN right. Like the two above it reaches live
+  // sessions, because a session carries its own copy - and an admin right you
+  // believe you revoked, still live in somebody's open tab, is the worst of the
+  // three to get wrong. The caller is responsible for refusing to demote the
+  // LAST admin: see AdminCount(), and /api/admin/user/admin/.
+  bool SetIsAdmin(const std::string& username, bool allow);
   int  KillUserSessions(const std::string& username);
 
   struct UserRow {
@@ -142,6 +149,8 @@ class AuthService {
 
  private:
   void PurgeExpired();
+  // Returns the session only if it has NOT timed out. Callers must hold mu_.
+  const SessionInfo* LiveSession(const std::string& token) const;
 
   mutable std::mutex mu_;
   std::map<std::string, UserInfo> users_;

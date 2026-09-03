@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 #include <iterator>
+#include <stdexcept>
 
 namespace {
 
@@ -63,7 +64,13 @@ std::string LowerTrim(const std::string& s) {
 
 std::string AuthService::HashPassword(const std::string& password) {
   unsigned char salt[kSaltBytes];
-  RAND_bytes(salt, kSaltBytes);
+  // ⚠️ A failed RAND_bytes here would salt every password with stack garbage -
+  // possibly the SAME garbage for every call, which is no salt at all. There is
+  // nothing sensible to return, so refuse loudly rather than hash weakly.
+  if (RAND_bytes(salt, kSaltBytes) != 1) {
+    throw std::runtime_error("RAND_bytes failed - refusing to hash a password "
+                             "with a salt that is not random");
+  }
   const std::string salt_str(reinterpret_cast<char*>(salt), kSaltBytes);
   return std::string(kPrefix) + ToHexLower(salt, kSaltBytes) + ":" +
          Derive(password, salt_str);
@@ -109,10 +116,46 @@ bool AuthService::IsLockedOut(const std::string& username) const {
 std::optional<std::string> AuthService::Login(const std::string& username,
                                               const std::string& password) {
   const std::string key = LowerTrim(username);
-  std::lock_guard<std::mutex> lock(mu_);
 
-  const auto it = users_.find(key);
-  if (it == users_.end() || !VerifyPassword(password, it->second.password_hash)) {
+  // ⚠️ THE MUTEX IS NOT HELD ACROSS THE KEY DERIVATION.
+  //
+  // PBKDF2 at 350,000 iterations is ~200 ms of CPU, and this used to run with
+  // mu_ held. ValidateSession takes the same mutex and runs on EVERY request, so
+  // one login stalled the whole host for the duration - and a phone retrying a
+  // login on a flaky link does that over and over. On a box that keys a
+  // transmitter that means /api/ptt/off queues behind somebody's password.
+  //
+  // So: snapshot under the lock, derive with nothing held, re-acquire to record.
+  std::string stored;
+  bool exists = false;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    const auto it = users_.find(key);
+    if (it != users_.end()) {
+      exists = true;
+      stored = it->second.password_hash;
+    }
+  }
+
+  // ⚠️ AND THE WORK HAPPENS EVEN WHEN THERE IS NO SUCH USER.
+  //
+  // The old code short-circuited on a missing user, so "no such user" returned
+  // in microseconds and "wrong password" took 200 ms. The caller's fixed 500 ms
+  // delay does NOT hide that - it shifts both by the same amount and leaves the
+  // gap fully visible - while auth.h claimed the two were indistinguishable.
+  // Deriving against a fixed dummy hash makes the two cost the same.
+  static const std::string kDummyHash =
+      "pbkdf2:00000000000000000000000000000000:"
+      "0000000000000000000000000000000000000000000000000000000000000000";
+  bool ok = false;
+  if (exists) {
+    ok = VerifyPassword(password, stored);
+  } else {
+    (void)VerifyPassword(password, kDummyHash);
+  }
+
+  std::lock_guard<std::mutex> lock(mu_);
+  if (!ok) {
     auto& t = throttle_[key];
     t.first += 1;
     if (t.first >= kMaxLoginFails) {
@@ -120,11 +163,22 @@ std::optional<std::string> AuthService::Login(const std::string& username,
     }
     return std::nullopt;
   }
+
+  // ⚠️ RE-READ THE USER. The lock was released while the hash was derived, so an
+  // admin may have removed the account or changed its password or its rights in
+  // that window. Issuing a session from the snapshot would hand out access that
+  // was revoked a tenth of a second ago - and the rights would be the OLD ones.
+  const auto it = users_.find(key);
+  if (it == users_.end() || it->second.password_hash != stored) return std::nullopt;
+
   throttle_.erase(key);   // success clears the failure window
   PurgeExpired();
 
   unsigned char raw[32];
-  RAND_bytes(raw, sizeof(raw));
+  // ⚠️ A FAILED RAND_bytes MUST NOT BECOME A SESSION TOKEN. It returns <= 0 on
+  // failure and leaves the buffer as whatever was on the stack, which is a
+  // guessable credential that looks exactly like a good one.
+  if (RAND_bytes(raw, sizeof(raw)) != 1) return std::nullopt;
   const std::string token = ToHexLower(raw, sizeof(raw));
 
   const auto now = std::chrono::steady_clock::now();
@@ -148,29 +202,51 @@ bool AuthService::ValidateSession(const std::string& token) {
   return true;
 }
 
+// ⚠️ EXPIRY IS CHECKED HERE, NOT ONLY IN ValidateSession.
+//
+// These three answered from the session map alone, so an EXPIRED session kept
+// every right it had. On the dashboard that was masked: pre-routing calls
+// ValidateSession first and 401s. On the LOOPBACK listener pre-routing returns
+// early at `if (trusted) return true`, so nothing ever validated - and an
+// expired admin token still opened /api/admin/* on 127.0.0.1, indefinitely,
+// because PurgeExpired only ran on a successful login. The admin gate's whole
+// point is that loopback is NOT admin.
+//
+// Const, so it cannot erase - an expired row is simply invisible until a login
+// or a ValidateSession clears it.
+const SessionInfo* AuthService::LiveSession(const std::string& token) const {
+  const auto it = sessions_.find(token);
+  if (it == sessions_.end()) return nullptr;
+  if (std::chrono::steady_clock::now() - it->second.last_activity >
+      std::chrono::minutes(session_timeout_minutes_)) {
+    return nullptr;
+  }
+  return &it->second;
+}
+
 bool AuthService::IsAdmin(const std::string& token) const {
   std::lock_guard<std::mutex> lock(mu_);
-  const auto it = sessions_.find(token);
-  return it != sessions_.end() && it->second.is_admin;
+  const auto* s = LiveSession(token);
+  return s && s->is_admin;
 }
 
 bool AuthService::CanTransmit(const std::string& token) const {
   std::lock_guard<std::mutex> lock(mu_);
-  const auto it = sessions_.find(token);
-  return it != sessions_.end() && it->second.can_transmit;
+  const auto* s = LiveSession(token);
+  return s && s->can_transmit;
 }
 
 bool AuthService::IsStation(const std::string& token) const {
   std::lock_guard<std::mutex> lock(mu_);
-  const auto it = sessions_.find(token);
-  return it != sessions_.end() && it->second.is_station;
+  const auto* s = LiveSession(token);
+  return s && s->is_station;
 }
 
 std::optional<std::string> AuthService::Username(const std::string& token) const {
   std::lock_guard<std::mutex> lock(mu_);
-  const auto it = sessions_.find(token);
-  if (it == sessions_.end()) return std::nullopt;
-  return it->second.username;
+  const auto* s = LiveSession(token);
+  if (!s) return std::nullopt;
+  return s->username;
 }
 
 void AuthService::Logout(const std::string& token) {
@@ -242,6 +318,21 @@ bool AuthService::SetIsStation(const std::string& username, bool allow) {
   // holding the old value is a permission you believe you took away and did not.
   for (auto& [token, s] : sessions_) {
     if (s.username == key) s.is_station = allow;
+  }
+  return true;
+}
+
+bool AuthService::SetIsAdmin(const std::string& username, bool allow) {
+  const std::string key = LowerTrim(username);
+  std::lock_guard<std::mutex> lock(mu_);
+  const auto it = users_.find(key);
+  if (it == users_.end()) return false;
+  it->second.is_admin = allow;
+  // ⚠️ Live sessions carry their own copy, so revoking admin without this leaves
+  // the demoted account administering the host until it logs out - which on an
+  // open tab is never.
+  for (auto& [token, s] : sessions_) {
+    if (s.username == key) s.is_admin = allow;
   }
   return true;
 }

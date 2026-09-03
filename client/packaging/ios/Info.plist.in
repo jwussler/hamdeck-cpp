@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ⚠️ A SEPARATE TEMPLATE FROM THE macOS ONE, NOT A COPY WITH EDITS.
+
+  An iOS bundle is FLAT - no Contents/, no Resources/ - and the keys it needs are
+  different ones. Reusing the Mac plist produces a bundle that builds, signs and
+  installs, and is then rejected on upload or launches to a black screen, both of
+  which look like a code problem and are not.
+
+  Three keys here are load-bearing and each has a failure that does not name itself:
+
+  - NSMicrophoneUsageDescription. iOS does not deny a mic request with no usage
+    string, it SIGKILLs the process. On a transmit app that means the panel
+    vanishes the instant the operator keys up, with no dialog and nothing in the
+    log. Same trap as the Mac build, different file.
+
+  - UIBackgroundModes = audio. WITHOUT IT iOS SUSPENDS THE APP the moment the
+    handset locks or the operator switches away, and a suspended app stops
+    sending audio frames while its socket stays open - which is exactly the dead
+    link the host now unkeys on. The radio would drop the carrier every time the
+    screen locked. With it, RX keeps playing and the socket keeps breathing.
+
+  - UILaunchScreen. An app with no launch screen is letterboxed into a phantom
+    smaller screen on modern devices: the panel renders at the wrong size and
+    every touch target is offset, which reads as a layout bug in the QML.
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>     <string>en</string>
+  <key>CFBundleExecutable</key>            <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+  <key>CFBundleIdentifier</key>            <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+  <key>CFBundleInfoDictionaryVersion</key> <string>6.0</string>
+  <key>CFBundlePackageType</key>           <string>APPL</string>
+  <key>CFBundleName</key>                  <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+  <key>CFBundleDisplayName</key>           <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+  <key>CFBundleShortVersionString</key>    <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
+  <key>CFBundleVersion</key>               <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
+
+  <key>LSRequiresIPhoneOS</key>            <true/>
+  <key>MinimumOSVersion</key>              <string>16.0</string>
+  <key>UIRequiredDeviceCapabilities</key>  <array><string>arm64</string></array>
+
+  <!-- Shown verbatim in the system prompt, so it says what the mic is FOR. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>HamDeck sends your voice to the radio when you transmit.</string>
+
+  <!-- ⚠️ Receive audio must survive a locked screen. See the note above. -->
+  <key>UIBackgroundModes</key>
+  <array><string>audio</string></array>
+
+  <key>UILaunchScreen</key>
+  <dict>
+    <key>UIColorName</key>                 <string></string>
+    <key>UIImageRespectsSafeAreaInsets</key><true/>
+  </dict>
+
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~ipad</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+
+  <!-- ⚠️ The host is reached over plain http on the LAN (radio.wa0o.com is behind
+       the tunnel, but a local address is not). Without this iOS App Transport
+       Security blocks it and every request fails with a network error that names
+       nothing. Scoped to local networking rather than opened globally. -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>     <true/>
+  </dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>HamDeck connects to your station host on the local network.</string>
+</dict>
+</plist>

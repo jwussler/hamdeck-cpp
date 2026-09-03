@@ -80,6 +80,44 @@ int main() {
   }
   std::printf("sessions: listing shows a token PREFIX only, never the token\n");
 
+  // ── The admin right itself ───────────────────────────────────────────────
+  // ⚠️ There was no way to grant or revoke it. tx and station had routes; admin
+  // did not, so making somebody an administrator meant editing a config file by
+  // hand and restarting the station host.
+  {
+    AuthService b;
+    b.AddUser("chief", AuthService::HashPassword("pw"), true, true, false);
+    b.AddUser("hand",  AuthService::HashPassword("pw"), false, true, false);
+    CHECK(b.AdminCount() == 1);
+
+    const auto tok = b.Login("hand", "pw");
+    CHECK(tok.has_value());
+    CHECK(!b.IsAdmin(*tok));
+
+    CHECK(b.SetIsAdmin("hand", true));
+    CHECK(b.AdminCount() == 2);
+    // ⚠️ THE LIVE SESSION, not just the user record. A session carries its own
+    // copy of the right, so a grant that stops at the user list does nothing
+    // until that person logs out and back in - and a REVOKE that stops there
+    // leaves them administering the host from an open tab.
+    CHECK(b.IsAdmin(*tok));
+
+    CHECK(b.SetIsAdmin("hand", false));
+    CHECK(b.AdminCount() == 1);
+    CHECK(!b.IsAdmin(*tok));
+
+    CHECK(!b.SetIsAdmin("nobody", true));
+    CHECK(b.AdminCount() == 1);
+
+    // ⚠️ AdminCount is what the route uses to refuse demoting the LAST admin.
+    // If it did not fall to 1 here the guard would never fire, and a host with
+    // nobody able to administer it is recoverable only by hand-editing a config
+    // at the far end of a radio link.
+    CHECK(b.SetIsAdmin("chief", false));
+    CHECK(b.AdminCount() == 0);
+    std::printf("admin:    granted, revoked, reaches live sessions, counted\n");
+  }
+
   std::printf("PASS\n");
   return 0;
 }

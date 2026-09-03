@@ -84,6 +84,15 @@ struct Config {
 
   // Safety
   int ptt_timeout_seconds = 180;      // 0 disables the transmit watchdog
+  // ⚠️ How long a KEYED transmitter may go without a frame from the audio
+  // client before the host unkeys it. 0 disables the check.
+  //
+  // This is the phone case. The /ws/tx close handler unkeys, but only when the
+  // socket closes; a handset in a tunnel sends no FIN and the host sees a
+  // healthy connection with nothing coming down it. Four seconds of silence
+  // mid-over is already a broken transmission - and the alternative is up to
+  // ptt_timeout_seconds of open carrier.
+  int tx_link_timeout_ms = 4000;
 
   // Auth
   int web_session_timeout = 480;      // minutes
