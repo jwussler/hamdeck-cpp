@@ -50,29 +50,42 @@ REQUIRED = {
 # 0.1.0 was rejected. Referenced-but-unused is not a defence, and there is no way
 # to argue with an automated delivery check.
 API_KEYS = {
-    "AVCaptureDevice":        "NSCameraUsageDescription",
-    "AVCaptureSession":       "NSCameraUsageDescription",
-    "AVCaptureVideoDataOutput": "NSCameraUsageDescription",
-    "AVAudioSession":         "NSMicrophoneUsageDescription",
-    "AVAudioRecorder":        "NSMicrophoneUsageDescription",
-    "CLLocationManager":      "NSLocationWhenInUseUsageDescription",
-    "CBCentralManager":       "NSBluetoothAlwaysUsageDescription",
-    "CBPeripheralManager":    "NSBluetoothAlwaysUsageDescription",
-    "PHPhotoLibrary":         "NSPhotoLibraryUsageDescription",
-    "UIImagePickerController": "NSPhotoLibraryUsageDescription",
-    "CNContactStore":         "NSContactsUsageDescription",
-    "EKEventStore":           "NSCalendarsUsageDescription",
-    "CMMotionManager":        "NSMotionUsageDescription",
-    "SFSpeechRecognizer":     "NSSpeechRecognitionUsageDescription",
-    "LAContext":              "NSFaceIDUsageDescription",
+    # AVFoundation capture. ⚠️ CAMERA AND MICROPHONE ARE THE SAME CLASSES - an
+    # AVCaptureDevice is either, and Apple asks for both strings.
+    "AVCaptureDevice":                 ("NSCameraUsageDescription", "NSMicrophoneUsageDescription"),
+    "AVCaptureDeviceInput":            ("NSCameraUsageDescription", "NSMicrophoneUsageDescription"),
+    "AVCaptureDeviceDiscoverySession": ("NSCameraUsageDescription",),
+    "AVCaptureSession":                ("NSCameraUsageDescription",),
+    "AVCaptureVideoDataOutput":        ("NSCameraUsageDescription",),
+    "AVCaptureStillImageOutput":       ("NSCameraUsageDescription",),
+    "AVCaptureAudioDataOutput":        ("NSMicrophoneUsageDescription",),
+    "AVAudioSession":                  ("NSMicrophoneUsageDescription",),
+    "AVAudioRecorder":                 ("NSMicrophoneUsageDescription",),
+    # ⚠️ THE ONE THE REJECTION EMAIL DID NOT MENTION. Qt Multimedia's recorder
+    # saves captures to the photo library, so the class is imported here too.
+    "PHPhotoLibrary":                  ("NSPhotoLibraryUsageDescription",
+                                        "NSPhotoLibraryAddUsageDescription"),
+    "PHAssetCreationRequest":          ("NSPhotoLibraryAddUsageDescription",),
+    "UIImagePickerController":         ("NSPhotoLibraryUsageDescription",),
+    "CLLocationManager":               ("NSLocationWhenInUseUsageDescription",),
+    "CBCentralManager":                ("NSBluetoothAlwaysUsageDescription",),
+    "CBPeripheralManager":             ("NSBluetoothAlwaysUsageDescription",),
+    "CNContactStore":                  ("NSContactsUsageDescription",),
+    "EKEventStore":                    ("NSCalendarsUsageDescription",),
+    "CMMotionManager":                 ("NSMotionUsageDescription",),
+    "SFSpeechRecognizer":              ("NSSpeechRecognitionUsageDescription",),
+    "LAContext":                       ("NSFaceIDUsageDescription",),
+    "HKHealthStore":                   ("NSHealthShareUsageDescription",),
 }
 
 # What this app knows it links and has answered for. Anything ELSE the scan finds
 # is a new obligation that nobody has thought about yet, so it fails loudly
 # rather than being waved through by a key that happens to exist.
-EXPECTED_APIS = {"AVCaptureDevice", "AVCaptureSession", "AVCaptureVideoDataOutput",
-                 "AVAudioSession", "AVAudioRecorder"}
-
+EXPECTED_APIS = {
+    "AVCaptureDevice", "AVCaptureDeviceInput", "AVCaptureDeviceDiscoverySession",
+    "AVCaptureSession", "AVCaptureVideoDataOutput", "AVCaptureStillImageOutput",
+    "AVCaptureAudioDataOutput", "AVAudioSession", "PHPhotoLibrary",
+}
 
 def load_template(path, fails):
     """Parse the CMake template. ${...} placeholders are just strings to plistlib."""
@@ -96,9 +109,10 @@ def required_keys():
     """
     keys = dict(REQUIRED)
     for cls in sorted(EXPECTED_APIS):
-        keys.setdefault(API_KEYS[cls],
-                        f"the binary links {cls}; Apple rejects the upload without it "
-                        f"(ITMS-90683), used or not")
+        for key in API_KEYS[cls]:
+            keys.setdefault(key,
+                            f"the binary links {cls}; Apple rejects the upload without it "
+                            f"(ITMS-90683), used or not")
     # ATS is opened for local networking, and iOS 14+ prompts for it.
     keys.setdefault("NSLocalNetworkUsageDescription",
                     "the app finds the station host on the LAN; without it the prompt has no text")
@@ -147,13 +161,19 @@ def scan_binary(app, fails):
         fails.append(f"CFBundleExecutable is {exe!r} and {exe_path} is not a file")
         return info, set()
 
+    # ⚠️ THE SYMBOL, NOT THE NAME. A bare "AVCaptureDevice" appears 107 times in
+    # this binary as ordinary text - Qt's own function signatures and error
+    # messages - and a scan that counted those would cry about frameworks that
+    # are merely MENTIONED. `_OBJC_CLASS_$_X` is the linker's import record: it
+    # is there when the class is actually referenced, and only then.
     blob = open(exe_path, 'rb').read()
-    found = {cls for cls in API_KEYS if cls.encode() in blob}
+    found = {cls for cls in API_KEYS
+             if b'_OBJC_CLASS_$_' + cls.encode() + b'\x00' in blob}
     for cls in sorted(found):
-        key = API_KEYS[cls]
-        if not str(info.get(key, "")).strip():
-            fails.append(f"the binary references {cls} and {key} is MISSING - "
-                         f"this is ITMS-90683, and it is found at UPLOAD, not at build")
+        for key in API_KEYS[cls]:
+            if not str(info.get(key, "")).strip():
+                fails.append(f"the binary imports _OBJC_CLASS_$_{cls} and {key} is MISSING - "
+                             f"this is ITMS-90683, and it is found at UPLOAD, not at build")
     unexpected = found - EXPECTED_APIS
     if unexpected:
         fails.append("the binary now references protected APIs nobody has answered for: "

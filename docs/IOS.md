@@ -187,9 +187,19 @@ the built executable — and refuses when they disagree. It runs three times:
   exact bytes Apple receives.
 
 It also fails when the binary starts referencing a protected API nobody has
-answered for yet, which is the version of this that has not bitten: the next
-Qt module that quietly links `CLLocationManager` would otherwise be found by
-Apple, not here.
+answered for yet — which is not hypothetical. On its first run against a real
+device bundle it found `_OBJC_CLASS_$_PHPhotoLibrary`, imported because
+QtMultimedia's recorder can save captures to Photos, and **Apple's rejection
+email never mentioned it**. Both photo-library strings are in the plist for the
+same reason the camera one is.
+
+⚠️ It matches `_OBJC_CLASS_$_<name>`, the linker's import record — **not** the
+bare class name, which appears 107 times in this binary as Qt's own function
+signatures and error text. A scan on the name alone reports frameworks that are
+merely mentioned.
+
+The whole privacy surface of the app, read off the built bundle: the `AVCapture*`
+family, `AVAudioSession`, `PHPhotoLibrary`. Nothing else.
 
 ### ⚠️ A rejected upload still burns its build number
 

@@ -82,6 +82,20 @@
   <key>NSCameraUsageDescription</key>
   <string>HamDeck does not use the camera. This declaration is required because the audio framework it uses for transmit and receive also provides camera capture.</string>
 
+  <!-- ⚠️ THE SECOND ONE, AND APPLE'S EMAIL NEVER MENTIONED IT. The rejection
+       named only the camera; the binary also imports _OBJC_CLASS_$_PHPhotoLibrary,
+       because the same QtMultimedia that provides QAudioSource carries a recorder
+       that saves captures to Photos. tools/check_ios_bundle.py found it by reading
+       the built binary - a second round-trip through Apple would have been the
+       only other way to learn it, days later.
+
+       Both keys, because a save-only use obliges the Add variant and Apple's scan
+       has asked for either. Nothing in this app opens either one. -->
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>HamDeck does not use your photo library. This declaration is required because the media framework it uses for transmit and receive audio can also save recordings to Photos.</string>
+  <key>NSPhotoLibraryAddUsageDescription</key>
+  <string>HamDeck does not save anything to your photo library. This declaration is required because the media framework it uses for transmit and receive audio can also save recordings to Photos.</string>
+
   <!-- ⚠️ Receive audio must survive a locked screen. See the note above. -->
   <key>UIBackgroundModes</key>
   <array><string>audio</string></array>

@@ -1682,6 +1682,27 @@ removed (the exact rejection, reproduced on Linux), a stand-in bundle whose bina
 `AVCaptureDevice` with no string, a binary that grows a `CLLocationManager` reference nobody has
 answered for, and a bundle whose `${MACOSX_BUNDLE_GUI_IDENTIFIER}` was never substituted.
 
+
+### ⚠️ The gate found a SECOND one the same hour, and Apple's email named only the first
+
+Run against the real device bundle in CI, `check_ios_bundle.py` failed on
+`NSPhotoLibraryUsageDescription`: the binary also imports `_OBJC_CLASS_$_PHPhotoLibrary`,
+because the same QtMultimedia that provides `QAudioSource` carries a recorder that saves
+captures to Photos. **The rejection email did not mention it.** Whether that is a second
+round-trip Apple would have made us take or a check they only run later, the answer is the
+same and it cost minutes instead of days. Both photo keys are in the plist now, worded as
+plainly as the camera one.
+
+⚠️ **The first version of the scan would have cried wolf.** It matched the bare class name,
+and `AVCaptureDevice` appears **107 times** in this binary as ordinary text - Qt's own
+function signatures and error strings. It now matches `_OBJC_CLASS_$_<name>`, the linker's
+import record, which is there when the class is genuinely referenced and only then. Proven
+both ways on the real 35 MB bundle downloaded from the CI artifact: a binary that merely
+*mentions* `CLLocationManager` passes, and the same binary with the import appended fails.
+
+The whole privacy surface of this app, read off that bundle: the `AVCapture*` family,
+`AVAudioSession`, and `PHPhotoLibrary`. No location, no bluetooth, no contacts, no health.
+
 ### ⚠️ A rejected upload still burns its build number
 
 `CFBundleVersion` may never repeat — a re-upload at the same build is refused as a redundant
