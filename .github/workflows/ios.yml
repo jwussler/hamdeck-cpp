@@ -1,0 +1,140 @@
+name: ios
+
+# ⚠️ THIS WORKFLOW IS THE ONLY PLACE THE iOS BUILD CAN BE TESTED. There is no Mac
+# in this project's development loop, so an iOS change that is not run here has
+# not been run at all - and "it compiles" has already shipped a client that could
+# not launch once in this repo's history.
+#
+# ⚠️ IT BUILDS FOR THE SIMULATOR, ON PURPOSE, AND THAT IS NOT A COMPROMISE.
+# A simulator build needs NO signing, NO App ID and NO provisioning profile, so
+# it can prove today that the Qt Quick client compiles and RUNS on iOS while the
+# Apple portal work is still outstanding. A device build proves the same code
+# plus a signature; it cannot prove anything a simulator run cannot, and it
+# cannot run at all until the portal side exists. See docs/IOS.md.
+
+on:
+  push:
+    branches: [ main, 'ios**', 'phone**' ]
+    paths:
+      - 'client/**'
+      - '.github/workflows/ios.yml'
+  pull_request:
+    paths:
+      - 'client/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+jobs:
+  simulator:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # ⚠️ TWO Qt INSTALLS, AND BOTH ARE REQUIRED. Cross-compiling for a phone
+      # still runs moc, rcc, qmlcachegen and the QML type registrar ON THE
+      # RUNNER, and those come from the HOST Qt. With only the iOS package the
+      # configure step fails deep inside Qt's own cmake with a message about a
+      # missing tool rather than about a missing host install.
+      - name: Qt (host tools)
+        uses: jurplel/install-qt-action@v4
+        with:
+          # Same 6.9.2 as the macOS job. 6.8.1 cannot link against the Xcode 26
+          # SDK (`ld: framework 'AGL' not found`), measured on that job.
+          version: '6.9.2'
+          host: 'mac'
+          target: 'desktop'
+          modules: 'qtwebsockets qtmultimedia'
+          set-env: false
+          dir: ${{ runner.temp }}/qt-host
+
+      - name: Qt (iOS)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.2'
+          host: 'mac'
+          target: 'ios'
+          # ⚠️ NOT qtdeclarative. Qt Quick is part of the BASE install in Qt 6 and
+          # naming it as an add-on makes aqt fail to parse the package XML, which
+          # kills the step before anything is compiled. Same trap as the mac job.
+          modules: 'qtwebsockets qtmultimedia'
+          dir: ${{ runner.temp }}/qt-ios
+
+      - name: Configure
+        run: |
+          set -eux
+          HOST_QT=$(echo ${{ runner.temp }}/qt-host/Qt/6.9.2/macos)
+          IOS_QT=$(echo ${{ runner.temp }}/qt-ios/Qt/6.9.2/ios)
+          test -d "$HOST_QT" || { echo "no host Qt at $HOST_QT"; ls -R ${{ runner.temp }}/qt-host | head -40; exit 1; }
+          test -d "$IOS_QT"  || { echo "no iOS Qt at $IOS_QT";  ls -R ${{ runner.temp }}/qt-ios  | head -40; exit 1; }
+          # ⚠️ iphonesimulator + arm64: the runners are Apple silicon, so the
+          # simulator is arm64 too. Building x86_64 here produces a bundle that
+          # installs and then refuses to launch on the very simulator that just
+          # accepted it.
+          cmake -S client -B client/build-ios -G Xcode \
+            -DCMAKE_TOOLCHAIN_FILE="$IOS_QT/lib/cmake/Qt6/qt.toolchain.cmake" \
+            -DQT_HOST_PATH="$HOST_QT" \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphonesimulator \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
+            -DHAMDECK_VERSION="0.0.0"
+
+      - name: Build
+        run: cmake --build client/build-ios --config Release -- -quiet
+
+      - name: Find the bundle
+        id: app
+        run: |
+          set -eux
+          APP=$(find client/build-ios -name 'hamdeck-qml.app' -maxdepth 4 | head -1)
+          # ⚠️ A missing bundle must FAIL here. Left to the install step it
+          # surfaces as a simctl error about a path, which reads like a simulator
+          # problem rather than a build that produced nothing.
+          test -n "$APP" || { echo "no .app was built"; find client/build-ios -name '*.app'; exit 1; }
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          /usr/libexec/PlistBuddy -c Print "$APP/Info.plist" | head -40
+
+      # ⚠️ THE STEP THAT MATTERS. Building an iOS app proves nothing about
+      # whether it starts: a static Qt build that is missing its QML plugin
+      # imports links perfectly and then dies at launch with "module QtQuick is
+      # not installed". Only running it can tell the difference.
+      - name: Boot a simulator
+        run: |
+          set -eux
+          xcrun simctl list devices available | head -30
+          UDID=$(xcrun simctl list devices available -j \
+                 | python3 -c "import json,sys;d=json.load(sys.stdin)['devices'];print([x['udid'] for k,v in d.items() if 'iOS' in k for x in v if 'iPhone' in x['name']][0])")
+          echo "SIM=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+
+      - name: Install and launch
+        run: |
+          set -eux
+          xcrun simctl install "$SIM" "${{ steps.app.outputs.app }}"
+          # A hang is a failure, not a pass - the same rule the host's --selftest
+          # runs under. Without the timeout a launch that never returns simply
+          # burns the job's minutes and then reads as "cancelled".
+          timeout 120 xcrun simctl launch --console-pty "$SIM" com.wa0o.hamdeck --selftest 2>&1 | tee launch.log
+          # ⚠️ Assert on the OUTPUT, not on the exit code. simctl launch reports
+          # the success of the LAUNCH REQUEST, not of the process - an app that
+          # starts and immediately crashes still gives simctl a zero.
+          grep -qiE 'selftest|hamdeck' launch.log || { echo "the app produced no recognisable output"; exit 1; }
+
+      - name: Screenshot the running app
+        if: always()
+        run: |
+          xcrun simctl launch "$SIM" com.wa0o.hamdeck || true
+          sleep 8
+          xcrun simctl io "$SIM" screenshot ios-launch.png || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-evidence
+          path: |
+            ios-launch.png
+            launch.log
+          if-no-files-found: warn
