@@ -1,5 +1,9 @@
 #include "backend.h"
 
+#ifdef Q_OS_IOS
+#include "ios_audio_session.h"
+#endif
+
 #include <cstdio>
 
 #include "freq_input.h"
@@ -202,8 +206,19 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
   last_error_.clear();
   emit sessionChanged();
 
-  settings_.host = host.trimmed();
-  settings_.port = port;
+  // ⚠️ THE HOST FIELD IS PARSED, NOT TAKEN LITERALLY. An operator who types
+  // `https://radio.wa0o.com` means TLS on 443, whatever the port box still says
+  // from the last LAN session - see Settings::ParseTarget.
+  const Settings::Target t = Settings::ParseTarget(host, port);
+  if (t.host.isEmpty()) {
+    connecting_ = false;
+    last_error_ = "host and username are required";
+    emit sessionChanged();
+    return false;
+  }
+  settings_.host = t.host;
+  settings_.port = t.port;
+  settings_.tls = t.tls;
   settings_.username = user.trimmed();
   api_.SetBaseUrl(settings_.BaseUrl());
 
@@ -310,14 +325,25 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
   if (!token.isEmpty()) {
     // ⚠️ QWebSocket does not carry the REST cookie jar, which is why the host
     // accepts ?token= as well.
-    rx_.Start(QString("ws://%1:%2/ws?token=%3").arg(host).arg(port).arg(token),
-              settings_.rx_device_name);
+    rx_.Start(settings_.WsUrl("/ws", token), settings_.rx_device_name);
   }
   emit statusChanged();
   return true;
 }
 
 void Backend::send(const QString& path) { api_.Get(path); }
+
+// See the property's note in backend.h: on iOS this is the only visible evidence
+// that background audio is configured. Empty everywhere else - a footer that
+// said "n/a" on a desktop would be noise.
+QString Backend::audioSessionText() const {
+#ifdef Q_OS_IOS
+  return ios_audio::State();
+#else
+  return QString();
+#endif
+}
+
 
 void Backend::disconnectSession() {
   tx_audio_.Disarm();
@@ -354,9 +380,7 @@ void Backend::toggleArm() {
   }
   const QString token = api_.SessionToken();
   if (token.isEmpty()) return;
-  tx_audio_.Arm(QString("ws://%1:%2/ws/tx?token=%3")
-                    .arg(settings_.host).arg(settings_.port).arg(token),
-                settings_.tx_device_name);
+  tx_audio_.Arm(settings_.WsUrl("/ws/tx", token), settings_.tx_device_name);
 }
 
 // ⚠️ THE HOTKEY WAS DEAD IN THE RUNNING APP WHILE ITS UNIT TEST PASSED.

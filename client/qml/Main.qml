@@ -779,6 +779,8 @@ ApplicationWindow {
                 text: backend.tx && backend.txTimeoutIn > 0
                       ? "transmitting · watchdog drops PTT in " + backend.txTimeoutIn + " s"
                       : backend.connectionText + " · cache " + backend.cacheAgeMs + " ms"
+                        + (backend.audioSessionText !== ""
+                           ? " · audio " + backend.audioSessionText : "")
                 font.family: Theme.body; font.pixelSize: Theme.f(11)
                 color: backend.tx ? Theme.txRed : (backend.stale ? Theme.amber : Theme.dim)
             }

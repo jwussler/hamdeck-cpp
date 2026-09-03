@@ -55,10 +55,14 @@ Item {
             color: Theme.dim
         }
 
+        // ⚠️ A SCHEME MAY BE TYPED HERE, and when it is, it decides the port.
+        // `https://radio.wa0o.com` is TLS on 443 whatever the port box says;
+        // a bare name or address is plain http on the port box. Settings::
+        // ParseTarget is the one place that rule lives.
         Field {
             id: hostField
             label: "Host"
-            placeholder: "hostname or address"
+            placeholder: "hostname, address, or https://host"
             text: backend.savedHost
             Layout.fillWidth: true
             onAccepted: portField.focusField()
@@ -66,7 +70,7 @@ Item {
         Field {
             id: portField
             label: "Port"
-            placeholder: "5002"
+            placeholder: "5002 · ignored for https://"
             text: backend.savedPort > 0 ? String(backend.savedPort) : "5002"
             Layout.fillWidth: true
             onAccepted: userField.focusField()

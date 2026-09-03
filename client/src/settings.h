@@ -86,6 +86,37 @@ class Settings {
   // Geometry, clamped on restore - never trusted as written.
   QRect window_geometry;
 
+  // ⚠️ TLS IS A PROPERTY OF THE TARGET, NOT A PREFERENCE. The station is reached
+  // three ways - a bare address on the LAN, the same address over WireGuard, and
+  // https://radio.wa0o.com through the reverse proxy - and only the third is
+  // encrypted. It is stored per install because it describes WHICH host, exactly
+  // like `host` and `port`, and for the same reason it is NOT in ProfileJson.
+  bool tls = false;
+
   bool HasHost() const { return !host.trimmed().isEmpty(); }
+
+  // ── Building the two URL families ──────────────────────────────────────────
+  // ⚠️ THE WEBSOCKETS MUST FOLLOW THE SCHEME. `ws://` to a TLS origin does not
+  // fail politely: Caddy answers the upgrade with a 400 and the panel connects,
+  // logs in, shows live status over REST, and is silently deaf - no RX audio and
+  // no transmit - because those are the only two things that ride the socket.
+  // Both were hand-built at their call sites until 09/03/2026; they are here now
+  // so a scheme can only be got wrong in one place.
   QString BaseUrl() const;
+  QString WsUrl(const QString& path, const QString& token) const;
+
+  // What the operator typed, resolved into a target.
+  //
+  // ⚠️ A SCHEME IN THE HOST FIELD WINS OVER THE PORT FIELD. Typing
+  // `https://radio.wa0o.com` and leaving the port at 5002 must not produce
+  // https on 5002 - that is a connection refused, on a screen that shows the
+  // operator both a hostname and a port and no reason to suspect either.
+  // A port typed INTO the host string still wins over both, because it is the
+  // most specific thing the operator said.
+  struct Target {
+    QString host;
+    int port = 5002;
+    bool tls = false;
+  };
+  static Target ParseTarget(const QString& typed, int port_field);
 };

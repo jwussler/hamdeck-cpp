@@ -207,6 +207,17 @@ endif()
 # distributing anything built this way: the LGPL note at the top of this file is
 # about exactly this, and iOS is the one platform where it is unavoidable.
 if(IOS)
+    # ⚠️ OBJECTIVE-C++ IS A SEPARATE LANGUAGE TO CMake, and a .mm added without
+    # enabling it is compiled as C++ - which fails on the first @import with an
+    # error about a stray '@' rather than about the language. The audio session
+    # has to be Objective-C++ because AVAudioSession has no C API.
+    enable_language(OBJCXX)
+    target_sources(hamdeck-qml PRIVATE src/ios_audio_session.mm)
+    # ⚠️ AVFoundation is not linked by Qt's iOS package for us. Without it the
+    # build gets to the very last step and dies on undefined _OBJC_CLASS_$_
+    # AVAudioSession, which reads as a missing source file.
+    target_link_libraries(hamdeck-qml PRIVATE "-framework AVFoundation" "-framework Foundation")
+
     set_target_properties(hamdeck-qml PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST     "${CMAKE_CURRENT_SOURCE_DIR}/packaging/ios/Info.plist.in"
         MACOSX_BUNDLE_BUNDLE_NAME    "HamDeck"

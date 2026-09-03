@@ -27,6 +27,9 @@
 #include <iostream>
 
 #include "backend.h"
+#ifdef Q_OS_IOS
+#include "ios_audio_session.h"
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -309,6 +312,18 @@ int main(int argc, char** argv) {
     }
     QGuiApplication::setOrganizationName("HamDeck");
     LoadBundledFonts();
+
+#ifdef Q_OS_IOS
+    // ⚠️ BEFORE ANY AUDIO DEVICE IS OPENED, and again every time the app comes
+    // back to the front. UIBackgroundModes=audio only grants permission; the
+    // AVAudioSession category is what actually keeps the band playing when the
+    // operator locks the phone or takes a call. See ios_audio_session.mm.
+    ios_audio::Configure();
+    QObject::connect(&app, &QGuiApplication::applicationStateChanged,
+                     [](Qt::ApplicationState st) {
+                         if (st == Qt::ApplicationActive) ios_audio::Configure();
+                     });
+#endif
 
     QCommandLineParser parser;
     parser.setApplicationDescription("HamDeck client");

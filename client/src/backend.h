@@ -79,6 +79,11 @@ class Backend : public QObject {
   Q_PROPERTY(bool sessionActive READ sessionActive NOTIFY sessionChanged)
   Q_PROPERTY(bool connecting READ connecting NOTIFY sessionChanged)
   Q_PROPERTY(QString lastError READ lastError NOTIFY sessionChanged)
+  // ⚠️ SHOWN IN THE FOOTER ON iOS, because the thing that decides whether audio
+  // survives a locked screen is invisible otherwise. There is no Mac or phone in
+  // this development loop, so the operator's screenshot IS the measurement -
+  // "PlayAndRecord active 48000 Hz" is what a working session looks like.
+  Q_PROPERTY(QString audioSessionText READ audioSessionText CONSTANT)
   Q_PROPERTY(QString savedHost READ savedHost CONSTANT)
   Q_PROPERTY(int savedPort READ savedPort CONSTANT)
   Q_PROPERTY(QString savedUser READ savedUser CONSTANT)
@@ -288,7 +293,14 @@ class Backend : public QObject {
   bool sessionActive() const { return session_active_; }
   bool connecting() const { return connecting_; }
   QString lastError() const { return last_error_; }
-  QString savedHost() const { return settings_.host; }
+  // ⚠️ THE SCHEME COMES BACK WITH IT. The connect screen prefills this field, and
+  // a saved TLS target that redisplays as a bare hostname is one Connect press
+  // away from silently reverting to http on the port box's number.
+  QString audioSessionText() const;
+  QString savedHost() const {
+    return settings_.tls && !settings_.host.isEmpty() ? "https://" + settings_.host
+                                                      : settings_.host;
+  }
   int savedPort() const { return settings_.port; }
   QString savedUser() const { return settings_.username; }
 
