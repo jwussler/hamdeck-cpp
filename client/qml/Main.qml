@@ -138,23 +138,27 @@ ApplicationWindow {
     }
 
     // ── The tab row ───────────────────────────────────────────────────────────
-    // ⚠️ IT WRAPS, IT DOES NOT SCROLL. The first version was a horizontal
-    // Flickable and --check-resolutions failed it immediately: FREQ, TX and SET
-    // were off the right edge on every phone in the list. They were reachable by
-    // swiping, which is precisely the problem - the navigation for the whole app
-    // was hidden behind a gesture with nothing on screen to say so. A Flow costs
-    // one more row of height and hides nothing.
-    Flow {
+    // ⚠️ CHROME, NOT CONTROLS. These were PanelKeys, drawn exactly like the band
+    // and mode keys below them, so the navigation competed with the panel it
+    // navigates - eight lit boxes shouting as loudly as the radio's own state.
+    // A tab is flat, and the only thing that marks the current one is an
+    // underline in the accent, which is what the group titles already do.
+    //
+    // ⚠️ ONE ROW. Two rows of blocks was most of what "the layout looks off"
+    // was: the tabs took a fifth of the screen and read as a second control
+    // panel. Eight equal columns fit a 375-point phone at 44 points wide, which
+    // is the touch floor, and the row is 40 tall so the target is honest even
+    // though the paint is light.
+    Row {
         id: tabBar
         visible: win.phone && backend.sessionActive
         anchors {
             top: phoneHead.bottom; left: parent.left; right: parent.right
-            topMargin: Theme.u(8)
+            topMargin: Theme.u(10)
             leftMargin: backend.safeLeft + Theme.pad
             rightMargin: backend.safeRight + Theme.pad
         }
-        height: visible ? implicitHeight : 0
-        spacing: Theme.u(6)
+        height: visible ? Theme.u(40) : 0
 
         Repeater {
             model: [
@@ -167,51 +171,73 @@ ApplicationWindow {
                 { key: "tx",   label: "TX" },
                 { key: "set",  label: "SET" }
             ]
-            delegate: PanelKey {
+            delegate: Item {
                 required property var modelData
-                // ⚠️ The touch-target floor applies hardest here: this row is
-                // how the operator reaches everything else in the app.
-                // ⚠️ TIGHT, BUT NOT BELOW THE TOUCH FLOOR. At the phone scale
-                // Theme.u(52) is 62 px wide and the row is 48 px tall, which
-                // clears 44 pt. The first cut padded these to ~110 px and the
-                // eight tabs took THREE rows of a 844-point screen - navigation
-                // eating the panel it navigates.
-                width: Math.max(Theme.u(52), implicitWidth + Theme.u(10))
-                height: Theme.u(40)
-                text: modelData.label
-                lit: win.tab === modelData.key
-                onClicked: win.tab = modelData.key
+                width: tabBar.width / 8
+                height: tabBar.height
+
+                Text {
+                    anchors.centerIn: parent
+                    text: modelData.label
+                    font.family: Theme.display
+                    font.pixelSize: Theme.f(12)
+                    font.letterSpacing: 0.6
+                    color: win.tab === modelData.key ? Theme.cyan : Theme.dim
+                }
+                Rectangle {
+                    anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter }
+                    width: parent.width - Theme.u(8)
+                    height: 2
+                    color: win.tab === modelData.key ? Theme.cyan : "transparent"
+                }
+                MouseArea { anchors.fill: parent; onClicked: win.tab = modelData.key }
             }
         }
     }
 
+    // The hairline the tabs sit on, so the head reads as one instrument face and
+    // the panel below it as another.
+    Rectangle {
+        visible: tabBar.visible
+        anchors { top: tabBar.bottom; left: parent.left; right: parent.right
+                  leftMargin: backend.safeLeft; rightMargin: backend.safeRight }
+        height: 1
+        color: Theme.line
+    }
+
     // ── The always-there strip ───────────────────────────────────────────────
     // ⚠️ THESE ARE PINNED BECAUSE THE OPERATOR SAID SO, and the reason holds up:
-    // a tune is something you reach for mid-over, and LSB/USB/CW is the switch
-    // actually made on the air. Everything else can cost a tab; these two cannot.
+    // a tune is reached for mid-over, and LSB/USB/CW is the switch actually made
+    // on the air. Everything else can cost a tab; these two cannot.
     //
     // ⚠️ EVERY KEY HERE IS THE SAME CONTROL AS THE ONE IN ITS GROUP - same call,
-    // same lit-from-the-rig binding. Nothing is duplicated behaviourally: the
-    // mode keys light from backend.mode and the tune key from the RIG's tuner
-    // state, so a tune started from the ANT tab shows as running here too.
-    Flow {
+    // same lit-from-the-rig binding - so a tune started from the ANT tab shows
+    // as running here too.
+    //
+    // ⚠️ ONE GRID FOR BOTH ROWS. They were two independent rows with their own
+    // widths, so nothing lined up: three equal keys and a wide one above a
+    // narrow ARM and a wide PTT, none of the edges meeting. Four columns, shared
+    // by both, is most of the difference between "off" and "an instrument".
+    GridLayout {
         id: quickStrip
         visible: win.phone && backend.sessionActive
+        columns: 4
+        columnSpacing: Theme.gap
+        rowSpacing: Theme.gap
         anchors {
-            bottom: pttBar.top; left: parent.left; right: parent.right
-            bottomMargin: Theme.u(6)
+            bottom: parent.bottom; left: parent.left; right: parent.right
+            bottomMargin: backend.safeBottom + Theme.u(6)
             leftMargin: backend.safeLeft + Theme.pad
             rightMargin: backend.safeRight + Theme.pad
         }
         height: visible ? implicitHeight : 0
-        spacing: Theme.u(6)
 
         Repeater {
             model: [["LSB","lsb"],["USB","usb"],["CW","cw"]]
             delegate: PanelKey {
                 required property var modelData
-                width: Theme.u(62)
-                height: Theme.u(42)
+                Layout.fillWidth: true
+                Layout.preferredHeight: Theme.u(42)
                 text: modelData[0]
                 // Lit from the RIG's reported mode, never from the tap.
                 lit: backend.mode === modelData[0]
@@ -220,41 +246,24 @@ ApplicationWindow {
         }
 
         // ⚠️ It transmits, so it wears the transmit colour, and it says STOP
-        // while it is running - a tune key that looks the same running as idle
-        // is one an operator presses twice.
+        // while it runs - a tune key that looks the same running as idle is one
+        // an operator presses twice.
         PanelKey {
-            width: Theme.u(120)
-            height: Theme.u(42)
-            text: backend.tunerActive ? "STOP TUNE" : "TUNE TGXL"
+            Layout.fillWidth: true
+            Layout.preferredHeight: Theme.u(42)
+            text: backend.tunerActive ? "STOP" : "TUNE"
             enabledKey: backend.tunerAvailable
             danger: true
             lit: backend.tunerActive
             onClicked: backend.tuneTgxl()
         }
-    }
 
-    // ── The PTT bar: pinned under the thumb ──────────────────────────────────
-    // ⚠️ IT REFLECTS THE RIG, NOT THE TAP. Red means the radio says it is
-    // transmitting; a bar that lit on its own click would be a confident wrong
-    // answer about RF, which is the one thing this app must never give.
-    RowLayout {
-        id: pttBar
-        visible: win.phone && backend.sessionActive
-        anchors {
-            bottom: parent.bottom; left: parent.left; right: parent.right
-            bottomMargin: backend.safeBottom + Theme.u(4)
-            leftMargin: backend.safeLeft + Theme.pad
-            rightMargin: backend.safeRight + Theme.pad
-        }
-        height: visible ? Theme.u(66) : 0
-        spacing: Theme.u(8)
-
-        // Arming claims the host's single transmitter; PTT keys the rig. They
-        // stay separate here for the same reason they are separate on the
-        // desktop panel: connecting must never land at the start of an over.
+        // Arming claims the host's single transmitter; PTT keys the rig. Kept
+        // separate for the same reason as on the desktop panel: connecting must
+        // never land at the start of an over.
         PanelKey {
-            Layout.preferredWidth: Theme.u(96)
-            Layout.fillHeight: true
+            Layout.fillWidth: true
+            Layout.preferredHeight: Theme.u(60)
             text: backend.armed ? "ARMED" : "ARM"
             lit: backend.armed
             danger: backend.testTone
@@ -262,7 +271,8 @@ ApplicationWindow {
         }
         PanelKey {
             Layout.fillWidth: true
-            Layout.fillHeight: true
+            Layout.columnSpan: 3
+            Layout.preferredHeight: Theme.u(60)
             text: backend.tx ? "ON AIR" : "PTT"
             lit: backend.tx
             danger: true
@@ -278,6 +288,10 @@ ApplicationWindow {
         // perfectly well, and shows the operator an empty screen.
         anchors.top: win.phone ? tabBar.bottom : parent.top
         anchors.bottom: win.phone ? quickStrip.top : parent.bottom
+        // ⚠️ On a phone the column is stretched to the viewport when it is
+        // SHORTER than it, so the open group's card fills the space instead of
+        // floating above a hole. Taller content still scrolls: contentHeight
+        // below is the larger of the two.
         anchors.left: parent.left
         anchors.right: parent.right
         // ⚠️ THE WINDOW IS NOT THE USABLE AREA ON A PHONE. The notch, the
@@ -293,7 +307,7 @@ ApplicationWindow {
         clip: true
         visible: backend.sessionActive
         contentWidth: width
-        contentHeight: panelCol.implicitHeight
+        contentHeight: Math.max(panelCol.implicitHeight, height)
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
@@ -304,16 +318,33 @@ ApplicationWindow {
             // viewport, so measuring width would be a test that cannot fail;
             // implicitWidth is what the content actually needs.
             objectName: "panelColumn"
-            width: flick.width - Theme.u(16)   // room for the scrollbar
-            spacing: Theme.u(10)
+            // ⚠️ THE SCROLLBAR GUTTER IS A DESKTOP THING. Reserving 16 units on
+            // a phone pulled every group card 16 units left of the tabs and the
+            // PTT row, which is exactly the kind of half-alignment that reads as
+            // "off" without naming itself. A touch scrollbar overlays.
+            width: win.phone ? flick.width : flick.width - Theme.u(16)
+            // ⚠️ NO SPACING ON A PHONE. Exactly one group is visible there and it
+            // is sized to the viewport, so column spacing and the leading spacer
+            // only pushed the card down away from the tab it belongs to - 14 px
+            // of it, measured off the render.
+            spacing: win.phone ? 0 : Theme.u(10)
 
-            Item { Layout.preferredHeight: Theme.u(2) }
+            Item { Layout.preferredHeight: win.phone ? 0 : Theme.u(2) }
 
             // ⚠️ ONE DEFINITION - PanelHead.qml. The phone pins its own copy above
-            // the tabs, and only one of the two is ever visible.
-            PanelHead {
+            // the tabs; this is the desktop's.
+            //
+            // ⚠️ A LOADER, NOT visible:false. An invisible head still left a
+            // 40 px hole between the tabs and the first card on the phone -
+            // measured off the rendered PNG, not guessed at - and a gap with no
+            // cause in the layout is exactly the kind of thing that reads as
+            // "off". Not loading it at all cannot leave a gap, and it also stops
+            // the phone building a second readout it never shows.
+            Loader {
+                active: !win.phone
+                visible: active
                 Layout.fillWidth: true
-                visible: !win.phone
+                sourceComponent: PanelHead {}
             }
 
             Group {
@@ -321,6 +352,11 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "band"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight - see
+                // the note on the other groups.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
                     // Wraps rather than shrinks. Eleven band keys on a 1024-wide
@@ -345,6 +381,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "mode"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
                     columns: Theme.cols(win.contentW, Theme.u(66), 6)
@@ -370,6 +417,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "vfo"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
                     // "−1 kHz" needs more room than a band number, so this row
@@ -428,6 +486,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "vfo"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
                     columns: Theme.cols(win.contentW, Theme.u(70), 5)
@@ -451,6 +520,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "rx"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
                     columns: Theme.cols(win.contentW, Theme.u(64), 9)
@@ -503,6 +583,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "ant"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 // ⚠️ A Flow, not a GridLayout: these keys are NATURAL width and
                 // grouped by meaning, and a grid would break the groups across
@@ -568,6 +659,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "keys"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 Flow {
                     Layout.fillWidth: true
@@ -604,6 +706,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "tx"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 Flow {
                     Layout.fillWidth: true
@@ -749,6 +862,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "tx"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
                     // A knob below about 120 px is not usable with a mouse and
@@ -792,6 +916,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "tx"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
                     // A device name needs far more room than a knob, so this row
@@ -866,6 +1001,17 @@ ApplicationWindow {
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "set"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 RowLayout {
                     Layout.fillWidth: true
@@ -898,11 +1044,77 @@ ApplicationWindow {
                 }
             }
 
+            // ⚠️ THE PHONE'S STATUS BAR, AT A SIZE A PERSON CAN READ. Same facts
+            // the desktop footer carries - which host, how fresh the data is,
+            // what the audio session actually did - but as panel rows instead of
+            // 9 px type along the bottom edge.
+            Group {
+                title: "Connection"
+                visible: win.phone && win.tab === "set"
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.u(8)
+
+                    Repeater {
+                        model: [
+                            { k: "Host",  v: backend.connectionText },
+                            { k: "Data",  v: backend.cacheAgeMs + " ms old" },
+                            { k: "Audio", v: backend.audioSessionText !== ""
+                                             ? backend.audioSessionText : backend.audioStatus },
+                            { k: "TX",    v: backend.txStatus.replace("tx: ", "") }
+                        ]
+                        delegate: RowLayout {
+                            required property var modelData
+                            Layout.fillWidth: true
+                            spacing: Theme.u(10)
+                            SilkLabel {
+                                text: modelData.k
+                                Layout.preferredWidth: Theme.u(54)
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.v
+                                wrapMode: Text.WrapAnywhere
+                                font.family: Theme.body; font.pixelSize: Theme.f(13)
+                                color: backend.stale ? Theme.amber : Theme.text
+                            }
+                        }
+                    }
+
+                    // ⚠️ A DELIBERATE ACT, AT THE BOTTOM OF A TAB, IN THE
+                    // TRANSMIT COLOUR. Disconnecting drops the session and hands
+                    // the station back - the host drops to the local power cap
+                    // and puts MOD SOURCE back to MIC - so it must not be
+                    // something a thumb does on the way past.
+                    PanelKey {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Theme.u(46)
+                        Layout.topMargin: Theme.u(6)
+                        text: "DISCONNECT"
+                        danger: true
+                        onClicked: backend.disconnectSession()
+                    }
+                }
+            }
+
             Group {
                 title: "Display"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
                 visible: !win.phone || win.tab === "set"
                 Layout.fillWidth: true
+                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+                // Stretching the column to the viewport and letting the open
+                // group fill it looked right and was not: measured off the
+                // rendered PNG, the card sat 39 px below the tabs and 50 px
+                // above the strip, centred in a cell it never grew into. This
+                // binding reads only the Flickable's height, which depends on
+                // the pinned chrome and never on the column - so it cannot loop,
+                // and a group taller than the screen still scrolls.
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 RowLayout {
                     Layout.fillWidth: true
@@ -942,8 +1154,14 @@ ApplicationWindow {
     }
 
     // Status bar
+    // ⚠️ DESKTOP ONLY. On a handset this was a row of 9 px text along the bottom
+    // edge - the operator's words: "useless to see on the phone" - ending in a
+    // "· disconnect" link the size of a hairline, which is a hard thing to hit
+    // deliberately and an easy one to hit by accident. The phone gets the same
+    // information at a readable size, and a real key, in the SET tab.
     footer: Rectangle {
-        height: Theme.rowH
+        visible: !win.phone
+        height: visible ? Theme.rowH : 0
         color: Theme.ground
         border.width: 0
         Rectangle { width: parent.width; height: 1; color: Theme.line }

@@ -107,8 +107,12 @@ Item {
         }
     }
 
+    // ⚠️ TOP-LEFT, NOT BOTTOM-LEFT. Along the bottom it sat exactly where the
+    // first tick label is drawn and the two overprinted - "SIGNAL" with a 1
+    // through it, on the face of the instrument. It also balances the reading in
+    // the opposite corner, which is what the desktop panel does everywhere else.
     SilkLabel { text: "Signal"; x: Theme.pad
-                anchors.bottom: parent.bottom; anchors.bottomMargin: Theme.u(3) }
+                anchors.top: parent.top; anchors.topMargin: Theme.u(5) }
 
     // ⚠️ The reading sits ABOVE the bar. Along the bottom it collided with the
     // +60 tick label - which is the one an operator most wants to read.

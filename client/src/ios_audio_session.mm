@@ -32,9 +32,15 @@ namespace {
 QString g_state = QStringLiteral("audio session not configured");
 
 QString Describe(AVAudioSession* s, bool active_ok, NSError* err) {
+    // ⚠️ TRIMMED, because the footer has one line and iOS returns
+    // "AVAudioSessionCategoryPlayAndRecord" - 36 characters of prefix that push
+    // the part that matters off the end of the screen. section('.') was wrong:
+    // the constant has no dots in it.
     NSString* cat = s.category ?: @"(none)";
+    QString cat_s = QString::fromNSString(cat);
+    cat_s.remove("AVAudioSessionCategory");
     QString out = QString("%1 %2 %3 Hz")
-                      .arg(QString::fromNSString(cat).section('.', -1))
+                      .arg(cat_s)
                       .arg(active_ok ? "active" : "INACTIVE")
                       .arg(static_cast<int>(s.sampleRate));
     if (!active_ok && err) {
