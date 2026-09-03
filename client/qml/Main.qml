@@ -8,6 +8,27 @@ ApplicationWindow {
     id: win
     visible: true
     title: "HamDeck"
+
+    // ⚠️ THE PHONE IS A DIFFERENT SHAPE, NOT A SMALLER DESKTOP. The panel below
+    // is one long column of groups, which is right on a monitor and is exactly
+    // what the operator called "really hard to work on a phone": every control
+    // sits behind a scroll, including the three looked at constantly - the
+    // frequency, the S-meter and the PTT.
+    //
+    // On a handset the same groups become: pinned head, a tab row, ONE group at
+    // a time, and a PTT bar under the thumb. NOTHING IS REMOVED and no control
+    // is redrawn - a tab only decides which group is visible - so there stays
+    // exactly one definition of every key on both shapes.
+    //
+    // ⚠️ MEASURED IN THEME UNITS, NOT RAW PIXELS. Theme.u() carries the density
+    // scale, so this threshold means the same thing on a 4K monitor as on a
+    // handset, which is the entire point of that scale (WIP.md 8d).
+    // ⚠️ FROM C++, NOT FROM width < Theme.u(600). That test is circular - Theme.u
+    // IS the scale, and the scale now depends on being a phone - so it settles on
+    // whichever answer it started from. Backend::phoneLayout reads the screen's
+    // logical width, which nothing here can move.
+    readonly property bool phone: backend.phoneLayout
+    property string tab: "band"
     color: Theme.panelDeep
 
     // ⚠️ THE MINIMUM SIZE SCALES WITH THE PANEL. A fixed 560x400 minimum is
@@ -86,8 +107,10 @@ ApplicationWindow {
     // home indicator is one the software keyboard fights for.
     ConnectPanel {
         anchors.fill: parent
-        anchors.topMargin: backend.safeTop
-        anchors.bottomMargin: backend.safeBottom
+        // On a phone the pinned head and the PTT bar already sit inside the safe
+        // area, so re-applying the insets here would only add a second gap.
+        anchors.topMargin: win.phone ? Theme.u(6) : backend.safeTop
+        anchors.bottomMargin: win.phone ? Theme.u(4) : backend.safeBottom
         anchors.leftMargin: backend.safeLeft
         anchors.rightMargin: backend.safeRight
         visible: !backend.sessionActive
@@ -103,9 +126,160 @@ ApplicationWindow {
     // not guessed - --check-resolutions prints the panel width beside the
     // window width, which is how it was caught.
     // A Flickable leaves its children's geometry alone.
+    // ── The phone head: pinned, never scrolled away ──────────────────────────
+    PanelHead {
+        id: phoneHead
+        visible: win.phone && backend.sessionActive
+        anchors {
+            top: parent.top; left: parent.left; right: parent.right
+            topMargin: backend.safeTop + Theme.u(2)
+            leftMargin: backend.safeLeft; rightMargin: backend.safeRight
+        }
+    }
+
+    // ── The tab row ───────────────────────────────────────────────────────────
+    // ⚠️ IT WRAPS, IT DOES NOT SCROLL. The first version was a horizontal
+    // Flickable and --check-resolutions failed it immediately: FREQ, TX and SET
+    // were off the right edge on every phone in the list. They were reachable by
+    // swiping, which is precisely the problem - the navigation for the whole app
+    // was hidden behind a gesture with nothing on screen to say so. A Flow costs
+    // one more row of height and hides nothing.
+    Flow {
+        id: tabBar
+        visible: win.phone && backend.sessionActive
+        anchors {
+            top: phoneHead.bottom; left: parent.left; right: parent.right
+            topMargin: Theme.u(8)
+            leftMargin: backend.safeLeft + Theme.pad
+            rightMargin: backend.safeRight + Theme.pad
+        }
+        height: visible ? implicitHeight : 0
+        spacing: Theme.u(6)
+
+        Repeater {
+            model: [
+                { key: "band", label: "BAND" },
+                { key: "mode", label: "MODE" },
+                { key: "vfo",  label: "VFO" },
+                { key: "rx",   label: "RX" },
+                { key: "ant",  label: "ANT" },
+                { key: "keys", label: "FREQ" },
+                { key: "tx",   label: "TX" },
+                { key: "set",  label: "SET" }
+            ]
+            delegate: PanelKey {
+                required property var modelData
+                // ⚠️ The touch-target floor applies hardest here: this row is
+                // how the operator reaches everything else in the app.
+                // ⚠️ TIGHT, BUT NOT BELOW THE TOUCH FLOOR. At the phone scale
+                // Theme.u(52) is 62 px wide and the row is 48 px tall, which
+                // clears 44 pt. The first cut padded these to ~110 px and the
+                // eight tabs took THREE rows of a 844-point screen - navigation
+                // eating the panel it navigates.
+                width: Math.max(Theme.u(52), implicitWidth + Theme.u(10))
+                height: Theme.u(40)
+                text: modelData.label
+                lit: win.tab === modelData.key
+                onClicked: win.tab = modelData.key
+            }
+        }
+    }
+
+    // ── The always-there strip ───────────────────────────────────────────────
+    // ⚠️ THESE ARE PINNED BECAUSE THE OPERATOR SAID SO, and the reason holds up:
+    // a tune is something you reach for mid-over, and LSB/USB/CW is the switch
+    // actually made on the air. Everything else can cost a tab; these two cannot.
+    //
+    // ⚠️ EVERY KEY HERE IS THE SAME CONTROL AS THE ONE IN ITS GROUP - same call,
+    // same lit-from-the-rig binding. Nothing is duplicated behaviourally: the
+    // mode keys light from backend.mode and the tune key from the RIG's tuner
+    // state, so a tune started from the ANT tab shows as running here too.
+    Flow {
+        id: quickStrip
+        visible: win.phone && backend.sessionActive
+        anchors {
+            bottom: pttBar.top; left: parent.left; right: parent.right
+            bottomMargin: Theme.u(6)
+            leftMargin: backend.safeLeft + Theme.pad
+            rightMargin: backend.safeRight + Theme.pad
+        }
+        height: visible ? implicitHeight : 0
+        spacing: Theme.u(6)
+
+        Repeater {
+            model: [["LSB","lsb"],["USB","usb"],["CW","cw"]]
+            delegate: PanelKey {
+                required property var modelData
+                width: Theme.u(62)
+                height: Theme.u(42)
+                text: modelData[0]
+                // Lit from the RIG's reported mode, never from the tap.
+                lit: backend.mode === modelData[0]
+                onClicked: backend.send("/api/mode/" + modelData[1])
+            }
+        }
+
+        // ⚠️ It transmits, so it wears the transmit colour, and it says STOP
+        // while it is running - a tune key that looks the same running as idle
+        // is one an operator presses twice.
+        PanelKey {
+            width: Theme.u(120)
+            height: Theme.u(42)
+            text: backend.tunerActive ? "STOP TUNE" : "TUNE TGXL"
+            enabledKey: backend.tunerAvailable
+            danger: true
+            lit: backend.tunerActive
+            onClicked: backend.tuneTgxl()
+        }
+    }
+
+    // ── The PTT bar: pinned under the thumb ──────────────────────────────────
+    // ⚠️ IT REFLECTS THE RIG, NOT THE TAP. Red means the radio says it is
+    // transmitting; a bar that lit on its own click would be a confident wrong
+    // answer about RF, which is the one thing this app must never give.
+    RowLayout {
+        id: pttBar
+        visible: win.phone && backend.sessionActive
+        anchors {
+            bottom: parent.bottom; left: parent.left; right: parent.right
+            bottomMargin: backend.safeBottom + Theme.u(4)
+            leftMargin: backend.safeLeft + Theme.pad
+            rightMargin: backend.safeRight + Theme.pad
+        }
+        height: visible ? Theme.u(66) : 0
+        spacing: Theme.u(8)
+
+        // Arming claims the host's single transmitter; PTT keys the rig. They
+        // stay separate here for the same reason they are separate on the
+        // desktop panel: connecting must never land at the start of an over.
+        PanelKey {
+            Layout.preferredWidth: Theme.u(96)
+            Layout.fillHeight: true
+            text: backend.armed ? "ARMED" : "ARM"
+            lit: backend.armed
+            danger: backend.testTone
+            onClicked: backend.toggleArm()
+        }
+        PanelKey {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            text: backend.tx ? "ON AIR" : "PTT"
+            lit: backend.tx
+            danger: true
+            onClicked: backend.send(backend.tx ? "/api/ptt/off" : "/api/ptt/on")
+        }
+    }
+
     Flickable {
         id: flick
-        anchors.fill: parent
+        // ⚠️ EXPLICIT ANCHORS, NOT anchors.fill WITH OVERRIDES. Mixing fill with
+        // individual anchors is how an item ends up with a height nothing set
+        // and a panel that renders zero pixels tall - which lays out and paints
+        // perfectly well, and shows the operator an empty screen.
+        anchors.top: win.phone ? tabBar.bottom : parent.top
+        anchors.bottom: win.phone ? quickStrip.top : parent.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
         // ⚠️ THE WINDOW IS NOT THE USABLE AREA ON A PHONE. The notch, the
         // rounded corners and the home indicator are inside the window and
         // outside what a thumb can reach - so every key can measure as present
@@ -135,38 +309,17 @@ ApplicationWindow {
 
             Item { Layout.preferredHeight: Theme.u(2) }
 
-            Readout {
+            // ⚠️ ONE DEFINITION - PanelHead.qml. The phone pins its own copy above
+            // the tabs, and only one of the two is ever visible.
+            PanelHead {
                 Layout.fillWidth: true
-                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
-                // The wheel tunes, in the step the row below is set to. The
-                // reference panel does this and it is the fastest way to move.
-                stepHz: backend.stepHz
-                onStepped: (up) => backend.send("/api/step/" + backend.stepHz +
-                                                (up ? "/up" : "/down"))
-                freq: backend.freqText
-                mode: backend.mode
-                vfo: backend.vfo
-                watts: backend.power
-                stale: backend.stale
-                band: backend.bandName
-                freqB: backend.freqB
-                // Typing a frequency: the parser and the range check live in
-                // C++ so they are shared and tested (ctest -R freq).
-                seedText: () => backend.freqEditText()
-                onCommit: (text) => backend.setFreqText(text)
-            }
-
-            SMeter {
-                Layout.fillWidth: true
-                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
-                raw: backend.sMeterRaw
-                unit: backend.sUnit
-                ticks: backend.meterTicks
-                transmitting: backend.tx
+                visible: !win.phone
             }
 
             Group {
                 title: "Band"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "band"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
@@ -189,6 +342,8 @@ ApplicationWindow {
 
             Group {
                 title: "Mode"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "mode"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
@@ -212,6 +367,8 @@ ApplicationWindow {
 
             Group {
                 title: "VFO"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "vfo"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
@@ -268,6 +425,8 @@ ApplicationWindow {
 
             Group {
                 title: "Tuning step"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "vfo"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
@@ -289,6 +448,8 @@ ApplicationWindow {
 
             Group {
                 title: "Receiver"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "rx"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
@@ -339,6 +500,8 @@ ApplicationWindow {
 
             Group {
                 title: "Antenna · Filter · RIT · Tuner"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "ant"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 // ⚠️ A Flow, not a GridLayout: these keys are NATURAL width and
@@ -402,6 +565,8 @@ ApplicationWindow {
 
             Group {
                 title: "Frequency entry"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "keys"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 Flow {
@@ -436,6 +601,8 @@ ApplicationWindow {
 
             Group {
                 title: "Transmit"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "tx"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 Flow {
@@ -579,6 +746,8 @@ ApplicationWindow {
 
             Group {
                 title: "Levels"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "tx"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
@@ -620,6 +789,8 @@ ApplicationWindow {
 
             Group {
                 title: "Audio"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "tx"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 GridLayout {
@@ -692,6 +863,8 @@ ApplicationWindow {
 
             Group {
                 title: "Recording"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "set"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 RowLayout {
@@ -727,6 +900,8 @@ ApplicationWindow {
 
             Group {
                 title: "Display"
+                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+                visible: !win.phone || win.tab === "set"
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 RowLayout {

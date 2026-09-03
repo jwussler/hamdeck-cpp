@@ -83,6 +83,9 @@ class Backend : public QObject {
   // survives a locked screen is invisible otherwise. There is no Mac or phone in
   // this development loop, so the operator's screenshot IS the measurement -
   // "PlayAndRecord active 48000 Hz" is what a working session looks like.
+  // The phone shape. NOTIFY rides uiScaleChanged because both are decided by the
+  // same thing - the screen the app is on - and setScreen already emits it.
+  Q_PROPERTY(bool phoneLayout READ phoneLayout NOTIFY uiScaleChanged)
   Q_PROPERTY(QString audioSessionText READ audioSessionText CONSTANT)
   Q_PROPERTY(QString savedHost READ savedHost CONSTANT)
   Q_PROPERTY(int savedPort READ savedPort CONSTANT)
@@ -296,6 +299,7 @@ class Backend : public QObject {
   // ⚠️ THE SCHEME COMES BACK WITH IT. The connect screen prefills this field, and
   // a saved TLS target that redisplays as a bare hostname is one Connect press
   // away from silently reverting to http on the port box's number.
+  bool phoneLayout() const;
   QString audioSessionText() const;
   QString savedHost() const {
     return settings_.tls && !settings_.host.isEmpty() ? "https://" + settings_.host

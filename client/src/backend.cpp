@@ -444,6 +444,20 @@ constexpr qreal kRefH = 900.0;
 constexpr qreal kMinScale = 0.80;
 constexpr qreal kMaxScale = 1.75;
 
+// ⚠️ A PHONE IS NOT A SMALL DESKTOP, AND FITTING THE PANEL TO IT IS THE WRONG
+// QUESTION. The automatic scale below fits the WHOLE panel - every group, top to
+// bottom - into the screen, which on any handset lands on the 0.80 floor: a
+// 30 px key on a 6-inch screen. That is what "really hard to work on a phone"
+// measured out to.
+//
+// The phone layout shows ONE group at a time, so there is nothing to fit and the
+// constraint is a thumb instead. Theme.keyH is 38 units, and Apple's touch
+// target floor is 44 pt: 44/38 = 1.16, so 1.20 is the smallest scale that clears
+// it with a little margin. It is a FLOOR, not a fixed value - a fixed density
+// mode the operator picked still wins.
+constexpr int  kPhoneWidth = 600;    // logical points, below which it is a handset
+constexpr qreal kPhoneMinScale = 1.20;
+
 struct ScaleMode { const char* label; qreal factor; };   // factor 0 = automatic
 const ScaleMode kModes[] = {
     {"Auto", 0.0}, {"90%", 0.90}, {"100%", 1.00}, {"125%", 1.25}, {"150%", 1.50},
@@ -459,6 +473,15 @@ void Backend::setScreen(int availW, int availH, qreal dpr) {
   emit uiScaleChanged();
 }
 
+// ⚠️ DECIDED HERE, NOT IN THE QML. The obvious QML test - "is the window
+// narrower than 600 scaled units?" - is circular: Theme.u() is the scale, and
+// the scale now depends on whether this is a phone. It reads fine and settles on
+// whichever answer it happened to start from. The screen's logical width is the
+// one input that does not move.
+bool Backend::phoneLayout() const {
+  return avail_w_ > 0 && avail_w_ < kPhoneWidth;
+}
+
 qreal Backend::uiScale() const {
   // A command-line override beats everything and is reported as such: a
   // screenshot taken at a scale the machine does not have must not be
@@ -472,6 +495,7 @@ qreal Backend::uiScale() const {
   // and the panel is much taller than it is wide.
   if (avail_w_ <= 0 || avail_h_ <= 0) return 1.0;
   const qreal fit = qMin(avail_w_ / kRefW, avail_h_ / kRefH);
+  if (phoneLayout()) return qBound(kPhoneMinScale, fit, kMaxScale);
   return qBound(kMinScale, fit, kMaxScale);
 }
 

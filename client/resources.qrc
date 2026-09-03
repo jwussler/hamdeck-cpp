@@ -16,6 +16,7 @@
     <file>qml/HamDeck/Group.qml</file>
     <file>qml/HamDeck/SMeter.qml</file>
     <file>qml/HamDeck/Readout.qml</file>
+    <file>qml/HamDeck/PanelHead.qml</file>
     <file>qml/HamDeck/ConnectPanel.qml</file>
     <file>qml/HamDeck/Field.qml</file>
     <file>qml/HamDeck/Knob.qml</file>
