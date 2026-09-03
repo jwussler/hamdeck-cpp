@@ -15,6 +15,7 @@
     <file>qml/HamDeck/PanelKey.qml</file>
     <file>qml/HamDeck/Group.qml</file>
     <file>qml/HamDeck/SMeter.qml</file>
+    <file>qml/HamDeck/TxMeters.qml</file>
     <file>qml/HamDeck/Readout.qml</file>
     <file>qml/HamDeck/PanelHead.qml</file>
     <file>qml/HamDeck/ConnectPanel.qml</file>

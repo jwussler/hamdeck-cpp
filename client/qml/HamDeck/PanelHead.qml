@@ -32,7 +32,18 @@ ColumnLayout {
         onCommit: (text) => backend.setFreqText(text)
     }
 
+    // ⚠️ THE HEAD SWAPS WHILE KEYED. The receiver is muted mid-over, so the
+    // S-meter has nothing to say; drive, ALC and power are what the operator
+    // needs in front of them, and on a phone this block is the only thing always
+    // on screen.
+    TxMeters {
+        Layout.fillWidth: true
+        Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+        visible: backend.tx
+    }
+
     SMeter {
+        visible: !backend.tx
         Layout.fillWidth: true
         Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
         raw: backend.sMeterRaw

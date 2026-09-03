@@ -35,6 +35,16 @@ Backend::Backend(QObject* parent) : QObject(parent) {
       // source - this panel, another client, the microphone - behaves alike.
       rx_.SetMutedForTx(tx);
       tx_audio_.SetKeyed(tx);
+      // ⚠️ Driven from the RIG's tx state, like everything else here, so the
+      // drive meter speeds up for a hand mic at the radio too - not only for a
+      // PTT pressed in this panel.
+      api_.SetTxActive(tx);
+      if (!tx) {
+        // Off the air the last peak is not a reading of anything. Zero it rather
+        // than leave a number sitting there looking live.
+        tx_peak_ = 0;
+        emit metersChanged();
+      }
       emit txChanged();
     }
     emit statusChanged();
@@ -45,6 +55,10 @@ Backend::Backend(QObject* parent) : QObject(parent) {
   });
   connect(&api_, &ApiClient::MetersUpdated, this, [this](QJsonObject m) {
     meters_ = m;
+    emit metersChanged();
+  });
+  connect(&api_, &ApiClient::BackendUpdated, this, [this](QJsonObject b) {
+    tx_peak_ = b.value("tx_peak").toInt();
     emit metersChanged();
   });
   connect(&api_, &ApiClient::ConnectionProblem, this, [this](QString why) {

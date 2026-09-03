@@ -38,6 +38,13 @@ class ApiClient : public QObject {
   // Starts polling /api/status. The interval matches the host's own 200ms cache
   // refresh - polling faster only re-reads the same cached values.
   void StartPolling(int interval_ms = 250);
+
+  // ⚠️ THE POLL GOES FASTER WHILE THE RIG IS KEYED, and only then. The meters
+  // are on a 1 Hz divider because frequency and mode do not move quickly; drive
+  // does. An operator setting mic gain against a meter that updates once a
+  // second is tuning against an average, which is exactly the measurement that
+  // cannot tell a peak from a mumble.
+  void SetTxActive(bool on) { tx_active_ = on; }
   void StopPolling();
 
   bool authenticated() const { return authenticated_; }
@@ -53,6 +60,7 @@ class ApiClient : public QObject {
   void StatusUpdated(QJsonObject status);
   void StatusFullUpdated(QJsonObject full);
   void MetersUpdated(QJsonObject meters);
+  void BackendUpdated(QJsonObject backend);
 
   // ⚠️ Emitted when the host says the cache is stale, so the panel can SAY the
   // reading is old rather than show a stale frequency as if it were live. The
@@ -65,6 +73,7 @@ class ApiClient : public QObject {
   QNetworkAccessManager net_;
   QString base_url_;
   QTimer poll_timer_;
+  bool tx_active_ = false;
   bool authenticated_ = false;
   int full_divider_ = 0;
 };

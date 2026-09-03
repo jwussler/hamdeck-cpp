@@ -857,6 +857,30 @@ ApplicationWindow {
                 }
             }
 
+            // ⚠️ WHERE THE ALC NUMBER COMES FROM, said out loud next to the
+            // control it is used to set. The host derives alc_pct from hamlib's
+            // yaesu_default_alc_cal (see /api/meters/scale), which is a default
+            // table, not a measurement of this radio. An operator setting drive
+            // against it is entitled to know that before they trust the last
+            // few percent of it.
+            Group {
+                title: "Drive · where the numbers come from"
+                visible: win.phone && win.tab === "tx"
+                Layout.fillWidth: true
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "Drive in is measured at the HOST - what actually reached the radio, " +
+                          "not what this phone sent. ALC % and power % come from hamlib's default " +
+                          "Yaesu tables, not from a calibration of this rig, so treat the 50-75% " +
+                          "band as where the radio wants to sit rather than as a measurement. " +
+                          "SWR is a ratio from the same source."
+                    font.family: Theme.body; font.pixelSize: Theme.f(12)
+                    color: Theme.dim
+                }
+            }
+
             Group {
                 title: "Levels"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.

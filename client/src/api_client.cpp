@@ -115,12 +115,28 @@ void ApiClient::PollOnce() {
 
   // The slow-moving set does not need the fast cadence; the host only re-reads
   // it about once a second anyway.
-  if (++full_divider_ % 4 == 0) {
+  const bool slow_tick = (++full_divider_ % 4 == 0);
+  if (slow_tick) {
     Get("/api/status/full", [this](QJsonObject f) {
       if (!f.isEmpty()) emit StatusFullUpdated(f);
     });
+  }
+  // ⚠️ METERS EVERY TICK WHILE KEYED. ALC and power are the numbers an operator
+  // sets drive against, and at 1 Hz they are an average of an over rather than a
+  // reading of one. Off the air they go back on the divider: nothing is moving,
+  // and this is a poll against a radio, not a free number.
+  if (slow_tick || tx_active_) {
     Get("/api/meters", [this](QJsonObject m) {
       if (!m.isEmpty()) emit MetersUpdated(m);
+    });
+  }
+  // ⚠️ AND THE DRIVE ARRIVING AT THE RADIO, which is a HOST-side measurement.
+  // The client knows what it sent; only the host knows what came out the other
+  // end of the socket, and that is the number that says whether the rig is being
+  // driven - the whole chain, not this end's intention.
+  if (tx_active_) {
+    Get("/api/backend", [this](QJsonObject b) {
+      if (!b.isEmpty()) emit BackendUpdated(b);
     });
   }
 }

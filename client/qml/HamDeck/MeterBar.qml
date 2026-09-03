@@ -11,6 +11,14 @@ Item {
     property real value: 0            // 0..1
     property string readout: ""
     property bool warn: false
+
+    // ⚠️ AN OPTIONAL TARGET BAND, DRAWN INSIDE THE TRACK. The first attempt put
+    // it behind the bar, where the track's own opaque ground painted straight
+    // over it - a marker that renders perfectly and is invisible. 0..1, and
+    // equal values mean no band.
+    property real targetFrom: 0
+    property real targetTo: 0
+
     implicitHeight: Theme.u(28)
 
     SilkLabel { id: cap; text: bar.label; anchors.left: parent.left; y: 0 }
@@ -28,6 +36,15 @@ Item {
         color: Theme.ground
         border.width: 1
         border.color: Theme.line
+        // The band an operator is aiming for, under the reading itself.
+        Rectangle {
+            visible: bar.targetTo > bar.targetFrom
+            x: 1 + bar.targetFrom * (parent.width - 2)
+            width: (bar.targetTo - bar.targetFrom) * (parent.width - 2)
+            y: 1
+            height: parent.height - 2
+            color: Theme.cyanFill
+        }
         Rectangle {
             width: Math.max(0, Math.min(1, bar.value)) * (parent.width - 2)
             height: parent.height - 2

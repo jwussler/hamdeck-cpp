@@ -4,6 +4,7 @@ SilkLabel 1.0 SilkLabel.qml
 PanelKey 1.0 PanelKey.qml
 Group 1.0 Group.qml
 SMeter 1.0 SMeter.qml
+TxMeters 1.0 TxMeters.qml
 Readout 1.0 Readout.qml
 PanelHead 1.0 PanelHead.qml
 ConnectPanel 1.0 ConnectPanel.qml

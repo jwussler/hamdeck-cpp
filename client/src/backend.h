@@ -46,6 +46,13 @@ class Backend : public QObject {
   Q_PROPERTY(QString sUnit READ sUnit NOTIFY metersChanged)
   Q_PROPERTY(QString swr READ swr NOTIFY metersChanged)
   Q_PROPERTY(int alcPct READ alcPct NOTIFY metersChanged)
+
+  // ⚠️ THE DRIVE THAT REACHED THE RADIO, 0-100, from the HOST's tx_peak (0-32767
+  // over a decaying window). Host-side on purpose: this end knows what it sent,
+  // and the number that matters is what arrived. It DECAYS rather than holding a
+  // high-water mark, because a mark that only ever rises cannot show a gain
+  // being turned DOWN - which is the entire job when setting drive (WIP.md 8g).
+  Q_PROPERTY(int txDrivePct READ txDrivePct NOTIFY metersChanged)
   Q_PROPERTY(int powerPct READ powerPct NOTIFY metersChanged)
   // Tick marks for the meter face, supplied by the HOST so the scale follows the
   // rig rather than being hard-coded per client.
@@ -273,6 +280,10 @@ class Backend : public QObject {
   QString sUnit() const { return meters_.value("s_unit").toString(); }
   QString swr() const;
   int alcPct() const { return meters_.value("alc_pct").toInt(); }
+  int txDrivePct() const {
+    // 32767 is full scale on the wire format the host receives.
+    return qBound(0, static_cast<int>(qRound(tx_peak_ * 100.0 / 32767.0)), 100);
+  }
   int powerPct() const { return meters_.value("power_pct").toInt(); }
   QVariantList meterTicks() const { return ticks_; }
 
@@ -366,6 +377,7 @@ class Backend : public QObject {
   int hotkey_index_ = 0;
   bool was_tx_ = false;
   int safe_top_ = 0, safe_bottom_ = 0, safe_left_ = 0, safe_right_ = 0;
+  int tx_peak_ = 0;      // host-reported, 0-32767
   bool session_active_ = false;
   bool connecting_ = false;
   QString last_error_;
