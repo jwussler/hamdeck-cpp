@@ -71,6 +71,26 @@ class TxAudioReceiver {
   bool HeldBy(const std::string& who) const;
   std::string Holder() const;
 
+  // ⚠️ DEAD-LINK DETECTION, and it is what makes a PHONE safe on this rig.
+  //
+  // The /ws/tx close handler unkeys, but it only runs when the socket actually
+  // CLOSES. A phone that walks into a tunnel, loses cell, or is suspended by iOS
+  // sends no FIN - the connection simply stops carrying data. From the host the
+  // socket looks perfectly healthy, the close callback never fires, and the only
+  // thing that ends the carrier is the 180 s transmit watchdog.
+  //
+  // While the operator is keyed the client streams PCM continuously, so a GAP in
+  // that stream IS the link dying. There is no other signal, and it needs no
+  // cooperation from the client - a phone that has stopped talking cannot answer
+  // a ping either.
+  //
+  // ⚠️ ARMED ONLY BY THE FIRST FRAME. PTT can be keyed over HTTP with no audio
+  // client at all, and a gap check armed at connect time would unkey that
+  // operator instantly. Released with the claim, so the next over re-arms.
+  bool LinkArmed() const { return link_armed_.load(); }
+  // Milliseconds since a frame last arrived, or -1 if none ever has.
+  long long MsSinceFrame() const;
+
   // Accepts one frame of PCM. `keyed` is the rig's own TX state.
   bool Accept(const char* data, size_t bytes, bool keyed);
 
@@ -149,6 +169,10 @@ class TxAudioReceiver {
   mutable std::mutex mu_;
   std::deque<std::vector<int16_t>> queue_;
   std::string holder_;
+  // steady_clock ms when a frame last arrived; 0 = never. Atomic because the
+  // poll loop reads it every cycle while the websocket thread writes it.
+  std::atomic<long long> last_frame_ms_{0};
+  std::atomic<bool> link_armed_{false};
   std::atomic<size_t> accepted_{0}, dropped_{0};
   std::atomic<int> peak_{0};   // loudest sample in the current window, 0-32767
   std::atomic<long long> peak_ms_{0};   // when that window started

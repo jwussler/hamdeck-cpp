@@ -16,6 +16,7 @@
 #include <thread>
 
 #include "api.h"
+#include "log.h"
 #include "cat_proxy.h"
 #include "audio.h"
 #include "http.h"
@@ -96,6 +97,36 @@ int main(int argc, char** argv) {
                    "  HAMDECK_ADMIN_HASH=pbkdf2:...    admin credential\n";
       return 2;
     }
+  }
+
+  // ── Logging ───────────────────────────────────────────────────────────────
+  // ⚠️ hdlog DEFAULTED TO kQuiet AND NOTHING EVER CALLED SetLevel, so every
+  // hdlog::Line in the host went nowhere - including the three TRANSMIT SAFETY
+  // events: a client disconnecting and handing the mic back, a dead link
+  // unkeying the rig, and an admin pressing kill. log.h has said "From
+  // --verbose / --trace / HAMDECK_LOG_LEVEL, called once at startup" since it
+  // was written. It was never true.
+  //
+  // The default is kInfo because these are a handful of significant events, not
+  // chatter, and a station that drops the operator's carrier has to be able to
+  // say WHY afterwards. A bad value aborts rather than silently picking one: a
+  // log level that is quietly not what you asked for is how an incident ends up
+  // with no record.
+  {
+    int log_level = hdlog::kInfo;
+    if (const char* lv = std::getenv("HAMDECK_LOG_LEVEL")) {
+      const std::string s = lv;
+      if (s == "0" || s == "quiet")        log_level = hdlog::kQuiet;
+      else if (s == "1" || s == "info")    log_level = hdlog::kInfo;
+      else if (s == "2" || s == "verbose") log_level = hdlog::kVerbose;
+      else if (s == "3" || s == "trace")   log_level = hdlog::kTrace;
+      else {
+        std::cerr << "FATAL: HAMDECK_LOG_LEVEL='" << s
+                  << "' is not one of quiet|info|verbose|trace (0-3)\n";
+        return 2;
+      }
+    }
+    hdlog::SetLevel(log_level);
   }
 
   // ⚠️ SIGPIPE ignored so a dropped client cannot kill the host.
@@ -287,6 +318,33 @@ int main(int argc, char** argv) {
   poller.OnPoll([&](bool connected, long long freq, const std::string& mode, bool tx) {
     const bool tuning = amp.IsActive() || tgxl.IsActive();
     qso_record.Observe(connected, freq, mode, tx, tuning);
+
+    // ⚠️ THE DEAD-LINK CHECK, AND IT LIVES NEXT TO THE RADIO ON PURPOSE.
+    //
+    // The /ws/tx close handler unkeys, but only when the socket CLOSES. A phone
+    // that walks into a tunnel or is suspended by iOS sends no FIN: the host
+    // sees a healthy connection with nothing coming down it, the close callback
+    // never runs, and the carrier stays up until the 180 s watchdog. That is the
+    // failure a handset introduces and a laptop mostly does not.
+    //
+    // ⚠️ NOT DURING A TUNE. The amp and TGXL tunes key the rig with no audio
+    // client at all, so a still-armed gap from the previous over would unkey the
+    // tune halfway through - which leaves the tuner with nothing to measure.
+    if (tx && !tuning && config.tx_link_timeout_ms > 0 && tx_audio.LinkArmed()) {
+      const long long gap = tx_audio.MsSinceFrame();
+      if (gap >= 0 && gap > config.tx_link_timeout_ms) {
+        // Queued rather than sent here: this callback runs inside the poll cycle
+        // and the queue is drained at the top of the next one, ~200 ms away.
+        poller.Enqueue("TX0;");
+        const std::string who = tx_audio.Holder();
+        // Releasing disarms the check, so this fires once rather than every
+        // cycle, and hands the transmitter to whoever reconnects.
+        if (!who.empty()) tx_audio.Release(who);
+        hdlog::Line(hdlog::kInfo, "TX",
+                    "dead link: no audio from " + (who.empty() ? "the client" : who) +
+                        " for " + std::to_string(gap) + " ms while keyed - unkeyed");
+      }
+    }
   });
   if (config.ptt_record_enabled && recorder.available()) {
     std::cout << "ptt auto-record: on (" << config.ptt_record_seconds

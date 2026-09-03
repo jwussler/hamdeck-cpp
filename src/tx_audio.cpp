@@ -21,6 +21,10 @@ void TxAudioReceiver::Release(const std::string& who) {
   if (holder_ == who) {
     holder_.clear();
     queue_.clear();   // never carry one operator's audio into another's over
+    // The gap check re-arms on the next over's first frame. Left armed, a fresh
+    // client that has not sent anything yet would inherit the last one's gap.
+    link_armed_.store(false);
+    last_frame_ms_.store(0);
   }
 }
 
@@ -34,7 +38,22 @@ std::string TxAudioReceiver::Holder() const {
   return holder_;
 }
 
+long long TxAudioReceiver::MsSinceFrame() const {
+  const long long at = last_frame_ms_.load();
+  if (at == 0) return -1;
+  const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  return now - at;
+}
+
 bool TxAudioReceiver::Accept(const char* data, size_t bytes, bool keyed) {
+  // ⚠️ STAMPED ON ARRIVAL, BEFORE ANY VALIDATION. The question this answers is
+  // "is the link alive", and a malformed frame still proves it is. Stamping
+  // only well-formed frames would make a client sending garbage look dead.
+  last_frame_ms_.store(std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count());
+  link_armed_.store(true);
+
   // A 16-bit stream must arrive in whole samples. An odd byte count means the
   // framing is wrong, and interpreting it anyway shifts every following sample
   // by one byte - which is loud noise on the air, not a subtle glitch.
