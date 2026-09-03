@@ -223,6 +223,19 @@ if(IOS)
     # app. Hence the explicit flag rather than sniffing the sysroot: a build that
     # silently dropped the permission plugin would install on a phone, run, and
     # then fail to transmit with nothing to say why.
+    # ⚠️ NOT THE FFmpeg MEDIA BACKEND. Qt's iOS package ships
+    # libQt6FFmpegMediaPluginImpl.a but NOT the FFmpeg libraries it calls, so a
+    # static link ends in a wall of undefined _sws_* and _av_* symbols. Nothing
+    # in this app decodes video; the plugin is pulled in purely because static
+    # builds auto-import every backend.
+    #
+    # Apple platforms have a native backend (AVFoundation) which is the correct
+    # one here regardless - it is what QAudioSource and QAudioSink use on a
+    # phone, and it is the one that respects the microphone permission.
+    qt_import_plugins(hamdeck-qml
+        INCLUDE_BY_TYPE multimedia Qt6::QDarwinMediaPlugin
+        EXCLUDE Qt6::QFFmpegMediaPlugin)
+
     if(HAMDECK_IOS_SIMULATOR)
         message(WARNING "iOS SIMULATOR build: permission plugins excluded. "
                         "This bundle cannot request the microphone - smoke test only.")

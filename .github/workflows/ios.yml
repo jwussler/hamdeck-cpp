@@ -93,6 +93,16 @@ jobs:
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="" \
             -DHAMDECK_VERSION="0.0.0"
 
+      # ⚠️ WHAT Qt ACTUALLY SHIPPED, printed before the build rather than guessed
+      # at afterwards. The plugin target names are what qt_import_plugins has to
+      # match, and getting one wrong fails at link with a symbol wall that names
+      # the plugin's contents and never the plugin.
+      - name: What plugins does this Qt have
+        run: |
+          IOS_QT=${{ runner.temp }}/qt-ios/Qt/6.9.2/ios
+          echo "── multimedia:";  ls "$IOS_QT/plugins/multimedia"  2>/dev/null || echo "  (none)"
+          echo "── permissions:"; ls "$IOS_QT/plugins/permissions" 2>/dev/null || echo "  (none)"
+
       - name: Build
         run: cmake --build client/build-ios --config Release -- -quiet
 
