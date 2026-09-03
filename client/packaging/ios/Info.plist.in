@@ -44,6 +44,15 @@
        loose PNG never appears in the bundle. Two more rejections (90022, 90023)
        come from the same root: no 120x120 and no 152x152 icon. -->
   <key>CFBundleIconName</key>              <string>AppIcon</string>
+
+  <!-- ⚠️ WITHOUT THIS, EVERY BUILD STOPS AND WAITS FOR A HUMAN. App Store
+       Connect asks "does your app use encryption?" and holds the build as
+       unavailable for testing until somebody answers in a browser - which on an
+       automated upload means the build lands and then silently does nothing.
+       false is the correct answer here and not a shortcut: the app's only
+       cryptography is HTTPS/WSS through the system's own TLS, which is the
+       exempt case in Apple's own terms. -->
+  <key>ITSAppUsesNonExemptEncryption</key> <false/>
   <key>LSRequiresIPhoneOS</key>            <true/>
   <key>MinimumOSVersion</key>              <string>16.0</string>
   <key>UIRequiredDeviceCapabilities</key>  <array><string>arm64</string></array>
