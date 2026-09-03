@@ -2206,6 +2206,69 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                             user, JsonBool(allow)));
     });
 
+    // /api/admin/user/admin/enable/<user> and .../disable/<user>
+    //
+    // ⚠️ THIS DID NOT EXIST. tx and station had routes; the admin right did not,
+    // so promoting somebody meant editing the config by hand and restarting the
+    // station host - and the console could only ever show admin as a read-only
+    // flag it had no way to change.
+    server.GetPrefix("/api/admin/user/admin/",
+                     [auth, persist_users](const std::string& suffix, const HttpRequest&,
+                                           HttpResponse& res) {
+      const auto slash = suffix.find('/');
+      if (slash == std::string::npos) {
+        WriteJson(res, 400,
+                  R"({"status":"error","message":"expected enable|disable/<username>"})");
+        return;
+      }
+      const std::string verb = suffix.substr(0, slash);
+      const std::string user = suffix.substr(slash + 1);
+      if (verb != "enable" && verb != "disable") {
+        WriteJson(res, 400, R"({"status":"error","message":"expected enable or disable"})");
+        return;
+      }
+      const bool allow = (verb == "enable");
+
+      // ⚠️ REFUSE TO DEMOTE THE LAST ADMIN - the same refusal /api/admin/user/
+      // remove/ makes, and for the same reason. Demoting is the easier way to
+      // reach the same dead end: the account still exists, still logs in, and
+      // simply cannot administer anything, so it does not even look like the
+      // mistake it is. Recovery is a config file edited by hand and a restart,
+      // on a box that may be at the far end of a radio link.
+      bool target_is_admin = false, exists = false;
+      for (const auto& u : auth->ListUsers()) {
+        if (u.username == user) { exists = true; target_is_admin = u.is_admin; }
+      }
+      if (!exists) {
+        WriteJson(res, 404, R"({"status":"error","message":"no such user"})");
+        return;
+      }
+      if (!allow && target_is_admin && auth->AdminCount() <= 1) {
+        WriteJson(res, 409,
+                  R"({"status":"error","message":"refusing to demote the last admin - )"
+                  R"(nobody would be able to administer this host. Make someone else an )"
+                  R"(admin first."})");
+        return;
+      }
+      if (!auth->SetIsAdmin(user, allow)) {
+        WriteJson(res, 404, R"({"status":"error","message":"no such user"})");
+        return;
+      }
+      std::string err;
+      // ⚠️ An admin right that never reached disk comes back - or goes away - at
+      // the next power cut, and this is the right that governs every other one.
+      if (!persist_users(err)) {
+        WriteJson(res, 500,
+                  std::format(R"({{"status":"error","message":"admin right changed on )"
+                              R"(the running host but NOT saved - it reverts on restart: )"
+                              R"({}"}})", err));
+        return;
+      }
+      WriteJson(res, 200,
+                std::format(R"({{"status":"ok","username":"{}","is_admin":{}}})",
+                            user, JsonBool(allow)));
+    });
+
     // /api/admin/user/station/enable/<user> and .../disable/<user>
     //
     // ⚠️ Deliberately its own route rather than a flag on the tx one. Transmit is

@@ -256,7 +256,18 @@ async function refresh() {
     const tr = document.createElement("tr");
     const n = document.createElement("span"); n.className = "u"; n.textContent = x.username;
     cell(tr, n);
-    cell(tr, flag(x.is_admin, x.is_admin ? "admin" : "—"));
+    cell(tr, btn(x.is_admin ? "Admin" : "No", x.is_admin ? "on" : "ghost",
+      () => act("/api/admin/user/admin/" + (x.is_admin ? "disable" : "enable") + "/" +
+                encodeURIComponent(x.username),
+                x.is_admin
+                  ? ("Take the admin right away from '" + x.username + "'?" +
+                     (x.username === $("#who").textContent
+                        ? "\n\nTHAT IS THE ACCOUNT YOU ARE SIGNED IN AS. You will lose " +
+                          "this page as soon as it takes effect."
+                        : ""))
+                  : ("Make '" + x.username + "' an administrator?\n\nThey will be able " +
+                     "to add and remove accounts, change passwords, grant transmit and " +
+                     "station rights, and end anyone's session.")));
     cell(tr, btn(x.can_transmit ? "Transmit" : "Denied", x.can_transmit ? "on" : "ghost",
       () => act("/api/admin/user/tx/" + (x.can_transmit ? "disable" : "enable") + "/" +
                 encodeURIComponent(x.username))));

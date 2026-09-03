@@ -246,6 +246,21 @@ bool AuthService::SetIsStation(const std::string& username, bool allow) {
   return true;
 }
 
+bool AuthService::SetIsAdmin(const std::string& username, bool allow) {
+  const std::string key = LowerTrim(username);
+  std::lock_guard<std::mutex> lock(mu_);
+  const auto it = users_.find(key);
+  if (it == users_.end()) return false;
+  it->second.is_admin = allow;
+  // ⚠️ Live sessions carry their own copy, so revoking admin without this leaves
+  // the demoted account administering the host until it logs out - which on an
+  // open tab is never.
+  for (auto& [token, s] : sessions_) {
+    if (s.username == key) s.is_admin = allow;
+  }
+  return true;
+}
+
 int AuthService::KillUserSessions(const std::string& username) {
   const std::string key = LowerTrim(username);
   std::lock_guard<std::mutex> lock(mu_);
