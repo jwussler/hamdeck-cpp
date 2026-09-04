@@ -68,6 +68,21 @@ ColumnLayout {
         visible: backend.tx
     }
 
+    // ⚠️ THE RECEIVE LEVEL, BESIDE THE SIGNAL METER AND NOT INSIDE IT. The
+    // S-meter is what the RADIO hears; this is what arrived at this client
+    // through the host and the socket, and the whole point is that they can
+    // disagree - a strong signal on a meter with no audio behind it is exactly
+    // the fault that had us guessing.
+    MeterBar {
+        Layout.fillWidth: true
+        Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+        visible: !backend.tx && backend.sessionActive
+        label: backend.rxSilent ? "Receive · NO AUDIO FOR 20 s" : "Receive"
+        value: backend.rxLevelPct / 100
+        readout: backend.rxLevelPct + "%"
+        warn: backend.rxSilent
+    }
+
     SMeter {
         visible: !backend.tx
         Layout.fillWidth: true

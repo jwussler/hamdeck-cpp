@@ -115,6 +115,12 @@ class Backend : public QObject {
   Q_PROPERTY(int linkJitterMs READ linkJitterMs NOTIFY statusChanged)
   Q_PROPERTY(QString linkHealth READ linkHealth NOTIFY statusChanged)
   Q_PROPERTY(int rxLevelPct READ rxLevelPct NOTIFY metersChanged)
+  // ⚠️ SET WHEN RECEIVE HAS BEEN SILENT FOR 20 SECONDS while connected and not
+  // transmitting. It says WHAT IT MEASURED - "no receive audio for 20 s" - and
+  // never what it means: a quiet band and a dead audio path are identical to
+  // this meter, and a panel that announced "receive is broken" would be a
+  // confident wrong answer about as often as it was right.
+  Q_PROPERTY(bool rxSilent READ rxSilent NOTIFY metersChanged)
   Q_PROPERTY(QString audioSessionText READ audioSessionText CONSTANT)
   Q_PROPERTY(QString savedHost READ savedHost CONSTANT)
   Q_PROPERTY(int savedPort READ savedPort CONSTANT)
@@ -368,6 +374,7 @@ class Backend : public QObject {
   bool canHideToTray() const { return can_hide_to_tray_; }
   void setCanHideToTray(bool v) { can_hide_to_tray_ = v; emit trayChanged(); }
   Q_INVOKABLE void noteHiddenToTray() { emit hidToTray(); }
+  bool rxSilent() const { return rx_silent_; }
   bool phoneLayout() const;
   QString audioSessionText() const;
   QString savedHost() const {
@@ -441,6 +448,8 @@ class Backend : public QObject {
   int tx_peak_ = 0;      // host-reported, 0-32767
   int rx_peak_ = 0;      // host-reported, 0-32767
   bool can_hide_to_tray_ = false;
+  bool rx_silent_ = false;
+  qint64 rx_quiet_since_ = 0;      // ms; 0 = audio is arriving
   QTimer hold_limit_;    // see the Pressed handler: 150 s, under the host's 180
   QString remote_tx_text_;
 

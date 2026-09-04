@@ -1,5 +1,7 @@
 #include "backend.h"
 
+#include <QDateTime>
+
 #ifdef Q_OS_IOS
 #include "ios_audio_session.h"
 #endif
@@ -60,6 +62,19 @@ Backend::Backend(QObject* parent) : QObject(parent) {
   connect(&api_, &ApiClient::BackendUpdated, this, [this](QJsonObject b) {
     tx_peak_ = b.value("tx_peak").toInt();
     rx_peak_ = b.value("rx_peak").toInt();
+
+    // ⚠️ TWENTY SECONDS, AND ONLY WHILE CONNECTED AND NOT TRANSMITTING. Ten is
+    // twitchy on a dead band between overs; thirty is long enough that the
+    // operator has already asked out loud what is wrong. The receiver is muted
+    // while keyed, so silence there means nothing at all.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (rx_peak_ > 0 || !session_active_ || tx()) {
+      rx_quiet_since_ = 0;
+      rx_silent_ = false;
+    } else {
+      if (rx_quiet_since_ == 0) rx_quiet_since_ = now;
+      rx_silent_ = (now - rx_quiet_since_) >= 20000;
+    }
     emit metersChanged();
   });
   connect(&api_, &ApiClient::ConnectionProblem, this, [this](QString why) {
