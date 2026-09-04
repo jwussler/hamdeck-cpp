@@ -107,8 +107,30 @@ Backend::Backend(QObject* parent) : QObject(parent) {
     return 0;
   }();
   hotkey_index_ = idx;
-  hotkey_.SetKey(PttHotkeyChoices()[idx].qt_key);
+
+  // ⚠️ MIGRATION, SO NOBODY LOSES THE KEY THEY WERE USING. Before 09/04/2026
+  // there were two settings: an in-app `ptt_key` and a separate
+  // `global_ptt_key`, and an operator could be on F9 in one and F13 in the
+  // other. There is one now. If the old global setting names a key in the list
+  // and the in-app one was still the default, the GLOBAL choice wins - it is
+  // the one that was working from anywhere, so it is the one they meant.
+  if (!settings_.global_ptt_key.isEmpty() && settings_.global_ptt_key != "Off" &&
+      settings_.ptt_key == Qt::Key_Pause) {
+    if (const HotkeyChoice* g = PttHotkeyByLabel(settings_.global_ptt_key)) {
+      const auto& all = PttHotkeyChoices();
+      for (int i = 0; i < all.size(); ++i) {
+        if (all[i].qt_key == g->qt_key) { hotkey_index_ = i; break; }
+      }
+      settings_.ptt_key = g->qt_key;
+      settings_.Save();
+    }
+  }
+
+  hotkey_.SetKey(PttHotkeyChoices()[hotkey_index_].qt_key);
   hotkey_.SetMode(settings_.ptt_hold ? PttMode::kHold : PttMode::kToggle);
+  // Keep the stored global label in step with the one key, so a profile written
+  // by this version cannot reintroduce the split.
+  settings_.global_ptt_key = QString::fromLatin1(PttHotkeyChoices()[hotkey_index_].label);
 }
 
 QString Backend::freqText() const {
@@ -148,30 +170,31 @@ QVariantList Backend::hotkeyChoices() const {
   return out;
 }
 
+// ⚠️ ONE SETTING, ARMED IN BOTH SCOPES. Choosing a PTT key now sets the
+// in-window filter AND asks the platform for the system-wide registration, so
+// there is no second list to disagree with this one. Where the global grab is
+// refused - another program holds the key, or the platform has no code for it -
+// globalHotkeyStatus says so; the key still works with the window focused.
 void Backend::setHotkeyIndex(int i) {
   const auto& c = PttHotkeyChoices();
   if (i < 0 || i >= c.size()) return;
   hotkey_index_ = i;
   settings_.ptt_key = c[i].qt_key;
   hotkey_.SetKey(settings_.ptt_key);
-  settings_.Save();
-  emit hotkeyChanged();
-}
-
-int Backend::globalHotkeyIndex() const {
-  const QStringList choices = GlobalHotkey::Choices();
-  const int i = choices.indexOf(settings_.global_ptt_key);
-  return i < 0 ? 0 : i;      // an unknown stored label falls back to "Off"
-}
-
-void Backend::setGlobalHotkeyIndex(int i) {
-  const QStringList choices = GlobalHotkey::Choices();
-  if (i < 0 || i >= choices.size()) return;
-  settings_.global_ptt_key = choices.at(i);
+  settings_.global_ptt_key = QString::fromLatin1(c[i].label);
   settings_.Save();
   ApplyGlobalHotkey();
   emit hotkeyChanged();
 }
+
+// The same index as the one PTT key. Kept so nothing that still reads it can
+// disagree with the key actually armed.
+int Backend::globalHotkeyIndex() const { return hotkey_index_; }
+
+// ⚠️ THE SECOND CHOOSER IS GONE. It is routed to the one setting so that any
+// caller left over - a saved profile, an older QML - cannot put the two scopes
+// back on different keys.
+void Backend::setGlobalHotkeyIndex(int i) { setHotkeyIndex(i); }
 
 void Backend::attachWindow(QWindow* w) {
   window_ = w;
