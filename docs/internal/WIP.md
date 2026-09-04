@@ -1710,3 +1710,103 @@ binary, which reads exactly like the fix not taking. Version and build are separ
 (`-DHAMDECK_VERSION=`, `-DHAMDECK_IOS_BUILD=`, wired to the workflow's `version` and `build`),
 the signed job asserts the build number it was asked for actually reached the plist, and 0.1.0
 build `0.1.0` is spent. **Next upload is build `2`.**
+
+## 09/03-04/2026 — the app on a phone: five builds in one night
+
+TestFlight builds 3-7. The app had never RUN anywhere before this session; the first thing the
+operator did with build 2 was work 40m on it.
+
+### ⚠️ Background audio: the plist key is the half that does nothing on its own
+`UIBackgroundModes=audio` grants permission. What decides is the **AVAudioSession category**,
+and Qt's default on iOS is an ambient one — silenced by the ring switch, stopped dead by
+backgrounding. Now `PlayAndRecord`, activated at launch and on every return to the foreground,
+with the interruption notification answered: a phone call deactivates the session and without
+that handler audio never comes back, which is worse than the bug being fixed.
+
+⚠️ **Mode stays `Default`, not `VoiceChat`.** VoiceChat sounds right for a radio and is not — it
+turns on Apple's echo cancellation and AGC, which process the operator's voice before it reaches
+the transmitter and fight the rig's ALC (§8g).
+
+⚠️ **There is no phone in this development loop, so the footer prints the live session state.**
+The operator's screenshot IS the measurement: `PlayAndRecord active 48000 Hz` is what working
+looks like.
+
+### The phone is a different shape, not a smaller desktop
+Pinned head (frequency + meter), one flat tab row, ONE group at a time, an always-there strip
+(LSB/USB/CW + TUNE — the operator's pick), and ARM/PTT under the thumb. **Nothing is removed and
+no control is redrawn**; a tab only decides which group is visible, so every key keeps one
+definition and both shapes stay in step.
+
+⚠️ **The real cause of "really hard to work on a phone" was the automatic UI scale.** It fits the
+WHOLE panel to the screen, so every handset landed on the 0.80 floor — a 30 px key. The phone
+shows one group, so there is nothing to fit: the constraint is a thumb. Floor is 1.20 (Apple's
+44 pt over Theme.keyH's 38), and keys went 48 px → 71-86 px.
+
+⚠️ **Phone-ness is decided in C++, from the screen's logical width.** The obvious QML test
+(`width < Theme.u(600)`) is circular — `Theme.u` IS the scale and the scale now depends on being
+a phone — and settles on whichever answer it started from.
+
+### "The layout just looks off" — four faults, all found by rendering and measuring
+The operator could not name it, so the PNG was measured instead of argued about:
+- the open group floated in a hole (39 px above, 50 px below), **centred in a cell
+  `Layout.fillHeight` never grew into**. Groups are sized against the Flickable's height
+  directly now — it depends only on the pinned chrome, so it cannot loop, and a tall group still
+  scrolls;
+- the tabs were PanelKeys drawn exactly like the band keys, in two rows: the navigation shouted
+  as loudly as the radio's own state. One flat row, accent underline, on a hairline;
+- nothing aligned — a **scrollbar gutter no phone has** pulled every card 16 px left of the tabs,
+  and the bottom two rows had independent widths. One 4-column grid now;
+- "SIGNAL" was printed on top of the first tick label, on the face of the meter.
+
+⚠️ **A `visible: false` head still left a 40 px hole**; a `Loader` with `active:` does not.
+
+### ⚠️ THE APP WAS LOGGING THE OPERATOR OUT, AND IT WAS THE KEYBOARD
+The password field is wiped the moment it is used, and the phone keyboard stays up after
+Connect — so a **second Return re-submitted host and username with an EMPTY password**. The host
+answered 401 and that tore down the LIVE session, throwing the operator back to the login screen
+mid-session. It reads as the app randomly logging itself out.
+
+Refused in the panel **and** in `connectTo`, a failed login can no longer drop a session that is
+already up, and the keyboard is dismissed the moment a session exists.
+
+### The drive test — two measurements, because the question has two answers
+- **Tone sweep (TRANSMITS)**: keys the rig, walks mic gain 40→160% in seven steps, records what
+  the RADIO reports. The tone is a constant 6000/32767 sine, so two runs are comparable — that
+  is what makes it a calibration rather than an impression.
+- **Voice check (keys NOTHING)**: the operator transmits as usual; it watches peaks for 10 s.
+
+⚠️ **A tone is not a voice.** A steady tone holds ALC where speech only touches it on peaks, so
+the sweep answers "does the chain work, and over what range does this radio respond" and only the
+voice check answers "are MY peaks landing in the band". Shipping the first alone and calling it
+calibration is measuring the easy thing and reporting the hard one. The pick is the LOWEST gain
+that reaches the band — past it there is no more power, only distortion — the whole curve is
+shown beside it, and nothing is applied without the operator pressing SET.
+
+⚠️ **Drive is measured at the HOST** (`/api/backend` `tx_peak`, decaying). This end knows what it
+sent; only the host knows what arrived, and that is the difference between a working microphone
+and a muted one. It decays rather than holding a high-water mark because a mark that only rises
+cannot show a gain being turned DOWN.
+
+Meters poll every tick (250 ms) while keyed instead of on the 1 Hz divider: setting gain against
+a second-long average is tuning against a number that cannot see a peak.
+
+### ⚠️ RUNNING IT CAUGHT WHAT COMPILING IT COULD NOT
+`--drive-sweep` runs the whole thing headless against the simulated host and checks the gain came
+back and the carrier dropped. First run: **the sweep fired `/api/ptt/off` and never checked, and
+left the rig transmitting.** It now unkeys, reads the rig back, retries once, and says loudly if
+the carrier is still up.
+
+⚠️ The harness itself had **two dangling captures**, one per nesting level, printing a mic gain of
+23584% and then -1% and failing a check that was fine. A test that lies about the thing it tests
+is worse than no test.
+
+⚠️ **Every sweep step read 0% ALC on the simulator, which is correct there and proves nothing
+about the calibration.** It proved the MECHANISM — steps advance, gain restores, the rig unkeys.
+The real radio is the first test of the numbers.
+
+### TLS, at last
+`http://` and `ws://` were hardcoded, so `https://radio.wa0o.com` could not be used at all. One
+parser decides scheme, host and port; a scheme typed in the host field beats a stale port box,
+and both sockets follow it. ⚠️ **A `ws://` to a TLS origin does not fail loudly** — the panel logs
+in, shows live status over REST, and is silently deaf, because only RX and TX audio ride the
+socket.
