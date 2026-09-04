@@ -211,7 +211,7 @@ endif()
 # has no tray, no menu bar and no window to close to one. Compiling it there
 # would add a whole Qt module to an app that could never use it.
 if(NOT IOS)
-    target_sources(hamdeck-qml PRIVATE src/tray.cpp)
+    target_sources(hamdeck-qml PRIVATE src/tray.cpp src/single_instance.cpp)
     target_link_libraries(hamdeck-qml PRIVATE Qt6::Widgets)
 endif()
 

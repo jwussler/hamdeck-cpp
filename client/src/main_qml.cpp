@@ -30,6 +30,7 @@
 #ifndef Q_OS_IOS
 #include <QApplication>
 
+#include "single_instance.h"
 #include "tray.h"
 #endif
 #ifdef Q_OS_IOS
@@ -475,6 +476,23 @@ int main(int argc, char** argv) {
         main_window = w;
     }
 
+    // ── One copy per user ───────────────────────────────────────────────────
+    // ⚠️ THE TRAY MADE THIS NECESSARY. A hidden HamDeck still holds the
+    // transmitter, so "the window is gone, I will start it again" used to bring
+    // up a SECOND client to fight the first for a claim only one can have.
+    // ⚠️ The headless modes are exempt: CI runs them, sometimes concurrently,
+    // and a lock that made the second exit silently would turn a real failure
+    // into a green tick.
+#ifndef Q_OS_IOS
+    SingleInstance instance;
+    const bool headless = parser.isSet(selftest) || parser.isSet(res_opt) ||
+                          parser.isSet(shot_opt) || parser.isSet(sweep_opt);
+    if (!headless && !instance.Claim()) {
+        std::cout << "HamDeck is already running - showing that window instead\n";
+        return 0;
+    }
+#endif
+
     // ── The tray, and on macOS the menu bar ─────────────────────────────────
 #ifndef Q_OS_IOS
     // ⚠️ A HIDDEN HAMDECK STILL HOLDS THE TRANSMITTER: the /ws/tx socket, the
@@ -509,6 +527,14 @@ int main(int argc, char** argv) {
         QObject::connect(&backend, &Backend::hidToTray, &tray, [&] {
             tray.ShowFirstHideHint();
         });
+    }
+    if (main_window) {
+        QObject::connect(&instance, &SingleInstance::showRequested, main_window,
+                         [main_window] {
+                             main_window->show();
+                             main_window->raise();
+                             main_window->requestActivate();
+                         });
     }
 #endif
 
