@@ -155,9 +155,104 @@ void GlobalHotkey::Unregister() {
   armed_ = false;
 }
 
+#elif defined(Q_OS_MACOS)
+
+// ⚠️ CARBON, AND ON PURPOSE. RegisterEventHotKey is the ONLY public macOS API
+// that registers a system-wide key without the Accessibility or Input Monitoring
+// permission - it is narrowly scoped, the app only ever learns that this one
+// combination was pressed, and it is what VS Code, Slack and Electron use. The
+// header is deprecated and the function is not going anywhere.
+//
+// ⚠️ AND kEventHotKeyReleased IS THE UNCERTAIN HALF. It is thinly documented,
+// and hold-to-talk depends on it entirely. So this asks for BOTH events and only
+// claims hold once a release has actually been seen: hold_capable_ starts false
+// on this platform and is set by the first release that arrives. Until then the
+// panel says "toggle", which is the truth, and the operator is never told they
+// have hold-to-talk on the word of a header file.
+
+#include <Carbon/Carbon.h>
+
+namespace {
+constexpr UInt32 kSignature = 'HMDK';
+}
+
+QString GlobalHotkey::Apply(const QString& label, QWindow*) {
+  Unregister();
+  label_ = label;
+  hold_capable_ = false;
+
+  const HotkeyChoice* choice = Find(label);
+  if (!choice) return {};
+  if (choice->mac_vk == 0) {
+    // Honest, per key: Pause/Break and Scroll Lock are not on a Mac keyboard,
+    // and a bare modifier cannot be registered as a hotkey.
+    return QString("%1 cannot be a system-wide key on macOS - it still works "
+                   "while HamDeck has focus").arg(label);
+  }
+
+  if (!handler_installed_) {
+    EventTypeSpec types[2] = {{kEventClassKeyboard, kEventHotKeyPressed},
+                              {kEventClassKeyboard, kEventHotKeyReleased}};
+    InstallApplicationEventHandler(
+        [](EventHandlerCallRef, EventRef event, void* ctx) -> OSStatus {
+          auto* self = static_cast<GlobalHotkey*>(ctx);
+          if (GetEventKind(event) == kEventHotKeyPressed) {
+            ++self->press_count_;
+            self->key_down_ = true;
+            emit self->Pressed();
+          } else {
+            // ⚠️ THE FIRST RELEASE THAT ARRIVES IS THE PROOF. Only now is hold
+            // claimed, and only now does the status line stop saying toggle.
+            self->hold_capable_ = true;
+            if (self->key_down_) {
+              self->key_down_ = false;
+              emit self->Released();
+            }
+          }
+          return noErr;
+        },
+        2, types, this, nullptr);
+    handler_installed_ = true;
+  }
+
+  EventHotKeyID id{kSignature, 1};
+  EventHotKeyRef ref = nullptr;
+  const OSStatus rc = RegisterEventHotKey(choice->mac_vk, choice->mods,
+                                          id, GetApplicationEventTarget(), 0, &ref);
+  if (rc != noErr || ref == nullptr) {
+    armed_ = false;
+    // ⚠️ eventHotKeyExistsErr is another program holding the key, which is not a
+    // fault in this app and the operator cannot be expected to guess it.
+    return rc == eventHotKeyExistsErr
+               ? QString("%1 is already taken by another program - pick another").arg(label)
+               : QString("could not register %1 (OSStatus %2)").arg(label).arg(rc);
+  }
+  hotkey_ref_ = ref;
+  vk_ = choice->mac_vk;
+  armed_ = true;
+  return {};
+}
+
+bool GlobalHotkey::nativeEventFilter(const QByteArray&, void*, qintptr*) { return false; }
+
+void GlobalHotkey::PollKeyState() {}
+
+void GlobalHotkey::Unregister() {
+  // ⚠️ A key held while the registration goes away never delivers its release.
+  if (key_down_) {
+    key_down_ = false;
+    emit Released();
+  }
+  if (hotkey_ref_) {
+    UnregisterEventHotKey(static_cast<EventHotKeyRef>(hotkey_ref_));
+    hotkey_ref_ = nullptr;
+  }
+  armed_ = false;
+}
+
 #else
 
-// ⚠️ NOT WRITTEN FOR X11 OR macOS, AND IT SAYS SO RATHER THAN PRETENDING.
+// ⚠️ NOT WRITTEN FOR X11, AND IT SAYS SO RATHER THAN PRETENDING.
 // X11 needs XGrabKey per keycode and fights desktop environments that already
 // grabbed the combination; macOS needs Accessibility permission granted by
 // hand. Reporting "armed" here would be the same class of lie as a status route
@@ -169,19 +264,8 @@ QString GlobalHotkey::Apply(const QString& label, QWindow*) {
   hold_capable_ = false;
   const HotkeyChoice* choice = Find(label);
   if (!choice || choice->vk == 0) return {};
-#ifdef Q_OS_MACOS
-  // ⚠️ macOS CAN do this without any permission prompt - Carbon
-  // RegisterEventHotKey is narrowly scoped and is what VS Code, Slack and
-  // Electron use - and the release half, kEventHotKeyReleased, is thinly
-  // documented enough that it must be PROVEN on a real Mac before hold-to-talk
-  // is claimed. Until that test is run this reports the truth: not armed.
-  // docs/internal/PTT-DESIGN.md carries the plan and the fallback ladder.
-  return "system-wide PTT on macOS is not wired up yet - the window-focus key "
-         "still works. See docs/internal/PTT-DESIGN.md";
-#else
   return "a system-wide hotkey needs platform code that is only written for "
-         "Windows - the window-focus key still works";
-#endif
+         "Windows and macOS - the window-focus key still works";
 }
 
 bool GlobalHotkey::nativeEventFilter(const QByteArray&, void*, qintptr*) { return false; }

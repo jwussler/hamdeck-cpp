@@ -215,6 +215,15 @@ if(NOT IOS)
     target_link_libraries(hamdeck-qml PRIVATE Qt6::Widgets)
 endif()
 
+# ⚠️ CARBON, FOR THE ONE THING IT IS STILL THE ONLY WAY TO DO. macOS has no
+# other public API that registers a system-wide hotkey WITHOUT the Accessibility
+# or Input Monitoring permission, and a PTT key that opens a permission dialog on
+# first press is not shippable. Deprecated header, current behaviour, used by
+# every app that has a global shortcut. Not on iOS, which has neither.
+if(APPLE AND NOT IOS)
+    target_link_libraries(hamdeck-qml PRIVATE "-framework Carbon")
+endif()
+
 if(IOS)
     # ⚠️ OBJECTIVE-C++ IS A SEPARATE LANGUAGE TO CMake, and a .mm added without
     # enabling it is compiled as C++ - which fails on the first @import with an

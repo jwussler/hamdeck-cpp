@@ -64,18 +64,24 @@ class GlobalHotkey : public QObject, public QAbstractNativeEventFilter {
   // assume a Released() follows every Pressed().
   void Released();
 
+ public:
+  // ⚠️ Public only because the Carbon event handler is a plain C callback and
+  // cannot be a friend. Nothing else touches these.
+  int press_count_ = 0;
+  bool key_down_ = false;
+  bool hold_capable_ = false;
+
  private:
   void Unregister();
   void PollKeyState();          // the release edge, where the platform needs polling
 
-  bool hold_capable_ = false;
-  bool key_down_ = false;
   unsigned vk_ = 0;
   class QTimer* poll_ = nullptr;
+  void* hotkey_ref_ = nullptr;      // macOS: EventHotKeyRef
+  bool handler_installed_ = false;  // macOS: the Carbon handler is installed once
 
   QString label_ = "Off";
   bool armed_ = false;
   bool installed_ = false;
-  int press_count_ = 0;
   void* hwnd_ = nullptr;
 };

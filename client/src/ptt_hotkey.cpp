@@ -16,25 +16,25 @@ const QVector<HotkeyChoice>& PttHotkeyChoices() {
   // vk values are Windows virtual-key codes, which is what the global
   // registration wants on the one platform that has it today.
   static const QVector<HotkeyChoice> kChoices = {
-      {"Pause/Break", Qt::Key_Pause, 0, 0x13,
+      {"Pause/Break", Qt::Key_Pause, 0, 0x13, 0,
        "Default. On most full-size keyboards, and almost nothing else uses it. "
        "Pick this if you are pressing a key with your hand."},
-      {"Scroll Lock", Qt::Key_ScrollLock, 0, 0x91,
+      {"Scroll Lock", Qt::Key_ScrollLock, 0, 0x91, 0,
        "Like Pause, and on many keyboards it lights an LED - a free transmit "
        "indicator. Missing from most compact keyboards."},
-      {"F13", Qt::Key_F13, 0, 0x7C,
+      {"F13", Qt::Key_F13, 0, 0x7C, 0x69,
        "The best choice IF you have the hardware for it. No physical keyboard "
        "sends F13, so nothing can conflict - and nothing can press it either. "
        "Map a footswitch or a programmable key to it."},
-      {"F14", Qt::Key_F14, 0, 0x7D, "As F13. Use if something already claims F13."},
-      {"F15", Qt::Key_F15, 0, 0x7E, "As F13. A third option for the same setup."},
-      {"F9", Qt::Key_F9, 0, 0x78,
+      {"F14", Qt::Key_F14, 0, 0x7D, 0x6B, "As F13. Use if something already claims F13."},
+      {"F15", Qt::Key_F15, 0, 0x7E, 0x71, "As F13. A third option for the same setup."},
+      {"F9", Qt::Key_F9, 0, 0x78, 0x65,
        "A key you can actually press without extra hardware. Plenty of "
        "applications bind F9, so if it stops working something else took it."},
-      {"F12", Qt::Key_F12, 0, 0x7B,
+      {"F12", Qt::Key_F12, 0, 0x7B, 0x6F,
        "As F9, and less commonly claimed - though browsers open developer tools "
        "with it."},
-      {"Right Ctrl", Qt::Key_Control, 0, 0xA3,
+      {"Right Ctrl", Qt::Key_Control, 0, 0xA3, 0,
        "Easy to reach and on every keyboard, but games, overlays and other apps "
        "commonly bind it."},
   };

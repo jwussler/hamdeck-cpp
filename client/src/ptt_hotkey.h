@@ -59,7 +59,14 @@ struct HotkeyChoice {
   const char* label;
   int qt_key;          // Qt::Key value, for the in-window event filter
   unsigned mods;       // platform modifier mask for the global registration
-  unsigned vk;         // platform virtual-key for the global registration
+  unsigned vk;         // WINDOWS virtual-key for the global registration
+  // ⚠️ macOS USES A DIFFERENT NUMBER FOR THE SAME KEY, and they are not
+  // convertible - these are Carbon kVK_* codes. Zero means the key cannot be
+  // registered system-wide on macOS at all, which is the honest answer for
+  // Pause/Break and Scroll Lock (no Mac keyboard sends them) and for Right Ctrl
+  // (RegisterEventHotKey cannot register a bare modifier). Those choices still
+  // work window-focused there, and the status line says so.
+  unsigned mac_vk;
   const char* note;    // why you would or would not pick this
 };
 
