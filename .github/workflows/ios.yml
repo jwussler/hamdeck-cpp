@@ -44,13 +44,13 @@ on:
         type: boolean
         default: false
       version:
-        description: "Marketing version (CFBundleShortVersionString), e.g. 0.1.0"
+        description: "Marketing version. LEAVE EMPTY - it comes from the latest git tag, which is the same number the desktop installers carry."
         type: string
-        default: "0.1.0"
+        default: ""
       build:
-        description: "⚠️ BUILD NUMBER (CFBundleVersion). MUST BE HIGHER THAN EVERY UPLOAD BEFORE IT, including rejected ones."
+        description: "Build number (CFBundleVersion). LEAVE EMPTY - it uses the run number, which always increases."
         type: string
-        default: "2"
+        default: ""
 
 jobs:
   simulator:
@@ -175,7 +175,11 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
+      # ⚠️ fetch-depth 0, BECAUSE THE VERSION COMES FROM THE TAG. The default
+      # shallow clone has no tags at all, so `git describe` fails and the build
+      # would take the version from nowhere.
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
 
       - name: Refuse to pretend
         env:
@@ -230,12 +234,24 @@ jobs:
           set -eux
           HOST_QT=${{ runner.temp }}/qt-host/Qt/6.9.2/macos
           IOS_QT=${{ runner.temp }}/qt-ios/Qt/6.9.2/ios
-          # ⚠️ A REJECTED UPLOAD STILL BURNS ITS BUILD NUMBER. 0.1.0/0.1.0 was
-          # rejected for the missing camera string; re-uploading with the same
-          # CFBundleVersion is refused by App Store Connect with a message about
-          # a redundant binary, which reads like the fix did not take.
+          # ⚠️ ONE VERSION LINE FOR EVERY PLATFORM, AND IT COMES FROM THE TAG.
+          # The phone spent its first five builds on 0.1.1-0.1.5 while the desktop
+          # installers were at 0.1.30 - two version universes for one app, which is
+          # how a 0.1.15 .deb once shipped inside a v0.1.29 release. The tag is the
+          # number, everywhere, and a version typed by hand is only an override.
           VER="${{ inputs.version }}"
+          if [ -z "$VER" ]; then
+            VER=$(git describe --tags --abbrev=0 | sed 's/^v//')
+            [ -n "$VER" ] || { echo "no tag to take a version from"; exit 1; }
+          fi
+          # ⚠️ A REJECTED UPLOAD STILL BURNS ITS BUILD NUMBER, so this must only
+          # ever go up. The run number does that on its own and cannot be
+          # forgotten; a hand-typed one was already re-used once.
           BUILD="${{ inputs.build }}"
+          [ -n "$BUILD" ] || BUILD="${{ github.run_number }}"
+          echo "version $VER (from ${{ inputs.version && 'input' || 'the latest tag' }}), build $BUILD"
+          echo "IOS_VER=$VER"     >> "$GITHUB_ENV"
+          echo "IOS_BUILD=$BUILD" >> "$GITHUB_ENV"
           cmake -S client -B client/build-ios -G Xcode \
             -DCMAKE_TOOLCHAIN_FILE="$IOS_QT/lib/cmake/Qt6/qt.toolchain.cmake" \
             -DQT_HOST_PATH="$HOST_QT" \
@@ -286,8 +302,14 @@ jobs:
           # And the build number is the one that was asked for, not a stale
           # default: a repeat is rejected as a redundant binary.
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$RUNNER_TEMP/verify/$APP/Info.plist" \
-            | grep -qx "${{ inputs.build }}" \
-            || { echo "CFBundleVersion is not ${{ inputs.build }} - the build number did not apply"; exit 1; }
+            | grep -qx "$IOS_BUILD" \
+            || { echo "CFBundleVersion is not $IOS_BUILD - the build number did not apply"; exit 1; }
+          # ⚠️ AND THE MARKETING VERSION, because this is the field that has to
+          # match the desktop installers. A phone build quietly carrying a
+          # different number is the confusion this whole change exists to end.
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$RUNNER_TEMP/verify/$APP/Info.plist" \
+            | grep -qx "$IOS_VER" \
+            || { echo "CFBundleShortVersionString is not $IOS_VER"; exit 1; }
           echo "IPA=$IPA" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
