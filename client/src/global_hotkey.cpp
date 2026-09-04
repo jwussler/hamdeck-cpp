@@ -1,5 +1,7 @@
 #include "global_hotkey.h"
 
+#include "ptt_hotkey.h"
+
 #include <QGuiApplication>
 #include <QStringList>
 
@@ -8,12 +10,6 @@
 #endif
 
 namespace {
-
-struct Choice {
-  const char* label;
-  unsigned modifiers;
-  unsigned vk;
-};
 
 #ifdef _WIN32
 constexpr unsigned kModAlt = MOD_ALT;
@@ -31,22 +27,12 @@ constexpr unsigned kModNoRepeat = 0x4000;
 // ⚠️ Ctrl+Alt+Space keeps the spacebar feel of a PTT bar without touching
 // Alt+Space itself. Pause and Scroll Lock are here because almost nothing else
 // uses them; F13 exists on many keyboards' macro layers and on footswitches.
-const Choice kChoices[] = {
-    {"Off", 0, 0},
-    {"Ctrl+Alt+Space", kModControl | kModAlt, 0x20},
-    {"Ctrl+Alt+P", kModControl | kModAlt, 0x50},
-    {"Ctrl+Shift+Space", kModControl | kModShift, 0x20},
-    {"Pause", 0, 0x13},
-    {"Scroll Lock", 0, 0x91},
-    {"F13", 0, 0x7C},
-};
+// ⚠️ THE LIST LIVES IN ptt_hotkey.h NOW, and this file no longer has one of its
+// own. Two tables with overlapping labels is what let the in-app key and the
+// global key drift apart into two settings nobody could hold in their head.
+// Everything here reads the shared HotkeyChoice.
 
-const Choice* Find(const QString& label) {
-  for (const auto& c : kChoices) {
-    if (label == QString::fromLatin1(c.label)) return &c;
-  }
-  return nullptr;
-}
+const HotkeyChoice* Find(const QString& label) { return PttHotkeyByLabel(label); }
 
 }  // namespace
 
@@ -54,9 +40,11 @@ GlobalHotkey::GlobalHotkey(QObject* parent) : QObject(parent) {}
 
 GlobalHotkey::~GlobalHotkey() { Unregister(); }
 
+// ⚠️ KEPT ONLY SO NOTHING ELSE HAS TO CHANGE ITS CALL. The choices are the
+// SHARED list now - one PTT key setting, armed in the window and system-wide.
 QStringList GlobalHotkey::Choices() {
   QStringList out;
-  for (const auto& c : kChoices) out << QString::fromLatin1(c.label);
+  for (const auto& c : PttHotkeyChoices()) out << QString::fromLatin1(c.label);
   return out;
 }
 
@@ -66,7 +54,7 @@ QString GlobalHotkey::Apply(const QString& label, QWindow* window) {
   Unregister();
   label_ = label;
 
-  const Choice* choice = Find(label);
+  const HotkeyChoice* choice = Find(label);
   if (!choice || choice->vk == 0) return {};        // "Off" - not an error
   if (!window) return "the window is not ready yet";
 
@@ -83,14 +71,14 @@ QString GlobalHotkey::Apply(const QString& label, QWindow* window) {
   }
 
   auto* h = static_cast<HWND>(hwnd_);
-  BOOL ok = RegisterHotKey(h, kHotkeyId, choice->modifiers | kModNoRepeat, choice->vk);
+  BOOL ok = RegisterHotKey(h, kHotkeyId, choice->mods | kModNoRepeat, choice->vk);
   DWORD err = ok ? 0 : GetLastError();
 
   // ⚠️ MOD_NOREPEAT is not honoured everywhere for a key with NO other
   // modifier. Fall back rather than leave the operator with a dead key: a
   // repeating toggle is still better than nothing, and it is obvious the moment
   // it happens.
-  if (!ok && choice->modifiers == 0) {
+  if (!ok && choice->mods == 0) {
     ok = RegisterHotKey(h, kHotkeyId, 0, choice->vk);
     if (!ok) err = GetLastError();
   }
@@ -135,7 +123,7 @@ void GlobalHotkey::Unregister() {
 QString GlobalHotkey::Apply(const QString& label, QWindow*) {
   label_ = label;
   armed_ = false;
-  const Choice* choice = Find(label);
+  const HotkeyChoice* choice = Find(label);
   if (!choice || choice->vk == 0) return {};
   return "a system-wide hotkey needs platform code that is only written for "
          "Windows - the window-focus key still works";

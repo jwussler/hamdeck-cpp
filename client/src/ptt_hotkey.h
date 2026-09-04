@@ -40,9 +40,26 @@ enum class PttMode {
             // RegisterHotKey global hotkey can ever offer.
 };
 
+// ⚠️ ONE KEY, ONE SETTING, BOTH SCOPES. There used to be two lists and two
+// settings - an in-app key here and a separate "global PTT key" with its own
+// labels - so a station could be set to F9 in one and F13 in the other and the
+// operator had to hold both in their head to know what would key the rig.
+// (Joe, 09/04/2026: "we just need one option to control ptt ... f9 for in app
+// and f13 global is too confusing.")
+//
+// A choice now carries BOTH halves: the Qt key for the in-window filter, and the
+// modifier/virtual-key pair the platform registration needs. Picking a key arms
+// it everywhere it can be armed, and where the global registration fails the
+// status line says so rather than the key quietly working in only one place.
+//
+// ⚠️ SINGLE KEYS ONLY, deliberately. Combinations (Ctrl+Alt+Space and friends)
+// were on the global list and nowhere else, which is half of how the two lists
+// drifted apart. A PTT key is pressed in a hurry, often without looking.
 struct HotkeyChoice {
   const char* label;
-  int qt_key;          // Qt::Key value
+  int qt_key;          // Qt::Key value, for the in-window event filter
+  unsigned mods;       // platform modifier mask for the global registration
+  unsigned vk;         // platform virtual-key for the global registration
   const char* note;    // why you would or would not pick this
 };
 
@@ -50,6 +67,10 @@ struct HotkeyChoice {
 // something on a given machine - a keyboard driver, a game overlay, a desktop
 // environment - and the fix should be "pick another" rather than "give up".
 const QVector<HotkeyChoice>& PttHotkeyChoices();
+
+// Look one up by the label stored in settings. Null when the label is unknown -
+// which happens to a profile written before this list existed.
+const HotkeyChoice* PttHotkeyByLabel(const QString& label);
 
 class PttHotkey : public QObject {
   Q_OBJECT
