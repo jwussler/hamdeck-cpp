@@ -1037,59 +1037,41 @@ ApplicationWindow {
                         }
                     }
 
-                    // ⚠️ TWO PTT KEYS, AND THE DIFFERENCE IS STATED. The first
-                    // works only while this window has focus and offers
-                    // hold-to-talk. The second works anywhere - including with
-                    // the logging program in front - but is press-to-TOGGLE,
-                    // because Windows' RegisterHotKey has no key-up message.
-                    ColumnLayout {
-                        width: Theme.u(230)
-                        spacing: Theme.u(2)
-                        SilkLabel { text: "Global PTT key (works anywhere)" }
-                        RowLayout {
-                            spacing: Theme.u(6)
-                            PanelCombo {
-                                Layout.preferredWidth: Theme.u(150)
-                                model: backend.globalHotkeyChoices
-                                currentIndex: backend.globalHotkeyIndex
-                                onActivated: backend.globalHotkeyIndex = currentIndex
-                                ToolTip.visible: hovered
-                                ToolTip.text: "Press to key, press again to unkey. " +
-                                              "Works while another program is in front. " +
-                                              "The host watchdog is what stops a toggle " +
-                                              "left on."
-                                ToolTip.delay: 400
-                            }
-                        }
-                        // Armed, or exactly why not. A PTT key that silently
-                        // does nothing is worse than no PTT key, and the usual
-                        // cause - another program already holds the key - is
-                        // not a fault in this app.
-                        Text {
-                            Layout.preferredWidth: Theme.u(230)
-                            // The press count turns "it does nothing" into one
-                            // of two answers: the key never registered, or it
-                            // registered and Windows is not delivering it.
-                            text: backend.globalHotkeyStatus +
-                                  (backend.globalHotkeyPresses > 0
-                                   ? " · " + backend.globalHotkeyPresses + " presses"
-                                   : "")
-                            wrapMode: Text.WordWrap
-                            font.family: Theme.body; font.pixelSize: Theme.f(10)
-                            color: backend.globalHotkeyStatus.indexOf("armed") === 0
-                                   ? Theme.okGreen : Theme.dim
-                        }
-                    }
+                }
+            }
 
+            // ⚠️ THE PTT KEY IS A SETUP CONTROL, and it was sitting in the
+            // Transmit group on the operating surface - a thing set once a year
+            // beside the things touched every over, which is the exact fault the
+            // two surfaces exist to fix.
+            Group {
+                title: "PTT key"
+                visible: win.view === "setup" && (!win.phone || win.tab === "set")
+                Layout.fillWidth: true
+                Layout.preferredHeight: win.phone
+                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
+                    : implicitHeight
+                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: Theme.u(10)
+                    // ⚠️ ONE PTT KEY, ONE CHOOSER. There were two here - "global
+                    // PTT key (works anywhere)" and "PTT key (this window only)"
+                    // - each with its own list, so a station could be set to F9
+                    // in one and F13 in the other and the operator had to hold
+                    // both in their head to know what would key the rig. Joe:
+                    // "if we are going for a global key we do not need 2
+                    // choices." The setting was unified first; this is the half
+                    // that was still on screen.
                     ColumnLayout {
-                        width: Theme.u(210)
+                        width: Theme.u(300)
                         spacing: Theme.u(2)
-                        SilkLabel { text: "PTT key (this window only)" }
+                        // (the group's own title already says "PTT key")
                         RowLayout {
                             spacing: Theme.u(6)
                             PanelCombo {
                                 id: hkBox
-                                Layout.preferredWidth: Theme.u(132)
+                                Layout.preferredWidth: Theme.u(150)
                                 model: backend.hotkeyChoices.map(c => c.label)
                                 currentIndex: backend.hotkeyIndex
                                 onActivated: backend.hotkeyIndex = currentIndex
@@ -1098,10 +1080,48 @@ ApplicationWindow {
                                               ? backend.hotkeyChoices[currentIndex].note : ""
                                 ToolTip.delay: 400
                             }
+                            // Hold or toggle for the WINDOW-focused case. Where
+                            // the key is armed system-wide, the platform decides
+                            // and the line below says which - it is not this
+                            // switch's to claim.
                             PanelKey {
                                 text: backend.hotkeyHold ? "Hold" : "Toggle"
                                 onClicked: backend.hotkeyHold = !backend.hotkeyHold
                             }
+                        }
+
+                        // ⚠️ WHAT IS ACTUALLY ARMED, AND WHY NOT WHEN IT IS NOT.
+                        // A PTT key that silently does nothing is worse than no
+                        // PTT key, and the usual cause - another program already
+                        // holds it - is not a fault in this app. The press count
+                        // turns "it does nothing" into one of two answers: the
+                        // key never registered, or it registered and the OS is
+                        // not delivering it.
+                        Text {
+                            Layout.preferredWidth: Theme.u(300)
+                            text: backend.globalHotkeyStatus +
+                                  (backend.globalHotkeyPresses > 0
+                                   ? " · " + backend.globalHotkeyPresses + " presses"
+                                   : "")
+                            wrapMode: Text.WordWrap
+                            font.family: Theme.body; font.pixelSize: Theme.f(10)
+                            color: backend.globalHotkeyStatus.indexOf("armed") === 0
+                                   ? Theme.okGreen : Theme.amber
+                        }
+
+                        // ⚠️ SAID AT THE MOMENT OF CHOOSING, not discovered
+                        // later: a key armed system-wide is taken from every
+                        // other application while HamDeck runs. That is fine for
+                        // F13, which no keyboard sends, and a real nuisance for
+                        // F9, which plenty of programs bind.
+                        Text {
+                            Layout.preferredWidth: Theme.u(300)
+                            visible: backend.globalHotkeyStatus.indexOf("armed") === 0
+                            text: "While HamDeck runs, this key belongs to it and " +
+                                  "will not reach other programs."
+                            wrapMode: Text.WordWrap
+                            font.family: Theme.body; font.pixelSize: Theme.f(10)
+                            color: Theme.dim
                         }
                     }
                 }
