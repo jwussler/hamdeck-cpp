@@ -28,7 +28,20 @@ ApplicationWindow {
     // whichever answer it started from. Backend::phoneLayout reads the screen's
     // logical width, which nothing here can move.
     readonly property bool phone: backend.phoneLayout
+
+    // ⚠️ TWO SURFACES, AND THIS IS THE WHOLE REORGANISATION. 97 controls sat in
+    // one scroll at equal weight: band and PTT beside the audio device pickers
+    // and the display scale. What you touch on the air is OPERATE; what you set
+    // once is SETUP. Nothing was deleted - every group still exists, and each one
+    // now says which surface it lives on. docs/internal/UI-DESIGN.md carries the
+    // argument and the research behind it.
+    property string view: "operate"
     property string tab: "band"
+
+    // The frequency keypad is a popover on the readout now. It was a 14-key group
+    // in the middle of the operating surface for something used a few times a
+    // session, and the readout itself has taken typed input all along.
+    property bool keypadOpen: false
     color: Theme.panelDeep
 
     // ⚠️ THE MINIMUM SIZE SCALES WITH THE PANEL. A fixed 560x400 minimum is
@@ -109,8 +122,8 @@ ApplicationWindow {
         anchors.fill: parent
         // On a phone the pinned head and the PTT bar already sit inside the safe
         // area, so re-applying the insets here would only add a second gap.
-        anchors.topMargin: win.phone ? Theme.u(6) : backend.safeTop
-        anchors.bottomMargin: win.phone ? Theme.u(4) : backend.safeBottom
+        anchors.topMargin: win.phone ? Theme.u(6) : Theme.u(8)
+        anchors.bottomMargin: win.phone ? Theme.u(4) : Theme.u(8)
         anchors.leftMargin: backend.safeLeft
         anchors.rightMargin: backend.safeRight
         visible: !backend.sessionActive
@@ -126,9 +139,249 @@ ApplicationWindow {
     // not guessed - --check-resolutions prints the panel width beside the
     // window width, which is how it was caught.
     // A Flickable leaves its children's geometry alone.
+    // ── The frequency keypad, as a popover on the readout ────────────────────
+    // ⚠️ IT WAS FOURTEEN KEYS IN THE MIDDLE OF THE OPERATING SURFACE for
+    // something used a few times a session, in an app whose readout has taken
+    // typed input all along. As a popover it costs nothing until it is asked
+    // for, and it opens where the frequency is - which is where a hand goes.
+    Popup {
+        id: keypadPopup
+        visible: win.keypadOpen
+        onClosed: win.keypadOpen = false
+        // ⚠️ NOT MODAL, AND THAT IS PRINCIPLE 3 IN A LINE. A modal keypad greys
+        // out the transmit bar, so with it open the operator cannot stop
+        // transmitting - which is exactly the thing that must never be more than
+        // one action away, and a control operator's actual duty. It still closes
+        // on Escape or a press outside; it just does not take the panel hostage.
+        modal: false
+        dim: false
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        x: Math.round((win.width - width) / 2)
+        y: Math.round(backend.safeTop + Theme.u(70))
+        width: Math.min(Theme.u(520), win.width - Theme.u(24))
+        padding: Theme.u(8)
+        background: Rectangle {
+            color: Theme.panelDeep
+            border.width: 1; border.color: Theme.line
+            radius: Theme.radius
+        }
+        contentItem: ColumnLayout {
+            spacing: Theme.u(8)
+            Group {
+            title: "Frequency entry"
+            // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
+            Layout.fillWidth: true
+            // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
+            // Stretching the column to the viewport and letting the open
+            // group fill it looked right and was not: measured off the
+            // rendered PNG, the card sat 39 px below the tabs and 50 px
+            // above the strip, centred in a cell it never grew into. This
+            // binding reads only the Flickable's height, which depends on
+            // the pinned chrome and never on the column - so it cannot loop,
+            // and a group taller than the screen still scrolls.
+            Layout.preferredHeight: win.phone
+            ? Math.max(implicitHeight, flick.height - Theme.u(6))
+            : implicitHeight
+            Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+            Flow {
+            Layout.fillWidth: true
+            spacing: Theme.u(6)
+            Rectangle {
+            width: Theme.u(120)
+            height: Theme.keyH
+            color: Theme.ground
+            radius: Theme.radius
+            border.width: 1; border.color: Theme.line
+            Text {
+            anchors.centerIn: parent
+            text: backend.freqBuffer === "" ? "—" : backend.freqBuffer
+            font.family: Theme.mono; font.pixelSize: Theme.f(18)
+            font.weight: Font.Medium
+            color: Theme.amber
+            }
+            }
+            Repeater {
+            model: 10
+            delegate: PanelKey {
+            text: String(index)
+            onClicked: backend.send("/api/freq/digit/" + index)
+            }
+            }
+            PanelKey { text: "⌫"; onClicked: backend.send("/api/freq/backspace") }
+            PanelKey { text: "Clr"; onClicked: backend.send("/api/freq/clear") }
+            PanelKey { text: "Go"; onClicked: backend.send("/api/freq/send") }
+            }
+            }
+            PanelKey {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Theme.u(38)
+                text: "CLOSE"
+                onClicked: win.keypadOpen = false
+            }
+        }
+    }
+
+    // ── The desktop surface switch and the link ──────────────────────────────
+    // ⚠️ THE LINK IS SHOWN, AND NOTHING ELSE IN THIS FIELD DOES IT. Remote
+    // failure is usually the path, not the radio: measured remote work puts a
+    // usable link under 200 ms and says JITTER is what actually breaks audio.
+    // A panel that looks identical on a healthy and a swinging link is lying by
+    // omission, so the number and its swing sit here on both surfaces.
+    RowLayout {
+        id: deskBar
+        visible: !win.phone && backend.sessionActive
+        anchors { top: parent.top; left: parent.left; right: parent.right
+                  topMargin: Theme.u(6)
+                  leftMargin: backend.safeLeft + Theme.pad
+                  rightMargin: backend.safeRight + Theme.pad }
+        height: visible ? Theme.u(34) : 0
+        spacing: Theme.u(18)
+
+        Repeater {
+            model: [{ key: "operate", label: "OPERATE" }, { key: "setup", label: "SETUP" }]
+            delegate: Item {
+                required property var modelData
+                Layout.preferredWidth: Theme.u(84)
+                Layout.fillHeight: true
+                Text {
+                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                    text: modelData.label
+                    font.family: Theme.display; font.pixelSize: Theme.f(13)
+                    font.letterSpacing: 1.4
+                    color: win.view === modelData.key ? Theme.cyan : Theme.dim
+                }
+                Rectangle {
+                    anchors { bottom: parent.bottom; left: parent.left }
+                    width: Theme.u(70); height: 2
+                    color: win.view === modelData.key ? Theme.cyan : "transparent"
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: win.view = modelData.key
+                }
+            }
+        }
+
+        Item { Layout.fillWidth: true }
+
+        // ⚠️ The colour is the reading, the number is the evidence. "ok" is never
+        // claimed before anything has been measured, and a stale rig outranks a
+        // fast link - a 12 ms round trip to a host that cannot hear the radio is
+        // not a healthy station.
+        Text {
+            visible: backend.linkHealth !== ""
+            text: "link " + backend.linkRttMs + " ms · jitter " + backend.linkJitterMs + " ms"
+            font.family: Theme.mono; font.pixelSize: Theme.f(11)
+            color: backend.linkHealth === "ok"   ? Theme.okGreen
+                 : backend.linkHealth === "fair" ? Theme.amber : Theme.txRed
+        }
+    }
+
+    Rectangle {
+        visible: deskBar.visible
+        anchors { top: deskBar.bottom; left: parent.left; right: parent.right }
+        height: 1
+        color: Theme.line
+    }
+
+    // ── The desktop transmit bar: fixed, on BOTH surfaces ────────────────────
+    // ⚠️ STOPPING IS NEVER BEHIND A SCROLL. A control operator has to be able to
+    // end a transmission immediately, and this used to be a group two thirds of
+    // the way down a column of ninety-seven controls.
+    // ⚠️ THE BAR IS OPAQUE, and that is not decoration: it is anchored over a
+    // scrolling column, so without a ground of its own the panel slides visibly
+    // underneath the transmit keys - the one place in the app where "what am I
+    // looking at" must never be a question.
+    Rectangle {
+        visible: deskTx.visible
+        anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+        height: deskTx.height + backend.safeBottom + Theme.u(12)
+        color: Theme.ground
+        Rectangle { width: parent.width; height: 1; color: Theme.line }
+    }
+
+    RowLayout {
+        id: deskTx
+        visible: !win.phone && backend.sessionActive
+        anchors { bottom: parent.bottom; left: parent.left; right: parent.right
+                  bottomMargin: backend.safeBottom + Theme.u(6)
+                  leftMargin: backend.safeLeft + Theme.pad
+                  rightMargin: backend.safeRight + Theme.pad }
+        height: visible ? Theme.u(52) : 0
+        spacing: Theme.gap
+
+        // ⚠️ THE BAR GIVES WAY IN A FIXED ORDER, and PTT is the last thing to
+        // shrink. The first version used fixed widths and --check-resolutions
+        // failed it at the minimum window width on a 1440p screen: a key was off
+        // the edge, and the key that goes off the edge of a transmit bar is the
+        // one somebody needs in a hurry.
+        PanelKey {
+            Layout.preferredWidth: Theme.u(96); Layout.minimumWidth: Theme.u(62)
+            Layout.fillHeight: true
+            text: backend.armed ? "ARMED" : "ARM"
+            lit: backend.armed
+            danger: backend.testTone
+            onClicked: backend.toggleArm()
+        }
+        PanelKey {
+            Layout.fillWidth: true; Layout.minimumWidth: Theme.u(110)
+            Layout.preferredWidth: Theme.u(220); Layout.fillHeight: true
+            text: backend.tx ? "ON AIR" : "PTT"
+            lit: backend.tx
+            danger: true
+            onClicked: backend.togglePtt()
+        }
+        PanelKey {
+            Layout.preferredWidth: Theme.u(110); Layout.minimumWidth: Theme.u(70)
+            Layout.fillHeight: true
+            text: deskTx.width > Theme.u(560)
+                  ? (backend.tunerActive ? "STOP TUNE" : "TUNE TGXL")
+                  : (backend.tunerActive ? "STOP" : "TUNE")
+            enabledKey: backend.tunerAvailable
+            danger: true
+            lit: backend.tunerActive
+            onClicked: backend.tuneTgxl()
+        }
+
+        // ⚠️ MIC GAIN LIVES HERE, on the operating surface, because setting drive
+        // means watching ALC while you move it. Setup is the principled home and
+        // it is the wrong one.
+        ColumnLayout {
+            // Drops out before the keys do - it is the only thing here that is
+            // not a transmitter control.
+            visible: deskTx.width > Theme.u(620)
+            Layout.preferredWidth: visible ? Theme.u(150) : 0
+            spacing: 0
+            SilkLabel { text: "Mic gain " + backend.micGain + "%" }
+            Knob {
+                Layout.fillWidth: true
+                from: 0; to: 200; value: backend.micGain
+                onMoved: (v) => backend.micGain = v
+            }
+        }
+
+        Item { Layout.fillWidth: true }
+
+        Text {
+            // ⚠️ The last thing to go, and while KEYED it never goes: drive, ALC
+            // and power are what an operator is watching mid-over.
+            visible: backend.tx || deskTx.width > Theme.u(760)
+            text: backend.tx
+                  ? "DRIVE " + backend.txDrivePct + "%   ALC " + backend.alcPct +
+                    "%   PWR " + backend.powerPct + "%   SWR " + backend.swr
+                  : "RX " + backend.rxLevelPct + "%   SWR " + backend.swr
+            font.family: Theme.mono; font.pixelSize: Theme.f(12)
+            color: backend.tx ? Theme.txRed
+                 : (backend.rxLevelPct === 0 ? Theme.amber : Theme.dim)
+        }
+    }
+
     // ── The phone head: pinned, never scrolled away ──────────────────────────
     PanelHead {
         id: phoneHead
+        keypadOpenRef: win.keypadOpen
+        onToggleKeypad: win.keypadOpen = !win.keypadOpen
         visible: win.phone && backend.sessionActive
         anchors {
             top: parent.top; left: parent.left; right: parent.right
@@ -161,19 +414,23 @@ ApplicationWindow {
         height: visible ? Theme.u(40) : 0
 
         Repeater {
+            // ⚠️ FREQ IS NOT A TAB ANY MORE - the keypad opens on the readout,
+            // which is where a hand looks for it. That freed the slot SETUP
+            // needed, so the phone and the desktop finally have the same two
+            // surfaces rather than the phone having a "SET" tab and the desktop
+            // having nothing.
             model: [
                 { key: "band", label: "BAND" },
                 { key: "mode", label: "MODE" },
                 { key: "vfo",  label: "VFO" },
                 { key: "rx",   label: "RX" },
                 { key: "ant",  label: "ANT" },
-                { key: "keys", label: "FREQ" },
                 { key: "tx",   label: "TX" },
-                { key: "set",  label: "SET" }
+                { key: "set",  label: "SETUP" }
             ]
             delegate: Item {
                 required property var modelData
-                width: tabBar.width / 8
+                width: tabBar.width / 7
                 height: tabBar.height
 
                 Text {
@@ -190,7 +447,16 @@ ApplicationWindow {
                     height: 2
                     color: win.tab === modelData.key ? Theme.cyan : "transparent"
                 }
-                MouseArea { anchors.fill: parent; onClicked: win.tab = modelData.key }
+                // ⚠️ A TAB IMPLIES ITS SURFACE. SETUP is a tab on a phone and a
+                // surface everywhere, and leaving the two to disagree is how a
+                // tap lands on an empty screen.
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        win.tab = modelData.key
+                        win.view = (modelData.key === "set") ? "setup" : "operate"
+                    }
+                }
             }
         }
     }
@@ -276,7 +542,7 @@ ApplicationWindow {
             text: backend.tx ? "ON AIR" : "PTT"
             lit: backend.tx
             danger: true
-            onClicked: backend.send(backend.tx ? "/api/ptt/off" : "/api/ptt/on")
+            onClicked: backend.togglePtt()
         }
     }
 
@@ -286,8 +552,8 @@ ApplicationWindow {
         // individual anchors is how an item ends up with a height nothing set
         // and a panel that renders zero pixels tall - which lays out and paints
         // perfectly well, and shows the operator an empty screen.
-        anchors.top: win.phone ? tabBar.bottom : parent.top
-        anchors.bottom: win.phone ? quickStrip.top : parent.bottom
+        anchors.top: win.phone ? tabBar.bottom : deskBar.bottom
+        anchors.bottom: win.phone ? quickStrip.top : deskTx.top
         // ⚠️ On a phone the column is stretched to the viewport when it is
         // SHORTER than it, so the open group's card fills the space instead of
         // floating above a hole. Taller content still scrolls: contentHeight
@@ -344,13 +610,16 @@ ApplicationWindow {
                 active: !win.phone
                 visible: active
                 Layout.fillWidth: true
-                sourceComponent: PanelHead {}
+                sourceComponent: PanelHead {
+                    keypadOpenRef: win.keypadOpen
+                    onToggleKeypad: win.keypadOpen = !win.keypadOpen
+                }
             }
 
             Group {
                 title: "Band"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "band"
+                visible: win.view === "operate" && (!win.phone || win.tab === "band")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight - see
                 // the note on the other groups.
@@ -379,7 +648,7 @@ ApplicationWindow {
             Group {
                 title: "Mode"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "mode"
+                visible: win.view === "operate" && (!win.phone || win.tab === "mode")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open
@@ -415,7 +684,7 @@ ApplicationWindow {
             Group {
                 title: "VFO"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "vfo"
+                visible: win.view === "operate" && (!win.phone || win.tab === "vfo")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open
@@ -484,7 +753,7 @@ ApplicationWindow {
             Group {
                 title: "Tuning step"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "vfo"
+                visible: win.view === "operate" && (!win.phone || win.tab === "vfo")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open
@@ -518,7 +787,7 @@ ApplicationWindow {
             Group {
                 title: "Receiver"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "rx"
+                visible: win.view === "operate" && (!win.phone || win.tab === "rx")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open
@@ -581,7 +850,7 @@ ApplicationWindow {
             Group {
                 title: "Antenna · Filter · RIT · Tuner"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "ant"
+                visible: win.view === "operate" && (!win.phone || win.tab === "ant")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open
@@ -654,57 +923,11 @@ ApplicationWindow {
                 }
             }
 
-            Group {
-                title: "Frequency entry"
-                // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "keys"
-                Layout.fillWidth: true
-                // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
-                // Stretching the column to the viewport and letting the open
-                // group fill it looked right and was not: measured off the
-                // rendered PNG, the card sat 39 px below the tabs and 50 px
-                // above the strip, centred in a cell it never grew into. This
-                // binding reads only the Flickable's height, which depends on
-                // the pinned chrome and never on the column - so it cannot loop,
-                // and a group taller than the screen still scrolls.
-                Layout.preferredHeight: win.phone
-                    ? Math.max(implicitHeight, flick.height - Theme.u(6))
-                    : implicitHeight
-                Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
-                Flow {
-                    Layout.fillWidth: true
-                    spacing: Theme.u(6)
-                    Rectangle {
-                        width: Theme.u(120)
-                        height: Theme.keyH
-                        color: Theme.ground
-                        radius: Theme.radius
-                        border.width: 1; border.color: Theme.line
-                        Text {
-                            anchors.centerIn: parent
-                            text: backend.freqBuffer === "" ? "—" : backend.freqBuffer
-                            font.family: Theme.mono; font.pixelSize: Theme.f(18)
-                            font.weight: Font.Medium
-                            color: Theme.amber
-                        }
-                    }
-                    Repeater {
-                        model: 10
-                        delegate: PanelKey {
-                            text: String(index)
-                            onClicked: backend.send("/api/freq/digit/" + index)
-                        }
-                    }
-                    PanelKey { text: "⌫"; onClicked: backend.send("/api/freq/backspace") }
-                    PanelKey { text: "Clr"; onClicked: backend.send("/api/freq/clear") }
-                    PanelKey { text: "Go"; onClicked: backend.send("/api/freq/send") }
-                }
-            }
 
             Group {
                 title: "Transmit"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "tx"
+                visible: win.view === "operate" && (!win.phone || win.tab === "tx")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open
@@ -735,7 +958,7 @@ ApplicationWindow {
                         text: backend.tx ? "On Air" : "PTT"
                         lit: backend.tx
                         danger: true
-                        onClicked: backend.send(backend.tx ? "/api/ptt/off" : "/api/ptt/on")
+                        onClicked: backend.togglePtt()
                     }
 
                     // ⚠️ WHAT THE RADIO SAID ABOUT REAR/USB. On MIC the rig
@@ -877,7 +1100,7 @@ ApplicationWindow {
             // never be discoverable only by pressing it.
             Group {
                 title: "Drive test"
-                visible: !win.phone || win.tab === "tx"
+                visible: win.view === "setup" && (!win.phone || win.tab === "set")
                 Layout.fillWidth: true
                 Layout.preferredHeight: win.phone
                     ? Math.max(implicitHeight, flick.height - Theme.u(6))
@@ -1015,7 +1238,7 @@ ApplicationWindow {
             // few percent of it.
             Group {
                 title: "Drive · where the numbers come from"
-                visible: win.phone && win.tab === "tx"
+                visible: win.view === "setup" && (!win.phone || win.tab === "set")
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 Text {
@@ -1034,7 +1257,7 @@ ApplicationWindow {
             Group {
                 title: "Levels"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "tx"
+                visible: win.view === "setup" && (!win.phone || win.tab === "set")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open
@@ -1088,7 +1311,7 @@ ApplicationWindow {
             Group {
                 title: "Audio"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "tx"
+                visible: win.view === "setup" && (!win.phone || win.tab === "set")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open
@@ -1173,7 +1396,7 @@ ApplicationWindow {
             Group {
                 title: "Recording"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "set"
+                visible: win.view === "setup" && (!win.phone || win.tab === "set")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open
@@ -1224,7 +1447,7 @@ ApplicationWindow {
             // 9 px type along the bottom edge.
             Group {
                 title: "Connection"
-                visible: win.phone && win.tab === "set"
+                visible: win.view === "setup" && (!win.phone || win.tab === "set")
                 Layout.fillWidth: true
                 Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
                 ColumnLayout {
@@ -1279,7 +1502,7 @@ ApplicationWindow {
             Group {
                 title: "Display"
                 // ⚠️ On a phone a tab hides this group; on a desktop nothing does.
-                visible: !win.phone || win.tab === "set"
+                visible: win.view === "setup" && (!win.phone || win.tab === "set")
                 Layout.fillWidth: true
                 // ⚠️ SIZED AGAINST THE VIEWPORT, NOT BY Layout.fillHeight.
                 // Stretching the column to the viewport and letting the open

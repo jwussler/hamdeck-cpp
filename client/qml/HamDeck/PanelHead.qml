@@ -10,11 +10,23 @@ import HamDeck
 // away from. Declaring it twice in Main.qml would work today and drift the first
 // time a binding changes on one copy and not the other.
 ColumnLayout {
+    // ⚠️ Passed in rather than reached out for: PanelHead is used in two places
+    // and must not know which window it is inside.
+    property bool keypadOpenRef: false
+    signal toggleKeypad()
+
     spacing: Theme.u(10)
 
-    Readout {
+    // ⚠️ The keypad opens from the readout it types into. It was a 14-key group
+    // sitting in the middle of the operating surface for something used a few
+    // times a session.
+    Item {
         Layout.fillWidth: true
-        Layout.leftMargin: Theme.pad; Layout.rightMargin: Theme.pad
+        implicitHeight: rd.implicitHeight
+        Readout {
+            id: rd
+            anchors.fill: parent
+            anchors.leftMargin: Theme.pad; anchors.rightMargin: Theme.pad
         // The wheel tunes, in the step the tuning-step row is set to.
         stepHz: backend.stepHz
         onStepped: (up) => backend.send("/api/step/" + backend.stepHz +
@@ -28,8 +40,22 @@ ColumnLayout {
         freqB: backend.freqB
         // Typing a frequency: the parser and the range check live in C++ so they
         // are shared and tested (ctest -R freq).
-        seedText: () => backend.freqEditText()
-        onCommit: (text) => backend.setFreqText(text)
+            seedText: () => backend.freqEditText()
+            onCommit: (text) => backend.setFreqText(text)
+        }
+    }
+
+    // ⚠️ BESIDE THE READOUT, NOT ON IT. Anchored inside, it landed on top of the
+    // POWER reading at phone widths - the value was still there, drawn under a
+    // key. A control that hides a reading is worse than one that costs a row.
+    PanelKey {
+        Layout.alignment: Qt.AlignRight
+        Layout.rightMargin: Theme.pad
+        Layout.preferredWidth: Theme.u(88)
+        Layout.preferredHeight: Theme.u(28)
+        text: "KEYPAD"
+        lit: keypadOpenRef
+        onClicked: toggleKeypad()
     }
 
     // ⚠️ THE HEAD SWAPS WHILE KEYED. The receiver is muted mid-over, so the

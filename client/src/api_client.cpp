@@ -1,5 +1,7 @@
 #include "api_client.h"
 
+#include <chrono>
+
 #include <QJsonDocument>
 #include <QNetworkCookie>
 #include <QNetworkCookieJar>
@@ -98,7 +100,11 @@ void ApiClient::StartPolling(int interval_ms) { poll_timer_.start(interval_ms); 
 void ApiClient::StopPolling() { poll_timer_.stop(); }
 
 void ApiClient::PollOnce() {
-  Get("/api/status", [this](QJsonObject s) {
+  // ⚠️ TIMED FROM THE REQUEST THIS ALREADY MAKES. A dedicated ping would measure
+  // a different path than the one carrying the panel's data, and would be one
+  // more thing to keep honest.
+  const auto sent_at = std::chrono::steady_clock::now();
+  Get("/api/status", [this, sent_at](QJsonObject s) {
     if (s.isEmpty()) {
       emit ConnectionProblem("no reply from host");
       return;
@@ -109,6 +115,22 @@ void ApiClient::PollOnce() {
     if (s.value("stale").toBool()) {
       emit ConnectionProblem(
           QString("rig data is stale (%1 ms old)").arg(s.value("cache_age_ms").toInt()));
+    }
+    const int rtt = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - sent_at).count());
+    rtt_ms_ = rtt;
+    rtt_window_.append(rtt);
+    while (rtt_window_.size() > 8) rtt_window_.removeFirst();
+    if (rtt_window_.size() >= 3) {
+      // Mean absolute deviation, not a standard deviation: it is the swing an
+      // operator actually hears as broken audio, and it does not need a square
+      // root to be honest about a set of eight samples.
+      double mean = 0;
+      for (int v : std::as_const(rtt_window_)) mean += v;
+      mean /= rtt_window_.size();
+      double dev = 0;
+      for (int v : std::as_const(rtt_window_)) dev += qAbs(v - mean);
+      jitter_ms_ = static_cast<int>(qRound(dev / rtt_window_.size()));
     }
     emit StatusUpdated(s);
   });
@@ -134,7 +156,11 @@ void ApiClient::PollOnce() {
   // The client knows what it sent; only the host knows what came out the other
   // end of the socket, and that is the number that says whether the rig is being
   // driven - the whole chain, not this end's intention.
-  if (tx_active_) {
+  // ⚠️ ALWAYS, not only while keyed. tx_peak was the only reason to fetch this
+  // before; rx_peak is a RECEIVE reading, and a receive meter that only updates
+  // while transmitting is worse than none. Fast while keyed, on the divider
+  // otherwise.
+  if (tx_active_ || slow_tick) {
     Get("/api/backend", [this](QJsonObject b) {
       if (!b.isEmpty()) emit BackendUpdated(b);
     });

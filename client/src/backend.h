@@ -106,6 +106,11 @@ class Backend : public QObject {
   // The phone shape. NOTIFY rides uiScaleChanged because both are decided by the
   // same thing - the screen the app is on - and setScreen already emits it.
   Q_PROPERTY(bool phoneLayout READ phoneLayout NOTIFY uiScaleChanged)
+  // The link: round trip, its swing, and one word for how that reads.
+  Q_PROPERTY(int linkRttMs READ linkRttMs NOTIFY statusChanged)
+  Q_PROPERTY(int linkJitterMs READ linkJitterMs NOTIFY statusChanged)
+  Q_PROPERTY(QString linkHealth READ linkHealth NOTIFY statusChanged)
+  Q_PROPERTY(int rxLevelPct READ rxLevelPct NOTIFY metersChanged)
   Q_PROPERTY(QString audioSessionText READ audioSessionText CONSTANT)
   Q_PROPERTY(QString savedHost READ savedHost CONSTANT)
   Q_PROPERTY(int savedPort READ savedPort CONSTANT)
@@ -198,7 +203,8 @@ class Backend : public QObject {
 
   Q_INVOKABLE bool connectTo(const QString& host, int port, const QString& user,
                              const QString& password);
-  Q_INVOKABLE void send(const QString& path);      // fire a rig route
+  Q_INVOKABLE void send(const QString& path);
+  Q_INVOKABLE void togglePtt();      // fire a rig route
   Q_INVOKABLE void toggleArm();
   Q_INVOKABLE void startToneSweep();
   Q_INVOKABLE void startVoiceCheck();
@@ -338,6 +344,23 @@ class Backend : public QObject {
   // ⚠️ THE SCHEME COMES BACK WITH IT. The connect screen prefills this field, and
   // a saved TLS target that redisplays as a bare hostname is one Connect press
   // away from silently reverting to http on the port box's number.
+  int linkRttMs() const { return api_.RttMs(); }
+  int linkJitterMs() const { return api_.JitterMs(); }
+  // ⚠️ "ok" is not claimed before anything has been measured, and a stale rig
+  // reading outranks a fast link: a 12 ms round trip to a host that is not
+  // hearing the radio is not a healthy station.
+  QString linkHealth() const {
+    if (api_.RttMs() < 0) return "";
+    if (stale()) return "stale";
+    if (api_.RttMs() > 400 || api_.JitterMs() > 60) return "poor";
+    if (api_.RttMs() > 200 || api_.JitterMs() > 25) return "fair";
+    return "ok";
+  }
+  // Receive level as the HOST measured it, 0-100. Zero while audio is playing
+  // is the one reading that says the band is not reaching this client.
+  int rxLevelPct() const {
+    return qBound(0, static_cast<int>(qRound(rx_peak_ * 100.0 / 32767.0)), 100);
+  }
   bool phoneLayout() const;
   QString audioSessionText() const;
   QString savedHost() const {
@@ -407,6 +430,7 @@ class Backend : public QObject {
   bool was_tx_ = false;
   int safe_top_ = 0, safe_bottom_ = 0, safe_left_ = 0, safe_right_ = 0;
   int tx_peak_ = 0;      // host-reported, 0-32767
+  int rx_peak_ = 0;      // host-reported, 0-32767
   QString remote_tx_text_;
 
   // ── Drive test state ───────────────────────────────────────────────────────

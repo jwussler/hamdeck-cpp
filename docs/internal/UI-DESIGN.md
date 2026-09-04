@@ -125,7 +125,40 @@ ANT 1/2/3(3), ARM/PTT/TUNE(3), the readout, the meters. **≈55 controls, all on
 PTT key + hold/toggle(2), drive test(3), connection + disconnect(2), provenance text.
 **≈16, none of them touched during a QSO.**
 
-## 8. Open questions for Joe
+## 8. The five calls, made 09/04/2026
+
+Joe: *"you can do what you need to and build the new clients hakld done sucks."* So these were
+decided rather than left open, and each is one line to change:
+
+1. **RIT is pinned** on the operating surface. Chasing a drifting station is a mid-QSO job.
+2. **Mic gain is live on the operating surface**, in the transmit bar - setting drive means
+   watching ALC while you move it, and Setup is the principled home and the wrong one.
+3. **The link is a number AND a colour**: `link 41 ms · jitter 6 ms`, green/amber/red. The
+   colour reads at a glance, the number is the evidence behind it. ⚠️ A stale rig outranks a
+   fast link - 12 ms to a host that cannot hear the radio is not a healthy station.
+4. **Drawn for 1280 and scaling up.** `--check-resolutions` walks 375 → 3840 either way.
+5. **Nothing else moved to Setup** beyond the list in §7.
+
+⚠️ **The keypad popover is NOT modal**, and that is principle 3 in one line: a modal popup greys
+out the transmit bar, so with the keypad open the operator could not stop transmitting.
+
+## 9. What the walk caught that reasoning had not
+
+- the fixed-width transmit bar put a key **off the right edge** at minimum width on a 1440p
+  screen - and the key that goes off the edge of a transmit bar is the one somebody needs in a
+  hurry. It now gives way in a fixed order: the mic gain first, then the status text, then the
+  labels shorten, and PTT is the last thing to shrink;
+- the bar was **transparent**, so the panel scrolled visibly underneath the transmit keys;
+- the KEYPAD key, anchored inside the readout, **landed on top of the POWER reading** at phone
+  widths - the value still drawn, underneath a key.
+
+## 10. Still open after this
+
+- **Accessibility (P5).** The keyboard path exists for PTT and the panel is labelled, but
+  "keyboard-complete" is not yet true and it is the field's clearest open goal. Next.
+- The RX level is measured and shown as a number; it wants a proper meter beside the S-meter.
+
+## 11. Original open questions (kept for the record)
 
 1. **RIT** — pinned on the operating surface, or is it rare enough for a popover?
 2. **Mic gain** — SETUP is the principled home, but you may want it live on the operating surface

@@ -11,6 +11,7 @@
 #include <QObject>
 #include <QString>
 #include <QTimer>
+#include <QVector>
 #include <functional>
 
 class ApiClient : public QObject {
@@ -45,6 +46,15 @@ class ApiClient : public QObject {
   // second is tuning against an average, which is exactly the measurement that
   // cannot tell a peak from a mumble.
   void SetTxActive(bool on) { tx_active_ = on; }
+
+  // ⚠️ THE LINK, NOT THE RIG. Every other remote panel shows what the radio is
+  // doing and nothing about the path to it, so a jittering connection and a
+  // healthy one look identical until the audio breaks up. Round-trip is measured
+  // on the status poll - a request that happens anyway, so it costs nothing -
+  // and jitter is the mean deviation over the last few, because measured remote
+  // work says jitter is what actually breaks audio, not latency itself.
+  int RttMs() const { return rtt_ms_; }
+  int JitterMs() const { return jitter_ms_; }
   void StopPolling();
 
   bool authenticated() const { return authenticated_; }
@@ -74,6 +84,9 @@ class ApiClient : public QObject {
   QString base_url_;
   QTimer poll_timer_;
   bool tx_active_ = false;
+  int rtt_ms_ = -1;          // -1 until the first reply
+  int jitter_ms_ = 0;
+  QVector<int> rtt_window_;  // last few round trips, for the deviation
   bool authenticated_ = false;
   int full_divider_ = 0;
 };

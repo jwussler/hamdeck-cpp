@@ -59,6 +59,7 @@ Backend::Backend(QObject* parent) : QObject(parent) {
   });
   connect(&api_, &ApiClient::BackendUpdated, this, [this](QJsonObject b) {
     tx_peak_ = b.value("tx_peak").toInt();
+    rx_peak_ = b.value("rx_peak").toInt();
     emit metersChanged();
   });
   connect(&api_, &ApiClient::ConnectionProblem, this, [this](QString why) {
@@ -95,7 +96,9 @@ Backend::Backend(QObject* parent) : QObject(parent) {
   connect(&tx_audio_, &TxAudio::Sent, this, [this](qint64, int) { emit txChanged(); });
 
   connect(&hotkey_, &PttHotkey::PttRequested, this, [this](bool on) {
-    // One path to the transmitter, shared with the on-screen button.
+    // ⚠️ THE KEY SAYS WHICH, so it does not need the read the button needs. A
+    // hold sends on at key-down and off at key-up: there is no state to be stale
+    // about. Only the on-screen toggle has to ask the rig what it is doing.
     api_.Get(on ? "/api/ptt/on" : "/api/ptt/off");
   });
 
@@ -381,6 +384,36 @@ bool Backend::connectTo(const QString& host, int port, const QString& user,
 }
 
 void Backend::send(const QString& path) { api_.Get(path); }
+
+// ⚠️ THE FIRST TAP AFTER A GAP USED TO DO NOTHING, AND THIS IS WHY.
+//
+// The PTT button chose its command from the POLLED tx flag: transmitting means
+// send /api/ptt/off, otherwise send on. After the app had been idle - backgrounded
+// on a phone, a laptop asleep, a link that blinked - that flag was whatever the
+// last poll had left behind, and if it said "transmitting" the first press sent
+// an OFF to a radio that was not keyed. Nothing happened, the next poll corrected
+// the flag, and the second press worked. "I have to double tap it."
+//
+// So the toggle reads the rig FIRST and acts on the answer. One round trip, and
+// it cannot act on a belief older than the tap.
+//
+// ⚠️ AND WHEN THE READ FAILS IT DOES NOTHING AND SAYS SO. Guessing here means
+// either a dead press or an unasked-for carrier; neither belongs on a
+// transmitter. Same rule as the status route that must answer null rather than a
+// plausible value.
+void Backend::togglePtt() {
+  api_.Get("/api/status", [this](QJsonObject s) {
+    if (s.isEmpty()) {
+      connection_text_ = "⚠ no reply from the host - PTT not sent";
+      emit statusChanged();
+      return;
+    }
+    status_ = s;
+    const bool keyed = s.value("tx").toBool();
+    api_.Get(keyed ? "/api/ptt/off" : "/api/ptt/on");
+    emit statusChanged();
+  });
+}
 
 // See the property's note in backend.h: on iOS this is the only visible evidence
 // that background audio is configured. Empty everywhere else - a footer that
