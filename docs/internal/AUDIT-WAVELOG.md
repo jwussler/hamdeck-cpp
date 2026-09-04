@@ -1,5 +1,7 @@
 # Wavelog + Stream Deck — walking the C# down before writing anything
 
+⚠️ **The .NET repository is private and archived as of 09/04/2026** - these links no longer resolve for anyone outside the account, and are kept only to say where the knowledge came from.
+
 Reference: `jwussler/HamDeck`, `Services/WaveLogServer.cs` (289 lines), read line by line
 08/31/2026. Local clone: `~/hamdeck-push` (branch `work`, tracks `origin/linux-port`).
 

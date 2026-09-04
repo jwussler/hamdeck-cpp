@@ -1,9 +1,17 @@
-# HamDeck — C++ port
+# HamDeck
 
-A C++ rewrite of the HamDeck host (and, later, a Qt client). The shipping version is C#
-at `jwussler/HamDeck`; this is a parallel implementation, not a replacement, and the
-**HTTP/WebSocket API is the contract between them**. Keep it identical or the existing
-Windows client stops working.
+**This is HamDeck.** Host and Qt client, C++, shipping on Windows, macOS, Linux and iOS.
+
+⚠️ **THE .NET ORIGINAL IS RETIRED — private, archived, and its binaries deleted (09/04/2026).**
+It was never really public and it will not be updated again, so nothing may point a reader at
+it: a download that cannot work is worse than no download. This file used to open by calling
+C# "the shipping version" and this one "a parallel implementation, not a replacement", which
+stopped being true when the C++ host took over the station on 08/30/2026.
+
+⚠️ **The API contract still matters, but it is no longer a contract with another program.**
+`/api/*` and the `/ws` streams are what the phone, the desktop client and the Stream Deck all
+speak. Changing a route breaks THOSE, and the older audits in `docs/internal/` describe the
+.NET behaviour they were written from - read them as history, not as a live counterpart.
 
 ## Read these first
 

@@ -1,5 +1,7 @@
 # HamDeck → C++ : carry-over
 
+⚠️ **The .NET repository is private and archived as of 09/04/2026** - these links no longer resolve for anyone outside the account, and are kept only to say where the knowledge came from.
+
 Everything a C++ port needs that is **not** obvious from the C# source, written the night the
 .NET version was made to work properly (08/30/2026). Read this before writing any code.
 

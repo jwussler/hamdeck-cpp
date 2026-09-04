@@ -1,5 +1,7 @@
 # Walking the C# app, bit by bit
 
+⚠️ **The .NET repository is private and archived as of 09/04/2026** - these links no longer resolve for anyone outside the account, and are kept only to say where the knowledge came from.
+
 **Why this file exists:** gaps were being found one at a time, by the operator, in use — the
 PTT hotkey that never keyed, the TGXL that never transmitted, direct entry that was never
 ported. Each cost a rebuild and a reinstall. This is the whole surface of the reference app,

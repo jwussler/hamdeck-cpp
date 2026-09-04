@@ -1,5 +1,7 @@
 # Carrying the Wavelog Pusher over to Windows
 
+⚠️ **The .NET repository is private and archived as of 09/04/2026** - these links no longer resolve for anyone outside the account, and are kept only to say where the knowledge came from.
+
 Written 09/01/2026 on the Linux side, for a session running **on Joe's station PC**, where
 the Stream Deck, the Python, and the actual problem all live. Everything below was measured
 here unless it says otherwise.
