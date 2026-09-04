@@ -21,18 +21,40 @@ and a key map the operator can see without leaving the panel.
 **I decide:** focus ring styling, tab order, the help overlay, and how keys are suppressed while
 a text field has focus.
 
-**⚠️ I need from Joe:**
-1. **Who is this for?** You alone, or public/blind operators too? Only the second one justifies
-   full screen-reader semantics (an `Accessible` role and name on every control, tested with
-   NVDA) rather than "just" a complete keyboard path. Different amount of work by a lot.
-2. **Single keys or modified?** `b` for band up is fast and collides with typing; `Ctrl+B`
-   never collides and is slower. My lean: single keys, suppressed whenever a field has focus.
-3. **Which actions earn a key?** My proposal: band up/down, mode cycle, VFO A/B, swap, RIT
-   clear, tune, mute, step up/down, and switching OPERATE/SETUP. Anything missing, anything
-   you would not use?
-4. **Focused or in the background?** If the client sits behind a logger, the keys have to be
-   system-wide on Windows, which is a different mechanism with real limits (key-down only, so
-   toggle rather than hold).
+**ANSWERED 09/04/2026.** *"for me now but i would really like to have this take off and go
+somewhere also"* and *"i run windows and mac os"*.
+
+1. **Built for him, aimed at others.** Every control gets an accessible name and role AS IT IS
+   WRITTEN - nearly free in the file, expensive as a retrofit. ⚠️ **But it ships labelled and
+   keyboard-complete, NOT verified**: that needs NVDA or VoiceOver and a real screen-reader
+   user. Documented as *believed working, untested with a screen reader*, exactly like a radio
+   nobody here owns.
+2. **Single keys, dead while a text field has focus.** Fast to press, and the collision case is
+   handled by where focus is rather than by a modifier on every key.
+3. **The map:** band up/down, mode cycle, VFO A/B, swap, RIT clear, tune, mute, step up/down,
+   OPERATE/SETUP. `?` shows it. All of it vetoable in one line each.
+4. **⚠️ SYSTEM-WIDE, AND THE TWO PLATFORMS ARE NOT THE SAME. He runs both.**
+
+   | | mechanism | what it can do | permission |
+   |---|---|---|---|
+   | **macOS** | Carbon `RegisterEventHotKey` | press AND release, so **hold-to-talk** | **none** |
+   | **Windows** | `RegisterHotKey` | key-DOWN only, so **toggle** | none |
+   | **Linux** | X11 grab, fights the desktop | focused only | — |
+
+   ⚠️ **macOS is the better platform here and that is the opposite of what was assumed.**
+   `RegisterEventHotKey` needs no Accessibility permission - it is narrowly scoped, the app
+   only ever learns that one combination was pressed - and it is what VS Code, Slack and
+   Electron use. Deprecated, stable, and the only public API that does this without a prompt.
+
+   ⚠️ **BUT `kEventHotKeyReleased` IS THINLY DOCUMENTED.** The release half is what hold-to-talk
+   depends on, and its delivery is not well attested. So: implement it, **prove it on his Mac
+   before claiming it**, and if release does not arrive reliably, fall back to toggle on macOS
+   and SAY SO in the status line. A PTT that silently becomes a latch is a stuck transmitter.
+   The host's watchdog is the backstop, and the client unkeys on focus loss regardless.
+
+   ⚠️ **The low-level keyboard hook is still refused on Windows** - it sees every keystroke on
+   the machine, which is a privacy and antivirus problem, not an implementation detail. Toggle
+   system-wide, hold when focused, and the status line says which is armed.
 
 **Gate:** a test that drives the panel by synthetic key events only - no mouse - and asserts the
 rig route fired for each one. `tests_knob.cpp` is the model: a control no test touches is a
@@ -50,13 +72,17 @@ connected - which is the exact condition that had us guessing tonight.
 
 **I decide:** the meter's placement in the head and its scale.
 
-**⚠️ I need from Joe:**
-1. **Should silence raise an alarm, and after how long?** 10 seconds of zero while connected is
-   a dead receive path; 30 is safer against a genuinely quiet band. ⚠️ A quiet band and a broken
-   path look identical to this meter - the alarm is a hint, never a diagnosis.
-2. **How should it tell you?** Colour on the meter, a line in the panel, or a sound. A sound is
-   the only one you would notice while looking away, and it is also the one that will annoy you
-   first.
+**DECIDED 09/04/2026** - *"the others you can figure out and let me know the solution."*
+
+1. **20 seconds of zero receive, while connected and NOT transmitting.** Ten is too twitchy on a
+   dead band between overs; thirty is long enough to have already asked out loud what is wrong.
+2. **Colour on the meter, and a line in the transmit bar** - which is on screen on both surfaces,
+   so it is seen without looking for it. **No sound.** In a radio application a beep competes
+   with the band audio the operator is straining to hear, and it would fire on every quiet
+   moment on a dead band.
+3. ⚠️ **It says what it measured, not what it means:** "no receive audio for 20 s". A quiet band
+   and a broken path are identical to this meter, and a panel that announced "receive is broken"
+   would be a confident wrong answer roughly as often as it was right.
 
 **Gate:** extend `test_rx_peak` - it already proves the level falls and reads zero on silence -
 with the alarm's threshold and its reset.
