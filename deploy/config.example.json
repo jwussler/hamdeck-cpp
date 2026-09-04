@@ -17,10 +17,8 @@
   "ptt_timeout_seconds": 180,
 
   "web_session_timeout": 480,
-  "_comment_users": "password_hash is pbkdf2:<hex salt>:<hex hash>, PBKDF2-HMAC-SHA256, 350000 iterations. Never put a plaintext password here.",
-  "web_users": [
-    { "username": "changeme", "password_hash": "", "is_admin": true, "can_transmit": true }
-  ],
+  "_comment_users": "EMPTY ON PURPOSE. A placeholder entry here with a blank password_hash makes the host refuse to start - it is not a template to fill in, it is an invalid user. Run 'sudo hamdeck-host-password' to create the admin credential; it goes in /etc/hamdeck-cpp/env, never in this file. Extra users are added from the admin page once you can log in. Format, if you ever hand-write one: pbkdf2:<hex salt>:<hex hash>, PBKDF2-HMAC-SHA256, 350000 iterations.",
+  "web_users": [],
 
   "tgxl_host": "",
   "kmtronic_host": ""

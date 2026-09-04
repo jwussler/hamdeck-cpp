@@ -81,17 +81,52 @@ constexpr int         kDashPort    = 5002;
 int SelfTest(RadioPoller& poller, RxAudioStream& rx, HttpServer& control,
              int control_port);
 
+// ⚠️ MAKING AN ADMIN PASSWORD USED TO NEED PYTHON AND THE README.
+//
+// The credential is a PBKDF2 hash in a file the operator writes by hand, and
+// until now the only way to produce one was to reimplement the KDF - right
+// iterations, right salt length, right hex encoding - outside this program.
+// That is the "setup defeats experienced people" complaint in this project's own
+// research, aimed at its own first five minutes.
+//
+// ⚠️ THE PASSWORD IS READ FROM STDIN, NEVER AN ARGUMENT. A password on the
+// command line is in the shell history and visible in `ps` to every user on the
+// machine while it runs.
+static int HashPasswordCommand() {
+  std::cerr << "New HamDeck admin password (it will not be echoed back): "
+            << std::flush;
+  std::string pw;
+  if (!std::getline(std::cin, pw) || pw.empty()) {
+    std::cerr << "\nno password given - nothing written\n";
+    return 1;
+  }
+  // ⚠️ THE LINE GOES TO STDOUT ALONE, everything else to stderr, so
+  // `hamdeck-host-password` can capture it with a plain command substitution.
+  // The guidance lives in that script rather than here: printed from both, an
+  // operator gets the same instruction twice and wonders which one ran.
+  std::cerr << "\n";
+  std::cout << "HAMDECK_ADMIN_HASH=" << AuthService::HashPassword(pw) << '\n';
+  return 0;
+}
+
 int main(int argc, char** argv) {
   bool selftest = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
+    if (arg == "--hash-password") {
+      return HashPasswordCommand();
+    }
+    if (arg == "--version") {
+      std::cout << kServiceName << ' ' << kVersion << '\n';
+      return 0;
+    }
     if (arg == "--selftest") {
       selftest = true;
     } else {
       // Unknown flags abort rather than being ignored. Silently accepting a
       // misspelled flag is how a safety option gets quietly disabled.
       std::cerr << "unknown argument: " << arg
-                << "\nusage: hamdeck-host [--selftest]\n"
+                << "\nusage: hamdeck-host [--selftest] [--hash-password] [--version]\n"
                    "  HAMDECK_CAT_DEVICE=<path>|auto   talk to the radio "
                    "(default: simulated rig)\n"
                    "  HAMDECK_ADMIN_HASH=pbkdf2:...    admin credential\n";

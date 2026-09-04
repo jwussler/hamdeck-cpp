@@ -1,0 +1,11 @@
+#!/bin/sh
+# ⚠️ Stop before removing the binary, or systemd keeps restarting something that
+# is no longer on disk. The config is left alone on remove and only goes on
+# purge - the operator's users live in it.
+set -e
+case "$1" in remove|deconfigure)
+    systemctl stop hamdeck-cpp.service 2>/dev/null || true
+    systemctl disable hamdeck-cpp.service 2>/dev/null || true
+    ;;
+esac
+exit 0

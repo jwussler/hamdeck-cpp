@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.22)
-project(hamdeck-cpp VERSION 0.1.0 LANGUAGES CXX)
+# ⚠️ THE VERSION COMES FROM THE TAG, like every artifact this project ships.
+# It was hardcoded 0.1.0 here while the clients were at 0.1.33, so a station box
+# reported a number that said nothing about what it was running - the same drift
+# that once put a 0.1.15 .deb inside a v0.1.29 release, on the half that nothing
+# packaged. CI passes -DHAMDECK_VERSION=<tag without v>; the literal is only the
+# fallback for a local build with no tag.
+if(NOT DEFINED HAMDECK_VERSION OR HAMDECK_VERSION STREQUAL "")
+    set(HAMDECK_VERSION "0.0.0")
+endif()
+project(hamdeck-cpp VERSION ${HAMDECK_VERSION} LANGUAGES CXX)
 add_compile_definitions(HAMDECK_VERSION="${PROJECT_VERSION}")
 
 set(CMAKE_CXX_STANDARD 23)
@@ -24,7 +33,14 @@ FetchContent_Declare(civetweb
   GIT_REPOSITORY https://github.com/civetweb/civetweb.git
   GIT_TAG        v1.16
   GIT_SHALLOW    TRUE)
+# ⚠️ EXCLUDE_FROM_ALL, OR ITS INSTALL RULES BECOME OURS. Without this the .deb
+# shipped libcivetweb.a, civetweb's CMake target files and two pkgconfig files
+# into /usr on the operator's machine - a vendored dependency's build artefacts
+# installed system-wide, where they can collide with a real civetweb package.
+# Caught by reading `dpkg-deb -c` on the first package ever built, not by the
+# build, which was perfectly happy.
 FetchContent_MakeAvailable(civetweb)
+set_property(DIRECTORY ${civetweb_SOURCE_DIR} PROPERTY EXCLUDE_FROM_ALL TRUE)
 
 find_package(OpenSSL REQUIRED)
 
@@ -37,6 +53,8 @@ FetchContent_Declare(nlohmann_json
   GIT_TAG        v3.11.3
   GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(nlohmann_json)
+# Header-only, but it installs its headers and cmake config the same way.
+set_property(DIRECTORY ${nlohmann_json_SOURCE_DIR} PROPERTY EXCLUDE_FROM_ALL TRUE)
 
 add_executable(hamdeck-host src/main.cpp src/admin_page.cpp src/log.cpp src/amp_tuner.cpp src/api.cpp src/transmit_routes.cpp src/cw_text.cpp src/http.cpp src/audio.cpp src/cat_sim.cpp src/serial_cat.cpp src/radio.cpp src/auth.cpp src/config.cpp src/tx_audio.cpp src/cat_proxy.cpp src/alsa_devices.cpp src/rig_cal.cpp src/alsa_audio.cpp src/tgxl.cpp src/recorder.cpp src/qso_record.cpp
     src/session_stats.cpp)
@@ -112,3 +130,56 @@ add_test(NAME remote_active COMMAND test_remote_active)
 add_executable(test_admin tests/test_admin.cpp src/auth.cpp)
 target_link_libraries(test_admin PRIVATE OpenSSL::Crypto)
 add_test(NAME admin COMMAND test_admin)
+
+# ══ Packaging the HOST ══════════════════════════════════════════════════════
+#
+# ⚠️ THE HOST WAS NEVER PACKAGED AT ALL, AND THAT IS THE PRODUCT'S MISSING HALF.
+# Joe, 09/04/2026: "a 1/2 assed product without a server but a great client
+# sucks." Until now the only way this reached a machine was rsyncing the source
+# to a box and building it there - so anybody who downloaded HamDeck got a panel
+# with nothing to connect to.
+#
+# ⚠️ /opt/hamdeck-cpp, NOT /usr/bin, and hamdeck-cpp.service, NOT hamdeck-host.
+# Both are FHS-unfashionable and both are deliberate: the running station already
+# has that path and that unit name, so this package UPGRADES it in place instead
+# of leaving a second copy and a second service fighting over one radio.
+install(TARGETS hamdeck-host RUNTIME DESTINATION /opt/hamdeck-cpp)
+
+install(FILES deploy/hamdeck-cpp.service
+              deploy/hamdeck-rig-watchdog.service
+              deploy/hamdeck-rig-watchdog.timer
+        DESTINATION /lib/systemd/system)
+
+install(PROGRAMS deploy/hamdeck-rig-watchdog DESTINATION /opt/hamdeck-cpp/tools)
+
+# ⚠️ THE SETUP STEP AS A COMMAND, NOT A PARAGRAPH. Producing the admin
+# credential meant reimplementing PBKDF2 outside this program - the exact
+# "setup defeats experienced people" failure the research turned up, aimed at
+# our own first five minutes.
+install(PROGRAMS packaging/deb/hamdeck-host-password DESTINATION /usr/bin)
+
+# ⚠️ THE UDEV RULE AND THE MODULE LIST ARE NOT OPTIONAL EXTRAS. The CP2105 CAT
+# bridge and the PCM2903C codec need cp210x and snd_usb_audio, and a cloud or
+# minimal kernel ships NEITHER - the host then starts, finds no radio, and looks
+# broken. The rule is what gives /dev/ttyRIG its stable name.
+install(FILES deploy/99-hamdeck-radio.rules DESTINATION /lib/udev/rules.d)
+
+# ⚠️ INSTALLED AS AN EXAMPLE, NEVER AS config.json. The live config holds the
+# operator's users and is REWRITTEN by the host itself on every admin change;
+# a package that overwrote it would delete their accounts on upgrade.
+install(FILES deploy/config.example.json DESTINATION /etc/hamdeck-cpp)
+
+set(CPACK_PACKAGE_NAME "hamdeck-host")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_CONTACT "WA0O")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
+    "HamDeck host - CAT control, REST API and remote audio for a station radio")
+set(CPACK_GENERATOR "DEB")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+set(CPACK_DEBIAN_PACKAGE_SECTION "hamradio")
+# Runtime only. The build needs OpenSSL headers; the installed binary needs the
+# library, ALSA, and nothing else - civetweb and nlohmann/json are vendored in.
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libssl3 | libssl3t64, libasound2 | libasound2t64")
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/postinst;${CMAKE_CURRENT_SOURCE_DIR}/packaging/deb/prerm")
+include(CPack)

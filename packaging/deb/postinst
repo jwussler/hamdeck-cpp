@@ -1,0 +1,73 @@
+#!/bin/sh
+# ⚠️ WHAT THIS MUST NOT DO IS AS IMPORTANT AS WHAT IT DOES.
+#
+# It must not overwrite a config: the live one holds the operator's users and the
+# host rewrites it on every admin change. It must not invent a password: a
+# credential shipped in a package is a credential everybody has. And it must not
+# leave the service running when it cannot work - a unit restarting in a loop
+# before anyone has typed anything is how an install "fails" with nothing wrong.
+set -e
+
+case "$1" in configure)
+    # A starter config ONLY if there is none. radio_port empty means the
+    # SIMULATED rig, so a fresh install starts, serves, and can be looked at
+    # before any hardware is involved.
+    if [ ! -f /etc/hamdeck-cpp/config.json ]; then
+        install -d -m 0755 /etc/hamdeck-cpp
+        # ⚠️ NOT A COPY OF THE EXAMPLE. The example used to carry a
+        # "changeme" user with an empty password_hash, and the host correctly
+        # REFUSES to start on an invalid user - so a fresh install sat in a
+        # restart loop, which is the exact failure this script exists to avoid.
+        # Written minimal and valid: simulated rig, no users, admin comes from
+        # the env file.
+        cat > /etc/hamdeck-cpp/config.json <<'CFG'
+{
+  "radio_port": "",
+  "radio_baud": 38400,
+  "api_port": 5001,
+  "dashboard_port": 5002,
+  "ptt_timeout_seconds": 180,
+  "web_session_timeout": 480,
+  "web_users": []
+}
+CFG
+        chmod 0644 /etc/hamdeck-cpp/config.json
+        echo "hamdeck-host: wrote a starter /etc/hamdeck-cpp/config.json (simulated rig)"
+    fi
+
+    # ⚠️ The drivers a minimal kernel does not load by itself. Without cp210x
+    # there is no /dev/ttyUSB*, and without snd_usb_audio there is no codec -
+    # and the host then looks broken while the hardware is fine.
+    if [ ! -f /etc/modules-load.d/hamdeck-radio.conf ]; then
+        printf 'cp210x\nsnd_usb_audio\n' > /etc/modules-load.d/hamdeck-radio.conf
+    fi
+    modprobe cp210x 2>/dev/null || true
+    modprobe snd_usb_audio 2>/dev/null || true
+    udevadm control --reload-rules 2>/dev/null || true
+    udevadm trigger --subsystem-match=tty 2>/dev/null || true
+
+    systemctl daemon-reload 2>/dev/null || true
+
+    # ⚠️ ENABLED, AND STARTED ONLY IF IT CAN WORK. With no admin hash the
+    # dashboard 401s every login, which is a service that is up and useless. Say
+    # the one command that fixes it rather than starting something that cannot
+    # serve anybody.
+    systemctl enable hamdeck-cpp.service 2>/dev/null || true
+    if [ -s /etc/hamdeck-cpp/env ]; then
+        systemctl restart hamdeck-cpp.service 2>/dev/null || true
+    else
+        cat <<'MSG'
+
+  HamDeck host installed, and it is NOT started yet - it has no login.
+
+    sudo hamdeck-host-password        # prints the line to add
+    sudo systemctl start hamdeck-cpp
+
+  Then point a client at this machine on port 5002.
+  The radio: set "radio_port" in /etc/hamdeck-cpp/config.json (empty = simulated).
+
+MSG
+    fi
+    ;;
+esac
+exit 0
