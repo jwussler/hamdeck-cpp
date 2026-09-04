@@ -7,7 +7,7 @@
 ; Every platform gets an installer: .dmg on Mac, .deb on Linux, this on Windows.
 ;
 ; ⚠️ IT INSTALLS PER-USER (no admin prompt) into LocalAppData, deliberately. The
-; combined HamDeck-win-Setup.exe is a Velopack package that installs to the same
+; combined HamDeck-Windows-Setup.exe is a Velopack package that installs to the same
 ; kind of location; asking for elevation to run a radio panel is friction with
 ; nothing behind it.
 ;
@@ -34,7 +34,7 @@ DisableProgramGroupPage=yes
 DisableDirPage=auto
 PrivilegesRequired=lowest
 OutputDir=.
-OutputBaseFilename=HamDeckRemote-win-Setup
+OutputBaseFilename=HamDeck-Windows-PanelOnly-Setup
 SetupIconFile=..\..\packaging\icons\hamdeck.ico
 UninstallDisplayIcon={app}\hamdeck-qml.exe
 UninstallDisplayName=HamDeck Remote

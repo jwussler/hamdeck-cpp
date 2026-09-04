@@ -17,9 +17,9 @@ Installers for every platform are on the
 
 | | |
 |---|---|
-| **Windows** | `HamDeck-win-Setup.exe` — client **and** the Wavelog pusher, one installer, updated together |
-| **Windows, client only** | `HamDeckRemote-win-Setup.exe` — just the radio panel, no auto-update |
-| **macOS** | `HamDeckRemote-macOS.dmg` — signed, notarised and stapled; drag to Applications |
+| **Windows** | **`HamDeck-Windows-Setup.exe`** — the radio panel plus the Wavelog pusher, updated together. **If you are not sure, this one.** |
+| **Windows, panel only** | `HamDeck-Windows-PanelOnly-Setup.exe` — the same panel without the Wavelog pusher and without auto-update |
+| **macOS** | `HamDeck-macOS.dmg` — signed, notarised and stapled; drag to Applications |
 | **Linux** | `hamdeck-client_<version>_amd64.deb` / `_arm64.deb` |
 
 Everything is code-signed. On Windows the publisher reads **Henry Wussler**;

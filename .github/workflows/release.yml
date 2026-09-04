@@ -512,9 +512,9 @@ jobs:
           # said the client was in there at all.
           $packed = Get-ChildItem packaging\Releases\*Setup.exe | Select-Object -First 1
           if (-not $packed) { throw "vpk produced no Setup.exe to rename" }
-          $renamed = Join-Path $packed.Directory "HamDeck-win-Setup.exe"
+          $renamed = Join-Path $packed.Directory "HamDeck-Windows-Setup.exe"
           Move-Item $packed.FullName $renamed -Force
-          "renamed $($packed.Name) -> HamDeck-win-Setup.exe"
+          "renamed $($packed.Name) -> HamDeck-Windows-Setup.exe"
 
       # ⚠️ EVERY PLATFORM GETS AN INSTALLER. Mac has a .dmg, Linux has .debs, and
       # Windows had the client only as a folder inside somebody else's package.
@@ -539,8 +539,8 @@ jobs:
           }
           & iscc.exe /Qp "/DAppVersion=$ver" "/DSourceDir=$src" hamdeck-remote.iss
           if ($LASTEXITCODE -ne 0) { throw "iscc failed" }
-          if (-not (Test-Path "HamDeckRemote-win-Setup.exe")) { throw "iscc produced no installer" }
-          "built HamDeckRemote-win-Setup.exe ($ver)"
+          if (-not (Test-Path "HamDeck-Windows-PanelOnly-Setup.exe")) { throw "iscc produced no installer" }
+          "built HamDeck-Windows-PanelOnly-Setup.exe ($ver)"
 
       # The Inno output is a NEW binary that nothing has signed yet - the files
       # inside it are signed, the wrapper around them is not, and SmartScreen
@@ -566,7 +566,7 @@ jobs:
         working-directory: client/packaging
         shell: pwsh
         run: |
-          $sig = Get-AuthenticodeSignature "HamDeckRemote-win-Setup.exe"
+          $sig = Get-AuthenticodeSignature "HamDeck-Windows-PanelOnly-Setup.exe"
           "Status: $($sig.Status)"
           "Signer: $($sig.SignerCertificate.Subject)"
           if ($sig.Status -ne 'Valid') { throw "client installer is not validly signed" }
@@ -625,7 +625,7 @@ jobs:
       # arbitrary winner - the same trap the arch matrix already carries a warning
       # about, and it would silently drop one of the two Windows installers.
       - uses: actions/upload-artifact@v4
-        with: { name: hamdeck-client-windows-installer, path: client/packaging/HamDeckRemote-win-Setup.exe }
+        with: { name: hamdeck-client-windows-installer, path: client/packaging/HamDeck-Windows-PanelOnly-Setup.exe }
 
   macos:
     # ⚠️ RUNS AFTER publish, NOT BEFORE IT, AND THAT IS DELIBERATE.
@@ -851,8 +851,8 @@ jobs:
           # the .DS_Store fiddling that tends to break on a headless runner.
           ln -s /Applications "$STAGE/Applications"
           hdiutil create -volname "HamDeck Remote" -srcfolder "$STAGE" \
-                         -ov -format UDZO "$RUNNER_TEMP/HamDeckRemote-macOS.dmg"
-          echo "DMG=$RUNNER_TEMP/HamDeckRemote-macOS.dmg" >> "$GITHUB_ENV"
+                         -ov -format UDZO "$RUNNER_TEMP/HamDeck-macOS.dmg"
+          echo "DMG=$RUNNER_TEMP/HamDeck-macOS.dmg" >> "$GITHUB_ENV"
 
       # ⚠️ THE DMG ITSELF MUST BE SIGNED, NOTARISED AND STAPLED, not just the app inside.
       # A stapled app in an unstapled DMG still makes Gatekeeper phone home on first open,
@@ -952,16 +952,16 @@ jobs:
           test -n "$(find dist -name '*Setup.exe' -print -quit)" || {
             echo "no installer among the artifacts - refusing to publish"; exit 1; }
           cat > notes.md <<'NOTES'
-          ## Windows — download `HamDeck-win-Setup.exe`
+          ## Windows — download `HamDeck-Windows-Setup.exe`
 
-          **One installer, both applications.** It installs the **HamDeck Remote** client and
-          the **Wavelog Pusher** together, and updates them together. There is no separate
-          client download on Windows and none is needed - this is it.
+          **That one. It is the radio panel.** It installs the panel you operate the rig with,
+          plus the Wavelog pusher, and keeps them both updated. If you are not sure which file
+          you want, it is this one.
 
-          Only want the radio panel? **`HamDeckRemote-win-Setup.exe`** installs the client
-          on its own - no Wavelog pusher, and no auto-update.
+          `HamDeck-Windows-PanelOnly-Setup.exe` is the same panel WITHOUT the Wavelog pusher and
+          without auto-update. Pick it only if you know you want that.
 
-          Mac: **`HamDeckRemote-macOS.dmg`**. Linux: the **`.deb`** for your architecture. The `.nupkg`,
+          Mac: **`HamDeck-macOS.dmg`**. Linux: the **`.deb`** for your architecture. The `.nupkg`,
           `RELEASES` and `releases.win.json` beside it are the update manifest — leave them
           there, they are what future versions install themselves from.
 
@@ -1059,8 +1059,8 @@ jobs:
             echo "  ✗ MISSING $1 - the release page would offer no installer for it"
             return 1
           }
-          need "Windows (client + pusher)" 'HamDeck-win-Setup.exe'
-          need "Windows (client alone)"    'HamDeckRemote-win-Setup.exe'
+          need "Windows (client + pusher)" 'HamDeck-Windows-Setup.exe'
+          need "Windows (client alone)"    'HamDeck-Windows-PanelOnly-Setup.exe'
           need "Linux"                     '*.deb'
           # ⚠️ macOS IS NOT CHECKED HERE, AND THAT IS NOT AN OVERSIGHT. The macos
           # job runs AFTER this one by design - its runner pool queues for hours,
