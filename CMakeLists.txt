@@ -60,6 +60,10 @@ add_executable(test_audio_queue tests/test_audio_queue.cpp src/audio.cpp src/htt
 target_link_libraries(test_audio_queue PRIVATE civetweb-c-library)
 add_test(NAME audio_queue COMMAND test_audio_queue)
 
+add_executable(test_rx_peak tests/test_rx_peak.cpp src/audio.cpp src/http.cpp src/recorder.cpp)
+target_link_libraries(test_rx_peak PRIVATE civetweb-c-library)
+add_test(NAME rx_peak COMMAND test_rx_peak)
+
 add_executable(test_recorder tests/test_recorder.cpp src/recorder.cpp)
 add_test(NAME recorder COMMAND test_recorder)
 

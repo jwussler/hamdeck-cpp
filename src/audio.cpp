@@ -92,6 +92,28 @@ void RxAudioStream::ProduceLoop() {
   while (running_.load()) {
     std::vector<int16_t> chunk(kFramesPerChunk);
     if (!source_->Read(chunk.data(), kFramesPerChunk)) break;
+
+    // The peak of what was actually captured. One pass over 20 ms, and it is
+    // the only reading on this path that can tell a live band from silence.
+    {
+      int peak = 0;
+      for (const int16_t v : chunk) {
+        const int a = v < 0 ? -static_cast<int>(v) : static_cast<int>(v);
+        if (a > peak) peak = a;
+      }
+      const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::steady_clock::now().time_since_epoch()).count();
+      if (now_ms - peak_ms_.load() > kPeakWindowMs) {
+        // Window expired: start a new one at this chunk rather than carrying the
+        // old maximum forward, so the reading FALLS when the audio does.
+        peak_ms_.store(now_ms);
+        peak_.store(peak);
+      } else {
+        int prev = peak_.load();
+        while (peak > prev && !peak_.compare_exchange_weak(prev, peak)) {}
+      }
+    }
+
     if (recorder_) recorder_->Feed(chunk.data(), chunk.size());
     // Trims before pushing, dropping the oldest, exactly as the C# streamer does.
     queue_.Push(std::move(chunk));
@@ -122,4 +144,16 @@ void RxAudioStream::SendLoop() {
     }
     sent_.fetch_add(1);
   }
+}
+
+// ⚠️ STALE READINGS REPORT ZERO, they do not linger. If the producer thread has
+// stopped - the capture died, the device went away - the last peak it managed is
+// not a description of now, and showing it would say "audio is flowing" about a
+// stream that ended. Two windows of nothing is not a live band.
+int RxAudioStream::RxPeak() const {
+  const long long now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  if (peak_ms_.load() == 0) return 0;
+  if (now_ms - peak_ms_.load() > kPeakWindowMs * 2) return 0;
+  return peak_.load();
 }

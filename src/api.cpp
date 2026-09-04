@@ -712,7 +712,7 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
               std::format(R"({{"status":"ok","cat":"{}","simulated":{},)"
                           R"("rx_audio":"{}","tx_audio":"{}",)"
                           R"("tx_accepted":{},"tx_dropped":{},"tx_queue":{},)"
-                          R"("tx_peak":{},"device_queued_ms":{}}})",
+                          R"("tx_peak":{},"rx_peak":{},"device_queued_ms":{}}})",
                           deps.poller ? deps.poller->Backend() : "none",
                           JsonBool(deps.simulated),
                           deps.rx_audio ? deps.rx_audio->Backend() : "none",
@@ -720,6 +720,12 @@ void InstallRoutes(HttpServer& server, Listener listener, int bound_port,
                           tx ? tx->Accepted() : 0, tx ? tx->Dropped() : 0,
                           tx ? tx->QueueDepth() : 0,
                           tx ? tx->PeakSinceReset() : 0,
+                          // ⚠️ The RECEIVE level, beside the transmit one. Until
+                          // 09/04/2026 this side had no measurement at all, so
+                          // "no audio is flowing" could not be localised: a
+                          // running capture with zero xruns looks the same
+                          // whether it carries the band or silence.
+                          deps.rx_audio ? deps.rx_audio->RxPeak() : 0,
                           deps.queued_audio_ms ? deps.queued_audio_ms() : -1));
   });
 

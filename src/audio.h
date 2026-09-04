@@ -99,6 +99,22 @@ class RxAudioStream {
   // 20 ms of audio per frame at 22050 Hz.
   static constexpr size_t kFramesPerChunk = 441;
 
+  // ⚠️ THE LEVEL OF WHAT THE OPERATOR IS ACTUALLY HEARING, and it did not exist
+  // until 09/04/2026. Transmit got a peak the night a perfect audio chain
+  // carried digital silence to the radio (WIP.md 8f); receive never did - so
+  // when the operator said "no audio is flowing", nothing on this host could
+  // tell a live band from a dead one. A running capture with zero xruns reads
+  // identically either way, which is the same trap in the other direction.
+  //
+  // ⚠️ IT DECAYS, like the transmit one, and for the same reason: a high-water
+  // mark that only ever rises cannot show audio going away, which is the entire
+  // question being asked of it.
+  //
+  // 0-32767. Measured where the audio ENTERS the fan-out, so it is the same
+  // samples the clients get and the recorder keeps - not a second capture that
+  // could disagree with both.
+  int RxPeak() const;
+
   size_t DroppedChunks() const { return queue_.dropped(); }
   size_t QueueDepth() const { return queue_.size(); }
   size_t SentChunks() const { return sent_.load(); }
@@ -122,5 +138,8 @@ class RxAudioStream {
   std::vector<std::shared_ptr<WsConnection>> clients_;
 
   std::atomic<size_t> sent_{0};
+  std::atomic<int> peak_{0};              // 0-32767, decaying - see RxPeak()
+  std::atomic<long long> peak_ms_{0};     // when the current window opened
+  static constexpr long long kPeakWindowMs = 1500;   // same window as transmit
   class Recorder* recorder_ = nullptr;
 };
