@@ -27,6 +27,11 @@
 #include <iostream>
 
 #include "backend.h"
+#ifndef Q_OS_IOS
+#include <QApplication>
+
+#include "tray.h"
+#endif
 #ifdef Q_OS_IOS
 #include "ios_audio_session.h"
 #endif
@@ -292,7 +297,15 @@ int main(int argc, char** argv) {
     // Any flag means somebody launched this from a terminal and wants output.
     if (argc > 1) AttachParentConsole();
 #endif
+    // ⚠️ QApplication ON THE DESKTOP, QGuiApplication ON THE PHONE. The tray -
+    // and the menu it carries - are QtWidgets, and QMenu requires a QApplication
+    // instance rather than a QGuiApplication. A phone has no tray to install
+    // into, so it keeps the lighter one and never links Widgets at all.
+#ifdef Q_OS_IOS
     QGuiApplication app(argc, argv);
+#else
+    QApplication app(argc, argv);
+#endif
     QGuiApplication::setApplicationName("HamDeckClient");
     // ⚠️ THE WINDOW ICON IS A SEPARATE THING FROM THE EXE'S RESOURCE ICON.
     // The .rc gives Explorer, shortcuts and the taskbar their icon on Windows;
@@ -456,9 +469,48 @@ int main(int argc, char** argv) {
 
     // ⚠️ AFTER the QML has loaded, because RegisterHotKey needs a real window
     // handle - there is nothing to register against before the window exists.
+    QQuickWindow* main_window = nullptr;
     if (auto* w = qobject_cast<QQuickWindow*>(engine.rootObjects().first())) {
         backend.attachWindow(w);
+        main_window = w;
     }
+
+    // ── The tray, and on macOS the menu bar ─────────────────────────────────
+#ifndef Q_OS_IOS
+    // ⚠️ A HIDDEN HAMDECK STILL HOLDS THE TRANSMITTER: the /ws/tx socket, the
+    // host's single-transmitter claim and MOD SOURCE=REAR all survive closing
+    // the window. That is correct - keying from the logger is what a system-wide
+    // PTT is for - and it is exactly why the icon carries armed and on-air
+    // state, and why Quit is a different act from closing.
+    Tray tray;
+    const bool have_tray = tray.Install();
+    backend.setCanHideToTray(have_tray);
+    if (have_tray && main_window) {
+        QObject::connect(&tray, &Tray::showRequested, main_window, [main_window] {
+            main_window->show();
+            main_window->raise();
+            main_window->requestActivate();
+        });
+        // ⚠️ Quit RELEASES. shutdown() disarms and drops /ws/tx, and the host's
+        // close handler then restores the power cap and puts MOD SOURCE back to
+        // MIC. Closing the window deliberately does none of that.
+        QObject::connect(&tray, &Tray::quitRequested, &app, [&] {
+            backend.shutdown();
+            app.quit();
+        });
+        QObject::connect(&backend, &Backend::txChanged, &tray, [&] {
+            tray.SetState(backend.sessionActive(), backend.armed(), backend.tx(),
+                          backend.remoteTxText());
+        });
+        QObject::connect(&backend, &Backend::sessionChanged, &tray, [&] {
+            tray.SetState(backend.sessionActive(), backend.armed(), backend.tx(),
+                          backend.remoteTxText());
+        });
+        QObject::connect(&backend, &Backend::hidToTray, &tray, [&] {
+            tray.ShowFirstHideHint();
+        });
+    }
+#endif
 
     // Stop cleanly however the app ends, not just on the paths we remembered.
     QObject::connect(&app, &QGuiApplication::aboutToQuit, &backend, &Backend::shutdown);

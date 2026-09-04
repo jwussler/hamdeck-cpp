@@ -97,8 +97,20 @@ ApplicationWindow {
                                           Screen.desktopAvailableHeight)
         win.x = g.x; win.y = g.y; win.width = g.width; win.height = g.height
     }
-    onClosing: {
+    // ⚠️ X HIDES, IT DOES NOT QUIT - and only where there is somewhere to hide to.
+    // A hidden HamDeck keeps the session, the transmit claim and MOD SOURCE=REAR,
+    // which is the point of a system-wide PTT and also the hazard: the tray icon
+    // and its tooltip carry that state, and Quit lives in the tray menu.
+    // With no tray available (a bare GNOME, a kiosk) closing QUITS, because
+    // hiding into nothing is an app that vanished holding a transmitter.
+    onClosing: (close) => {
         backend.saveGeometry(win.x, win.y, win.width, win.height)
+        if (backend.canHideToTray && !win.phone) {
+            close.accepted = false
+            win.hide()
+            backend.noteHiddenToTray()
+            return
+        }
         backend.shutdown()
     }
     onActiveChanged: if (!active) backend.focusLost()

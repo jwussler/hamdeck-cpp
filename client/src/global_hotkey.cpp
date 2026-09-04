@@ -92,6 +92,15 @@ QString GlobalHotkey::Apply(const QString& label, QWindow* window) {
                : QString("could not register %1 (error %2)").arg(label).arg(err);
   }
   armed_ = true;
+  vk_ = choice->vk;
+
+  // The poll only lives between a press and its release; see PollKeyState.
+  if (!poll_) {
+    poll_ = new QTimer(this);
+    poll_->setInterval(25);
+    connect(poll_, &QTimer::timeout, this, &GlobalHotkey::PollKeyState);
+  }
+  hold_capable_ = true;
   return {};
 }
 
@@ -100,13 +109,47 @@ bool GlobalHotkey::nativeEventFilter(const QByteArray& type, void* message, qint
   auto* msg = static_cast<MSG*>(message);
   if (msg->message == WM_HOTKEY && static_cast<int>(msg->wParam) == kHotkeyId) {
     ++press_count_;
+    key_down_ = true;
     emit Pressed();
+    // ⚠️ AND NOW WATCH FOR THE RELEASE, which is what makes this hold-to-talk.
+    if (poll_) poll_->start();
     return true;
   }
   return false;
 }
 
+// ⚠️ THIS IS THE WHOLE TRICK, AND IT REPLACES A CLAIM THIS FILE USED TO MAKE.
+//
+// RegisterHotKey delivers the DOWN edge only, and the comment below the Windows
+// block said for months that hold-to-talk therefore needs a WH_KEYBOARD_LL hook
+// - which sees every keystroke on the machine and is a privacy and
+// antivirus-flagging problem, so it was refused and the operator got a toggle.
+//
+// GetAsyncKeyState answers a much narrower question: is THIS ONE key, the one
+// the operator nominated, down right now? Polling it after the hotkey fires
+// gives the release edge with no hook and no keylogging surface - this can only
+// ever learn about the single key it was told about.
+//
+// 25 ms because it bounds how late an unkey can be, and a late unkey is a tail
+// of dead carrier. It runs ONLY between the press and the release, so an idle
+// HamDeck polls nothing.
+void GlobalHotkey::PollKeyState() {
+  if (!key_down_ || vk_ == 0) return;
+  if ((GetAsyncKeyState(static_cast<int>(vk_)) & 0x8000) == 0) {
+    key_down_ = false;
+    if (poll_) poll_->stop();
+    emit Released();
+  }
+}
+
 void GlobalHotkey::Unregister() {
+  if (poll_) poll_->stop();
+  // ⚠️ A key held while the registration goes away never delivers its release,
+  // so the carrier would stay up. Say it went up.
+  if (key_down_) {
+    key_down_ = false;
+    emit Released();
+  }
   if (!armed_ || !hwnd_) return;
   UnregisterHotKey(static_cast<HWND>(hwnd_), kHotkeyId);
   armed_ = false;
@@ -123,14 +166,34 @@ void GlobalHotkey::Unregister() {
 QString GlobalHotkey::Apply(const QString& label, QWindow*) {
   label_ = label;
   armed_ = false;
+  hold_capable_ = false;
   const HotkeyChoice* choice = Find(label);
   if (!choice || choice->vk == 0) return {};
+#ifdef Q_OS_MACOS
+  // ⚠️ macOS CAN do this without any permission prompt - Carbon
+  // RegisterEventHotKey is narrowly scoped and is what VS Code, Slack and
+  // Electron use - and the release half, kEventHotKeyReleased, is thinly
+  // documented enough that it must be PROVEN on a real Mac before hold-to-talk
+  // is claimed. Until that test is run this reports the truth: not armed.
+  // docs/internal/PTT-DESIGN.md carries the plan and the fallback ladder.
+  return "system-wide PTT on macOS is not wired up yet - the window-focus key "
+         "still works. See docs/internal/PTT-DESIGN.md";
+#else
   return "a system-wide hotkey needs platform code that is only written for "
          "Windows - the window-focus key still works";
+#endif
 }
 
 bool GlobalHotkey::nativeEventFilter(const QByteArray&, void*, qintptr*) { return false; }
 
-void GlobalHotkey::Unregister() { armed_ = false; }
+void GlobalHotkey::PollKeyState() {}
+
+void GlobalHotkey::Unregister() {
+  if (key_down_) {
+    key_down_ = false;
+    emit Released();
+  }
+  armed_ = false;
+}
 
 #endif

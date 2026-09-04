@@ -106,6 +106,10 @@ class Backend : public QObject {
   // The phone shape. NOTIFY rides uiScaleChanged because both are decided by the
   // same thing - the screen the app is on - and setScreen already emits it.
   Q_PROPERTY(bool phoneLayout READ phoneLayout NOTIFY uiScaleChanged)
+  // ⚠️ False on a desktop with no tray at all - a bare GNOME, a kiosk session.
+  // The X button must then QUIT: hiding into something that does not exist is an
+  // app that has vanished while still holding a transmitter.
+  Q_PROPERTY(bool canHideToTray READ canHideToTray NOTIFY trayChanged)
   // The link: round trip, its swing, and one word for how that reads.
   Q_PROPERTY(int linkRttMs READ linkRttMs NOTIFY statusChanged)
   Q_PROPERTY(int linkJitterMs READ linkJitterMs NOTIFY statusChanged)
@@ -361,6 +365,9 @@ class Backend : public QObject {
   int rxLevelPct() const {
     return qBound(0, static_cast<int>(qRound(rx_peak_ * 100.0 / 32767.0)), 100);
   }
+  bool canHideToTray() const { return can_hide_to_tray_; }
+  void setCanHideToTray(bool v) { can_hide_to_tray_ = v; emit trayChanged(); }
+  Q_INVOKABLE void noteHiddenToTray() { emit hidToTray(); }
   bool phoneLayout() const;
   QString audioSessionText() const;
   QString savedHost() const {
@@ -398,6 +405,8 @@ class Backend : public QObject {
   void statusFullChanged();
   void metersChanged();
   void driveTestChanged();
+  void trayChanged();
+  void hidToTray();
   void scaleChanged();
   void audioChanged();
   void txChanged();
@@ -431,6 +440,8 @@ class Backend : public QObject {
   int safe_top_ = 0, safe_bottom_ = 0, safe_left_ = 0, safe_right_ = 0;
   int tx_peak_ = 0;      // host-reported, 0-32767
   int rx_peak_ = 0;      // host-reported, 0-32767
+  bool can_hide_to_tray_ = false;
+  QTimer hold_limit_;    // see the Pressed handler: 150 s, under the host's 180
   QString remote_tx_text_;
 
   // ── Drive test state ───────────────────────────────────────────────────────

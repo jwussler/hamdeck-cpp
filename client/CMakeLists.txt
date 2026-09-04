@@ -206,6 +206,15 @@ endif()
 # ⚠️ QT FOR iOS IS STATIC-ONLY. There is no shared build. Read docs/IOS.md before
 # distributing anything built this way: the LGPL note at the top of this file is
 # about exactly this, and iOS is the one platform where it is unavoidable.
+# ⚠️ THE TRAY IS DESKTOP-ONLY, AND SO IS THE WIDGETS DEPENDENCY IT DRAGS IN.
+# QSystemTrayIcon and QMenu live in QtWidgets and need a QApplication; a phone
+# has no tray, no menu bar and no window to close to one. Compiling it there
+# would add a whole Qt module to an app that could never use it.
+if(NOT IOS)
+    target_sources(hamdeck-qml PRIVATE src/tray.cpp)
+    target_link_libraries(hamdeck-qml PRIVATE Qt6::Widgets)
+endif()
+
 if(IOS)
     # ⚠️ OBJECTIVE-C++ IS A SEPARATE LANGUAGE TO CMake, and a .mm added without
     # enabling it is compiled as C++ - which fails on the first @import with an
@@ -292,6 +301,12 @@ if(MSVC)
 else()
     target_compile_options(hamdeck-qml PRIVATE -Wall -Wextra)
 endif()
+
+# ⚠️ Guards the failure that cannot be reproduced on the machine that ships it:
+# a system-wide PTT whose release event never arrives. See tests_hold_limit.cpp.
+add_executable(test_hold_limit tests_hold_limit.cpp)
+target_link_libraries(test_hold_limit PRIVATE Qt6::Core)
+add_test(NAME hold_limit COMMAND test_hold_limit)
 
 add_test(NAME qml_selftest COMMAND hamdeck-qml --selftest)
 set_tests_properties(qml_selftest PROPERTIES

@@ -24,6 +24,7 @@
 #include <QAbstractNativeEventFilter>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 #include <QVariantList>
 #include <QWindow>
 
@@ -44,6 +45,11 @@ class GlobalHotkey : public QObject, public QAbstractNativeEventFilter {
   QString Apply(const QString& label, QWindow* window);
 
   bool armed() const { return armed_; }
+
+  // What is ACTUALLY armed, in the operator's words: "hold" or "toggle". ⚠️ The
+  // panel prints this rather than inferring it - a PTT that silently became a
+  // latch is a stuck transmitter waiting to happen.
+  QString Mode() const { return hold_capable_ ? "hold" : "toggle"; }
   QString label() const { return label_; }
   int pressCount() const { return press_count_; }
 
@@ -53,8 +59,19 @@ class GlobalHotkey : public QObject, public QAbstractNativeEventFilter {
   // One press of the registered key. Press-to-toggle is decided by the receiver.
   void Pressed();
 
+  // ⚠️ THE RELEASE, WHICH TURNS A TOGGLE INTO HOLD-TO-TALK. Only emitted where
+  // the platform can honestly report it - see Mode() - so a receiver must not
+  // assume a Released() follows every Pressed().
+  void Released();
+
  private:
   void Unregister();
+  void PollKeyState();          // the release edge, where the platform needs polling
+
+  bool hold_capable_ = false;
+  bool key_down_ = false;
+  unsigned vk_ = 0;
+  class QTimer* poll_ = nullptr;
 
   QString label_ = "Off";
   bool armed_ = false;

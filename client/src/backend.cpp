@@ -72,10 +72,44 @@ Backend::Backend(QObject* parent) : QObject(parent) {
   // mic button or the tuner - the press unkeys it. A local "is it on" flag goes
   // out of step the first time anything else keys the radio.
   connect(&global_hotkey_, &GlobalHotkey::Pressed, this, [this] {
-    send(tx() ? "/api/ptt/off" : "/api/ptt/on");
+    // ⚠️ HOLD SENDS ON; ONLY A TOGGLE HAS TO ASK THE RIG. Where the platform can
+    // report a release, the key itself says which edge this is and there is no
+    // state to be stale about. Where it cannot, this is a toggle and it goes
+    // through the same fresh read as the on-screen button - it used to decide
+    // from the polled tx flag, which is the bug that made the first press after
+    // an idle gap do nothing.
+    if (global_hotkey_.Mode() == "hold") {
+      send("/api/ptt/on");
+      // ⚠️ THE HOLD LIMIT, AND IT IS DELIBERATELY NOT CLEVER. A lost release and
+      // a genuinely long over are identical from here: audio still streams, the
+      // link is fine, the operator is simply talking. So this is longer than any
+      // real over and SHORTER than the host's 180 s watchdog, and it exists only
+      // so this app can say which safeguard fired. The watchdog next to the
+      // radio remains the thing that protects the transmitter.
+      hold_limit_.start();
+    } else {
+      togglePtt();
+    }
     // So the panel can show that the press ARRIVED, even if the rig then
     // refuses. Without this an operator cannot tell a key Windows never
     // delivered from a command the host rejected.
+    emit hotkeyChanged();
+  });
+
+  connect(&global_hotkey_, &GlobalHotkey::Released, this, [this] {
+    hold_limit_.stop();
+    if (global_hotkey_.Mode() == "hold") send("/api/ptt/off");
+    emit hotkeyChanged();
+  });
+
+  // ⚠️ Says what happened, in the panel, rather than just unkeying. An operator
+  // whose transmission stopped needs to know it was this and not the rig.
+  hold_limit_.setSingleShot(true);
+  hold_limit_.setInterval(150000);
+  connect(&hold_limit_, &QTimer::timeout, this, [this] {
+    send("/api/ptt/off");
+    global_hotkey_status_ = "⚠ PTT key held past 150 s - unkeyed. If you were still "
+                            "talking, the key's release was lost.";
     emit hotkeyChanged();
   });
 
@@ -215,8 +249,14 @@ void Backend::ApplyGlobalHotkey() {
   // holds the combination - is not a fault in this app, and an operator staring
   // at a key that does nothing has no way to know that unless it is said.
   const QString err = global_hotkey_.Apply(settings_.global_ptt_key, window_);
+  // ⚠️ THE MODE IS NAMED, NEVER INFERRED. "Armed" alone lets an operator assume
+  // hold-to-talk on a platform that can only toggle - and a PTT that silently
+  // became a latch is a stuck transmitter waiting to happen. Windows holds now
+  // (the hotkey gives the down edge, a poll of that ONE key gives the release);
+  // macOS is focus-only until its release event is proven on real hardware.
   global_hotkey_status_ =
-      err.isEmpty() ? QString("armed: %1 works anywhere").arg(settings_.global_ptt_key)
+      err.isEmpty() ? QString("armed: %1 works anywhere · %2-to-talk")
+                          .arg(settings_.global_ptt_key, global_hotkey_.Mode())
                     : err;
   if (!err.isEmpty()) {
     // ⚠️ Say it on the console too. On Windows the panel may be behind the
