@@ -738,6 +738,21 @@ ApplicationWindow {
                         onClicked: backend.send(backend.tx ? "/api/ptt/off" : "/api/ptt/on")
                     }
 
+                    // ⚠️ WHAT THE RADIO SAID ABOUT REAR/USB. On MIC the rig
+                    // ignores the USB codec completely - it keys, ALC sits at
+                    // its idle floor, PWR stays 0, and every counter in the
+                    // chain reads healthy. The host puts it back to MIC on every
+                    // disconnect so the hand mic works, so this is the state
+                    // that quietly goes wrong between overs.
+                    Text {
+                        visible: backend.remoteTxText !== ""
+                        width: Theme.u(150)
+                        wrapMode: Text.WordWrap
+                        text: backend.remoteTxText
+                        font.family: Theme.body; font.pixelSize: Theme.f(11)
+                        color: backend.remoteTxText.indexOf("⚠") === 0 ? Theme.txRed : Theme.dim
+                    }
+
                     // Arming takes the host's single-transmitter claim; PTT keys
                     // the rig. Separate, so a connect never lands at the start
                     // of an over.
@@ -1222,7 +1237,10 @@ ApplicationWindow {
                             { k: "Data",  v: backend.cacheAgeMs + " ms old" },
                             { k: "Audio", v: backend.audioSessionText !== ""
                                              ? backend.audioSessionText : backend.audioStatus },
-                            { k: "TX",    v: backend.txStatus.replace("tx: ", "") }
+                            { k: "TX",    v: backend.txStatus.replace("tx: ", "") },
+                            { k: "Radio",  v: backend.remoteTxText !== ""
+                                              ? backend.remoteTxText
+                                              : "REAR/USB is set when you arm TX" }
                         ]
                         delegate: RowLayout {
                             required property var modelData

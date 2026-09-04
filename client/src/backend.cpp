@@ -407,6 +407,39 @@ void Backend::toggleArm() {
   const QString token = api_.SessionToken();
   if (token.isEmpty()) return;
   tx_audio_.Arm(settings_.WsUrl("/ws/tx", token), settings_.tx_device_name);
+
+  // ⚠️ ARMING MUST PUT THE RADIO ON REAR/USB, AND NOTHING USED TO DO IT.
+  //
+  // The host hands the station back on every /ws/tx close: power to the local
+  // cap and MOD SOURCE back to MIC, so the operator's own hand mic works when
+  // they sit down at the radio. That is right, and it had no counterpart - this
+  // client never called /api/remote-tx/on at all. So after ANY disconnect, a
+  // dropped link and a backgrounded phone included, transmit was silently dead:
+  // the rig keys, ALC sits at its idle floor, PWR stays 0, and every counter in
+  // the audio chain reads perfectly healthy (CLAUDE.md, and hours went into it
+  // once already). Three disconnects in one evening left it on MIC and the
+  // operator reported "no audio is flowing again".
+  //
+  // ⚠️ AND IT REPORTS WHAT THE RADIO SAID, not what was sent. The route writes
+  // and reads back in the same CAT task: verified true means the menu items were
+  // read back as asked, false means they were not - and "unverified" is not the
+  // same as "failed". A confident wrong answer here sends the search to the
+  // wrong end of the chain, which is exactly what happened the first time.
+  api_.Get("/api/remote-tx/on", [this](QJsonObject r) {
+    const bool ok = r.value("status").toString() == "ok";
+    const bool verified = r.value("verified").toBool();
+    const bool rear = r.value("mod_source_rear").toBool();
+    if (ok && verified && rear) {
+      remote_tx_text_ = "radio on REAR/USB";
+    } else if (ok && !verified) {
+      remote_tx_text_ = "⚠ could not confirm the radio took REAR/USB - "
+                        + r.value("message").toString();
+    } else {
+      remote_tx_text_ = "⚠ THE RADIO IS STILL ON MIC - transmit will key and "
+                        "put out nothing: " + r.value("message").toString();
+    }
+    emit txChanged();
+  });
 }
 
 // ⚠️ THE HOTKEY WAS DEAD IN THE RUNNING APP WHILE ITS UNIT TEST PASSED.

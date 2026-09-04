@@ -85,6 +85,9 @@ class Backend : public QObject {
   Q_PROPERTY(QString audioStatus READ audioStatus NOTIFY audioChanged)
   Q_PROPERTY(QString profileStatus READ profileStatus NOTIFY audioChanged)
   Q_PROPERTY(QString txStatus READ txStatus NOTIFY txChanged)
+  // What the RADIO said about REAR/USB when this client armed. Empty until it
+  // has armed once; never a guess.
+  Q_PROPERTY(QString remoteTxText READ remoteTxText NOTIFY txChanged)
   Q_PROPERTY(bool armed READ armed NOTIFY txChanged)
   Q_PROPERTY(bool testTone READ testTone CONSTANT)
   Q_PROPERTY(QString connectionText READ connectionText NOTIFY statusChanged)
@@ -324,6 +327,7 @@ class Backend : public QObject {
   QString audioStatus() const { return audio_status_; }
   QString profileStatus() const { return profile_status_; }
   QString txStatus() const { return tx_audio_.StatusLine(); }
+  QString remoteTxText() const { return remote_tx_text_; }
   bool armed() const { return tx_audio_.armed(); }
   bool testTone() const { return tx_audio_.using_test_tone(); }
   QString connectionText() const { return connection_text_; }
@@ -403,6 +407,7 @@ class Backend : public QObject {
   bool was_tx_ = false;
   int safe_top_ = 0, safe_bottom_ = 0, safe_left_ = 0, safe_right_ = 0;
   int tx_peak_ = 0;      // host-reported, 0-32767
+  QString remote_tx_text_;
 
   // ── Drive test state ───────────────────────────────────────────────────────
   enum class DriveMode { kOff, kSweep, kVoice };
