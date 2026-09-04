@@ -115,3 +115,53 @@ leaving it to be discovered. It will not refuse the choice; that is the operator
 3. **⚠️ On his Mac, and this decides the design:** the same test. If `kEventHotKeyReleased` does
    not arrive, macOS drops to toggle and the status line says so. **The claim "hold-to-talk
    works on macOS" is not made until that test is run** - same rule as a radio nobody here owns.
+
+---
+
+# Closing the window, and what keeps running
+
+**Joe, 09/04/2026: "when we x the app we should minimise/reduce to the system tray or the
+equivalent on the host OS"** — and, on the key: *"lets keep a selection on one option no need to
+split it off"*, so there is ONE key selector and no second "global?" switch. System-wide is
+attempted always; the status line names what was actually armed.
+
+## One mechanism, both platforms
+
+`QSystemTrayIcon` is the tray on Windows and becomes an **NSStatusItem in the menu bar** on
+macOS, so one implementation covers both - which is the same "no need to split it off" answer.
+
+| | closing the window does | quitting is |
+|---|---|---|
+| **Windows** | hides to the tray, app keeps running | tray menu → Quit |
+| **macOS** | hides the window; the app stays in the Dock and the menu bar, which is the platform convention | ⌘Q |
+| **Linux** | ⚠️ tray may not exist (`isSystemTrayAvailable()` false on a bare GNOME) - then X **quits**, and the panel says so rather than vanishing into nothing |
+
+## ⚠️ THE HAZARD, AND IT IS THE WHOLE DESIGN
+
+**A hidden HamDeck still holds the transmitter.** Close the window and the `/ws/tx` socket, the
+single-transmitter claim and `MOD SOURCE=REAR` all persist - which is correct, because keying
+from the logger is the entire point of a system-wide PTT. But it means the operator can close
+the window believing they have finished, walk to the radio, and find **the hand mic dead**
+because the rig is still on REAR for a client they cannot see.
+
+So, three rules, none of them optional:
+
+1. **The tray icon carries the state, not just the app.** Idle, armed, and ON AIR are three
+   different icons, and ON AIR is unmistakable at 16 px. An app that can hold a transmitter
+   while hidden must say so from where it is hiding.
+2. **The tooltip says it in words** - "HamDeck — ARMED, radio on REAR/USB" - because an icon
+   alone is a colour somebody has to remember the meaning of.
+3. **Quit always releases.** Disarm, unkey, close `/ws/tx`; the host's close handler then
+   restores the power cap and puts MOD SOURCE back to MIC. ⚠️ This must survive being killed
+   too, which it already does - that safeguard lives next to the radio for exactly this reason.
+
+⚠️ **And the first hide says so.** A one-time notification - "HamDeck is still running in the
+tray, and still holds the transmitter" - because an app that vanishes silently is one the
+operator assumes has stopped.
+
+## What it does NOT do
+
+- **It does not disarm on hide.** That would make background PTT useless, which is the feature
+  the tray exists to serve.
+- **It does not start hidden.** An app that has never shown itself, holding a transmitter, is a
+  worse version of the same hazard.
