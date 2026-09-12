@@ -10,3 +10,4 @@ __pycache__/
 # PyInstaller output
 pusher/packaging/dist/
 pusher/packaging/Output/
+docs/internal/*.wip-preinit
