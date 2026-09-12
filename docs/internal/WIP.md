@@ -1,3 +1,7 @@
+<!-- wip-kind: reference -->
+<!-- This is the project's REFERENCE document, not a task list. Its length is correct.
+     Numbered sections are cross-referenced; do not prune or renumber them. -->
+
 # HamDeck C++ — work in progress
 
 Mid-build handover. Written 08/30/2026. Read §1 and §2 before touching anything.
