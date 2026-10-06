@@ -136,6 +136,13 @@ are private-storage-only and must never be published. See `SITE.md`.
   buttons, mic release, rport gain, tx devices) are for hardware this host does not have.
 | `/audio` HTTP endpoint, `/wsflexknob`, the CAT proxy, the static web UI | no |
 
+> **Status 10/06 (code at HEAD 824618a, read-only):**
+> - [x] Real ALSA capture/playback — VERIFIED 10/06: `src/alsa_audio.cpp` (snd_pcm) in tree
+> - [x] `/proc/asound` delay + adaptive buffering — VERIFIED 10/06: `src/alsa_audio.cpp:186-195` reads `/proc/asound/<card>/pcm0p/sub0/status`, adaptive loop at :40/:127
+> - [x] Host-side recording — VERIFIED 10/06: `src/recorder.cpp` + `src/qso_record.cpp` in tree (on-air behaviour UNVERIFIED: no host)
+> - [x] Global hotkey platform code — VERIFIED 10/06: `client/src/global_hotkey.h` (`GlobalHotkey`, native event filter) wired in `backend.cpp:89-126`
+> - [ ] `/audio` endpoint, `/wsflexknob`, static web UI (still open 10/06: none of the three is registered in `src/`; the CAT proxy half is done — `src/cat_proxy.cpp`; FlexKnob is "deliberately not doing" per §10)
+
 `/api/cluster/spots` and `/api/session` are **absent on the reference host too** — matching
 that is correct, not a gap.
 
@@ -1077,6 +1084,7 @@ FAILS (`h=0`, 0 emissions); restored it passes (`h=16`, `moved(173)` from 100).
 Audio arrives at peak ~26,800 of 32,767 (82% FS) and ALC sits at 98-100%. Mic gain is 100% and
 RPORT GAIN is 50. Wants trimming to ALC peaking 50-70%, not pinned — pegged ALC on SSB is
 splatter. Not yet done; the sliders had to work first.
+- [ ] ALC trim (still open 10/06, BLOCKED: no station host exists (hypervisor inventory and the station DNS name checked 10/06); `--drive-sweep` exists but has only run on the simulator)
 
 ---
 
@@ -1179,6 +1187,9 @@ exactly the same whether the audio is a voice or digital silence. That cost a ni
 | **WaveLog server** (`Services/WaveLogServer.cs`, 289 lines) | WaveLogGate-compatible: HTTP **54321** for QSY from the bandmap, WS **54322** status, and posting to the Wavelog API | wanted if the log is in use |
 | **CW keyer** (`Services/Keyers.cs`, 127 lines) | sends CW text, five CW memories | `/api/cw/*` currently answers `available:false`, honestly. ⚠️ Check every verb against the manual **and** hamlib — five CAT verbs guessed from their neighbours were wrong last time (§6) |
 
+- [ ] WaveLog server (still open 10/06: no 54321/54322 listener anywhere in `src/` or `pusher/`; the pusher covers posting to Wavelog only)
+- [x] CW keyer — VERIFIED 10/06 (code): `src/api.cpp:1572-1850` registers `/api/cw/status` (real `KY;` round trip), `/stop`, `/memory/`, `/send/`; on-air test UNVERIFIED (no station host exists (hypervisor inventory and the station DNS name checked 10/06))
+
 **Panel controls still missing** (routes all exist on the host):
 
 | control | route |
@@ -1191,6 +1202,9 @@ exactly the same whether the audio is a voice or digital silence. That cost a ni
 | RX antenna | `/api/rxant/1`, `/api/ant/rx/toggle` |
 | Rig internal ATU | `/api/tune` — ⚠️ the **wrong** tuner for this station; label it plainly if it is added at all |
 
+- [x] Remote TX, RX antenna — VERIFIED 10/06 (code): `client/src/backend.cpp:539` calls `/api/remote-tx/on`; `rxant` is a toggle flag at :208
+- [ ] Memory recall, Presets, Voice memories, SSB out level, Rig internal ATU (still open 10/06: `git grep` of client/qml + client/src finds none of `memory/recall`, `/api/preset`, `voice/play`, `ssb-out-level`, `"/api/tune"`)
+
 **Deliberately not doing:**
 - **DX cluster** (`/api/cluster/spots`) — 404s on the reference host too. Matching that is
   correct, not a gap.
@@ -1202,10 +1216,14 @@ exactly the same whether the audio is a voice or digital silence. That cost a ni
 ### Open questions, not code
 1. **The Windows installer is unsigned**, and the global hotkey has only ever been exercised by
    the operator, not here — there is no Windows box in this loop.
+   - [x] Signing — VERIFIED 10/06: hamdeck-releases v0.1.33 `HamDeck-win-Setup.exe` and `HamDeckRemote-win-Setup.exe` both carry an Authenticode signature, Subject CN=Henry Wussler, timestamped 09/04 (osslsigncode)
+   - [ ] Global hotkey exercised on Windows (UNVERIFIED 10/06: needs a run on a Windows box; the Windows test VM is stopped and there is no host to key)
 2. **`hamdeck-site` still has no remote.** Backed up and restore-tested, but a bundle on a NAS
    is not a remote.
+   - [x] VERIFIED 10/06: `hamdeck-site` has a git origin on the self-hosted Forgejo, `main...origin/main` in sync after fetch
 3. **The `joe` test credential is deliberately stable** while testing — Joe rotates it himself
    when done. Do not change it unasked (`tools/set_password.py`).
+   - [x] MOOT 10/06: the host that held that account is gone — no station host exists (hypervisor inventory and the station DNS name checked 10/06). A rebuild starts with new accounts
 
 ---
 
@@ -1267,15 +1285,19 @@ Real rig, real Wavelog, row read back **out of the database** rather than inferr
 FTDX-101 emits before trusting every one.
 
 ### Open
-- **The Stream Deck endpoint is not written.** `deck_port: 0` disables it and that is the
+- [x] **The Stream Deck endpoint is not written.** `deck_port: 0` disables it and that is the
   default: a no-auth loopback endpoint must be opted into, never defaulted on.
-- Tray icon, settings GUI, PyInstaller + Inno installer — copy the `netlogger-wavelog-sync`
+  VERIFIED 10/06 (code): `pusher/hamdeck_pusher/deck.py` exists, `config.py:45 deck_port: int = 0`, GUI field at `gui.py:221`
+- [x] Tray icon, settings GUI, PyInstaller + Inno installer — copy the `netlogger-wavelog-sync`
   build (tests → freeze → `--selftest` on the FROZEN exe → installer).
-- The `pusher` host account exists (no admin, **no transmit**) but its password is not one
+  VERIFIED 10/06: `pusher/hamdeck_pusher/gui.py` + `pusher/packaging/{entry.py,hamdeck-pusher.iss}`; hamdeck-releases v0.1.33 ships `HamDeck-win-Setup.exe` (pusher + client, signed) and `HamDeckPusher-0.1.33-full.nupkg`
+- [x] MOOT 10/06: The `pusher` host account exists (no admin, **no transmit**) but its password is not one
   Joe knows yet: `tools/set_password.py pusher`, then restart the host.
-- Bandmap→QSY (the reverse direction, HTTP :54321 in the C#) is **not** built. Ask before
+  (no station host exists (hypervisor inventory and the station DNS name checked 10/06) — the account file went with it)
+- [ ] Bandmap→QSY (the reverse direction, HTTP :54321 in the C#) is **not** built. Ask before
   building it: it is unauthenticated remote control of the VFO and the C# bound it to the
   whole LAN with `Allow-Origin: *`.
+  (still open 10/06 — needs Joe's yes first: no :54321 in `src/` or `pusher/`; `pusher/README.md:263` still says "Not built, ask first")
 
 ---
 
@@ -1593,6 +1615,7 @@ audio, not an empty header) — beside a sidecar carrying `trigger: idle`, both 
 command line of the very shell issuing it. Cost a lost commit. Use `pkill -x hamdeck-host`.
 
 ### Next, in order
+- [ ] Re-measure MONI (still open 10/06, BLOCKED: no station host exists (hypervisor inventory and the station DNS name checked 10/06); `src/api.cpp:986-991` sends `ML0001;` — measurement into a dummy load not possible without the rig)
 1. **Re-measure MONI.** `CARRYOVER.md:207` says it cannot be captured (120 s of `/ws`, band
    noise only); the C# says the opposite at `WsAudioClient.cs:205` and mutes RX while keyed
    *because* the operator hears themselves. `RadioController.cs:687` is the likely
@@ -1602,6 +1625,7 @@ command line of the very shell issuing it. Cost a lost commit. Use `pkill -x ham
    ⚠️ It matters beyond convenience: recording the host's own `/ws/tx` PCM would have looked
    perfect through every one of the six TX-chain bugs. MONI is the only source that proves
    audio actually left the radio.
+- [x] Identification, layered — VERIFIED 10/06 (code): `tools/identify_recording.py` (09/02, 3adc0ed) does both layers: Wavelog QSO lookup and `netlogger_checkin` CANDIDATES (:10, :115-177); not run here
 2. **Identification, layered** — Wavelog QSO in the window and band ⇒ the callsign, stated as
    fact; otherwise the NetLogger roster for whatever net was up ⇒ **candidates**, stated as
    candidates. Never the same kind of claim, and never "nobody" as a finding.
