@@ -2,16 +2,16 @@
 
 **This is HamDeck.** Host and Qt client, C++, shipping on Windows, macOS, Linux and iOS.
 
-⚠️ **THE .NET ORIGINAL IS RETIRED — private, archived, and its binaries deleted (09/04/2026).**
-It was never really public and it will not be updated again, so nothing may point a reader at
-it: a download that cannot work is worse than no download. This file used to open by calling
-C# "the shipping version" and this one "a parallel implementation, not a replacement", which
-stopped being true when the C++ host took over the station on 08/30/2026.
+The .NET original is retired (private, archived, binaries deleted 09/04/2026). Nothing may point a reader
+at it: a download that cannot work is worse than no download.
 
-⚠️ **The API contract still matters, but it is no longer a contract with another program.**
-`/api/*` and the `/ws` streams are what the phone, the desktop client and the Stream Deck all
-speak. Changing a route breaks THOSE, and the older audits in `docs/internal/` describe the
-.NET behaviour they were written from - read them as history, not as a live counterpart.
+⚠️ **Which stack runs the station is open — Joe's call.** C++ (this repo) ran it from 08/30; `~/hamdeck-go`
+(Go host + Flutter panel) was the last production stack, containerised on VM 105 from 09/07; VM 105 was
+destroyed 09/23, so no station host runs today. Never claim either is "the" shipping stack — the memory note
+`hamdeck-native.md` (live-verified) is the current record.
+
+`/api/*` and the `/ws` streams are what the phone, the desktop client and the Stream Deck speak; changing a
+route breaks them. The audits in `docs/internal/` describe the retired .NET host — read them as history.
 
 ## Read these first
 
@@ -24,7 +24,7 @@ speak. Changing a route breaks THOSE, and the older audits in `docs/internal/` d
   colours or substitute typefaces. If it doesn't cover what you need, say so rather than
   guessing.
 
-## ⚠️ C++ IS DECIDED. DO NOT RE-PITCH .NET.
+## .NET is retired — do not re-pitch it
 
 The choice was made deliberately and is not up for review. NativeAOT, keeping the C# host,
 "you could do that in .NET too" — all of it has been raised, considered and set aside. Raising
