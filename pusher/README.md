@@ -22,7 +22,7 @@ locally, which is also the only place a no-auth endpoint is defensible.
 
 ## The rules it is built to, all of them earned
 
-Read `../AUDIT-WAVELOG.md` first — it is the walk-down of the C# `WaveLogServer.cs` this
+Read `../AUDIT-WAVELOG.md` (corrected 10/06: it is `../docs/internal/AUDIT-WAVELOG.md`) first — it is the walk-down of the C# `WaveLogServer.cs` this
 replaces, and every rule below is a defect found in it.
 
 - ⚠️ **Never publish a stale reading.** The host reports `stale` and `cache_age_ms` on
@@ -50,6 +50,9 @@ a password you know:
     HAMDECK_CONFIG=/etc/hamdeck-cpp/config.json \
       python3 ~/hamdeck-cpp/tools/set_password.py pusher
     sudo systemctl restart hamdeck-cpp
+
+(10/06: the rig host these commands targeted no longer exists - there is no running station host at
+present, so this step and the `host_url` below apply only once one is rebuilt.)
 
 Then write `%APPDATA%\HamDeckPusher\settings.json` (0600; it holds two secrets):
 
@@ -150,7 +153,12 @@ private, so the release is too.
 
     https://github.com/jwussler/hamdeck-cpp/releases/latest
 
+(corrected 10/06: the repo is public, and the pusher now ships inside the combined Windows installer on
+<https://github.com/jwussler/hamdeck-releases/releases/latest> - v0.1.33 `HamDeck-win-Setup.exe`.)
+
 ⚠️ **Unsigned.** SmartScreen will warn on first run. Saying so is the honest position.
+(corrected 10/06: the v0.1.33 Windows installers carry an Authenticode signature with publisher Henry
+Wussler - the Azure signing secrets are set. SmartScreen may still warn, per the reputation note above.)
 
 Settings live in `%APPDATA%\HamDeckPusher\settings.json` and the installer **never touches
 them**, so an update cannot overwrite the API key. "Start when I sign in" is an unchecked

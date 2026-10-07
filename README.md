@@ -22,6 +22,10 @@ Installers for every platform are on the
 | **macOS** | `HamDeck-macOS.dmg` — signed, notarised and stapled; drag to Applications |
 | **Linux** | `hamdeck-client_<version>_amd64.deb` / `_arm64.deb` |
 
+(corrected 10/06: the latest release, v0.1.33 of 09/04/2026, predates the installer rename and still carries
+the old names - `HamDeck-win-Setup.exe` = panel + pusher, `HamDeckRemote-win-Setup.exe` = panel only,
+`HamDeckRemote-macOS.dmg`. The names above apply from the next release.)
+
 Everything is code-signed. On Windows the publisher reads **Henry Wussler**;
 SmartScreen may still warn, because it asks *"have I seen this file before?"*
 rather than *"is this safe?"*, and a new release from a small publisher always
