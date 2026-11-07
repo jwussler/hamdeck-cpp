@@ -1,14 +1,8 @@
-# HamDeck
+# HamDeck — C++ host + Qt/QML client (reference)
 
-**This is HamDeck.** Host and Qt client, C++, shipping on Windows, macOS, Linux and iOS.
-
-The .NET original is retired (private, archived, binaries deleted 09/04/2026). Nothing may point a reader
-at it: a download that cannot work is worse than no download.
-
-⚠️ **Which stack runs the station is open — Joe's call.** C++ (this repo) ran it from 08/30; `~/hamdeck-go`
-(Go host + Flutter panel) was the last production stack, containerised on VM 105 from 09/07; VM 105 was
-destroyed 09/23, so no station host runs today. Never claim either is "the" shipping stack — the memory note
-`hamdeck-native.md` (live-verified) is the current record.
+The live station runs the Rust rebuild (`~/hamdeck-rs`, since 10/21/2026); see memory `hamdeck-native.md`.
+This repo is reference for the API surface, the audio chain and the PTT traps. The .NET original is retired
+(private, archived, binaries deleted 09/04/2026) — nothing may point a reader at it.
 
 `/api/*` and the `/ws` streams are what the phone, the desktop client and the Stream Deck speak; changing a
 route breaks them. The audits in `docs/internal/` describe the retired .NET host — read them as history.
@@ -41,7 +35,7 @@ Judge proposals on whether they make the C++ build better, not on whether C++ wa
 - **Keep the host (`src/`) free of any UI headers.** Protocol, radio state, audio and the PTT
   abstraction must not include Qt. That is what makes swapping the front end a weekend
   rather than a rewrite — and it's the exact discipline that saved the C# client.
-- ⚠️ **Anything with a UI is resolution-aware from the first line.** The panel must be readable
+- **Anything with a UI is resolution-aware from the first line.** The panel must be readable
   on a 4K monitor and unclipped on a 1024x600 netbook, and those are two different mechanisms:
   a single density scale (`Theme.u()`/`f()`, from `Backend::uiScale`) *and* reflow against the
   width actually available (`Theme.cols()`). No unscaled pixel constants. Prove it with
@@ -53,7 +47,7 @@ Judge proposals on whether they make the C++ build better, not on whether C++ wa
 
 ## Where this is going
 
-⚠️ **A Raspberry Pi at the rig is the intended destination** — a small always-on box doing CAT
+**A Raspberry Pi at the rig is the intended destination** — a small always-on box doing CAT
 and audio, no VM, no hypervisor. That is the reason C++ was chosen at all, so it shapes decisions
 now rather than later:
 
@@ -62,7 +56,7 @@ now rather than later:
   not the fiftieth.
 - **No x86-only intrinsics, no assumptions about unaligned access**, and check any dependency
   actually has an ARM build before adopting it.
-- ⚠️ **The CPU cost on a Pi is TLS and the tunnel, not the audio.** Audio is a memcpy at
+- **The CPU cost on a Pi is TLS and the tunnel, not the audio.** Audio is a memcpy at
   96 kB/s; the crypto is the load. Size the board for that. A Pi Zero 2 W or better is the
   realistic floor.
 - The USB codec (TI PCM2903C) and the CP2105 CAT bridge both need `linux-modules-extra` on a
@@ -78,7 +72,7 @@ now rather than later:
   that estimate is always ≈0 in steady state and reads exactly like a working measurement.
 - ⚠️ **Never feed the operator their own delayed audio.** Mute RX while keyed.
 
-## ⚠️ Testing rules
+## Testing rules
 
 **Every bug that blocked the first transmit looked healthy to the checks that existed.** Full
 account in `docs/internal/WIP.md` §8f–§8h.
@@ -100,7 +94,7 @@ drags one with synthetic mouse events. Do that for any control that matters.
 ### Comparing route INVENTORIES is not comparing behaviour
 `docs/internal/AUDIT-CSHARP.md` ticked `/api/remote-tx/on` because the route existed. It answered `200` and
 changed nothing, and the status route beside it **invented all three of its fields** so the two
-agreed with each other. ⚠️ **The test that catches this: call the route, then read the radio
+agreed with each other. **The test that catches this: call the route, then read the radio
 back through something that is NOT the route under test.**
 
 ### A confident wrong answer is worse than no answer — it gets believed
@@ -109,7 +103,7 @@ behind a comment claiming it read straight through. It said MIC while the radio 
 REAR/USB, so a **correct** write was reported as a failure and the search went to the wrong end
 of the chain. When a read fails, say `null`. Never fall back to a plausible value.
 
-### ⚠️ NEVER SHIP A FIX NOTHING HERE CAN TEST
+### Never ship a fix nothing here can test
 Flagging "I could not verify this" in the message is not a substitute for verifying it. If it
 cannot be tested here, build the thing that tests it — `tests_knob.cpp` and
 `check_exe_icon.py` both exist because of this, and each took minutes.
@@ -127,7 +121,7 @@ path. A check on one says nothing about the other, and reporting it as covering 
 
 ### Safety belongs next to the radio
 The transmit watchdog, the disconnect power reset and the MOD SOURCE restore all live in the
-HOST. ⚠️ **A client-side safeguard protects nothing when the client is the thing that died** —
+HOST. **A client-side safeguard protects nothing when the client is the thing that died** —
 and a dropped link, a crash and a clean quit all look the same from here, which is exactly why
 the `/ws/tx` close callback is the right hook.
 
