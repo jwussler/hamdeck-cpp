@@ -38,7 +38,7 @@ Judge proposals on whether they make the C++ build better, not on whether C++ wa
   small binary that could live on modest hardware. The client is optional and secondary.
 - **Qt Quick (QML), not Qt Widgets**, if a GUI is built. The panel is custom-drawn dark
   instrumentation; Widgets fights that, QML is designed for it.
-- **Keep `core/` free of any UI headers.** Protocol, radio state, audio and the PTT
+- **Keep the host (`src/`) free of any UI headers.** Protocol, radio state, audio and the PTT
   abstraction must not include Qt. That is what makes swapping the front end a weekend
   rather than a rewrite — and it's the exact discipline that saved the C# client.
 - ⚠️ **Anything with a UI is resolution-aware from the first line.** The panel must be readable
@@ -48,8 +48,8 @@ Judge proposals on whether they make the C++ build better, not on whether C++ wa
   `--check-resolutions`, which measures every key at seven screen sizes — and look at the
   PNGs it writes. See docs/internal/WIP.md §8d, including the four ways that walk passed while measuring
   nothing.
-- Suggested libraries, all OSI-approved so code signing stays possible: miniaudio (audio),
-  cpp-httplib (REST), IXWebSocket, nlohmann/json, Dear ImGui if a lighter UI is wanted.
+- Libraries in use (`CMakeLists.txt`), all OSI-approved so code signing stays possible:
+  civetweb (HTTP + WebSocket on one port), OpenSSL, nlohmann/json, ALSA. The client is Qt Quick (QML).
 
 ## Where this is going
 
@@ -66,25 +66,22 @@ now rather than later:
   96 kB/s; the crypto is the load. Size the board for that. A Pi Zero 2 W or better is the
   realistic floor.
 - The USB codec (TI PCM2903C) and the CP2105 CAT bridge both need `linux-modules-extra` on a
-  stripped kernel — see docs/internal/CARRYOVER.md. Do not assume the Pi image ships `snd-usb-audio`.
+  stripped kernel — see docs/appliance-vision.md. Do not assume the Pi image ships `snd-usb-audio`.
 
 ## Non-negotiables
 
 - ⚠️ **Never probe a live rig with a control route.** Reading is fine; `/api/mode/usb`
   changed the operating mode mid-session once. Use `/api/health` — the only route needing
   no session.
-- ⚠️ **The transmit watchdog lives next to the radio**, never in the client. A client-side
-  timeout protects nothing when the client is the thing that died.
 - ⚠️ **Unkeying waits for queued audio.** Ask the kernel
   (`/proc/asound/<card>/pcm<n>p/sub0/status` → `delay`), never infer it from byte counts —
   that estimate is always ≈0 in steady state and reads exactly like a working measurement.
 - ⚠️ **Never feed the operator their own delayed audio.** Mute RX while keyed.
 
-## ⚠️ RULES EARNED ON 08/31/2026 — the night the client first transmitted
+## ⚠️ Testing rules
 
-Six bugs stood between "it compiles" and "a voice on the air". **Not one was a language or a
-build problem, and every single one looked healthy to the checks that existed.** Full account in
-`docs/internal/WIP.md` §8f–§8h; these are the rules that came out of it.
+**Every bug that blocked the first transmit looked healthy to the checks that existed.** Full
+account in `docs/internal/WIP.md` §8f–§8h.
 
 ### Counting is not checking
 Frames accepted, `hw_ptr` advancing at 48 kHz, zero drops, a queue behaving — **all of it reads
@@ -113,11 +110,6 @@ REAR/USB, so a **correct** write was reported as a failure and the search went t
 of the chain. When a read fails, say `null`. Never fall back to a plausible value.
 
 ### ⚠️ NEVER SHIP A FIX NOTHING HERE CAN TEST
-It happened twice in one night and the operator found both:
-- **0.1.10** "fixed" the sliders by correcting a real binding loop that was not the cause.
-- **0.1.12** "added" the icon with a `.rc` that CMake **silently never compiled**
-  (`project(... LANGUAGES CXX)` — no RC language, no warning, green build).
-
 Flagging "I could not verify this" in the message is not a substitute for verifying it. If it
 cannot be tested here, build the thing that tests it — `tests_knob.cpp` and
 `check_exe_icon.py` both exist because of this, and each took minutes.
